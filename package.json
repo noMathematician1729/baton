@@ -21,6 +21,7 @@
     "test:signing": "npm run build --workspace=server && node scripts/check-signing-vector.mjs",
     "demo:local": "npm run test:local",
     "contracts:compile": "node scripts/compile-contracts.mjs",
+    "deploy:sepolia:escrow": "npm run contracts:compile && node scripts/deploy-escrow.mjs",
     "verify": "npm run typecheck && npm run build && npm run contracts:compile && npm run test:signing && npm run test:local"
   },
   "devDependencies": {

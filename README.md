@@ -70,6 +70,7 @@ npm run test:signing    # deterministic EIP-712 hash/recovery vector
 npm run test:local      # isolated durable-ledger and handoff acceptance
 npm run verify          # all of the above
 forge build             # escrow sources, when solc 0.8.28 is available
+npm run deploy:sepolia:escrow  # deploys JobEscrow after local RPC/key configuration
 ```
 
 The local acceptance prints machine-readable evidence. It creates a funded job with rewards `3/3/4` and a separate `20 HBAR` service budget, assigns A, settles one paid operation, accepts a checkpoint, drains the gateway, transfers the task to B, rejects stale A requests, settles two B operations, accepts the remaining checkpoints, and verifies A/B claims of `3/7`. It also checks stable-operation idempotency and that UNKNOWN keeps its reservation held.
@@ -90,6 +91,14 @@ The server exposes the local integration boundary used by the console and worker
 | `POST /api/jobs/:id/claim` | Mark immutable worker credits withdrawn once |
 
 All amounts are integer base units and are serialized as strings ending in `n` in JSON responses. The local payment provider is explicitly a fixture (`local-hedera-receipt:*`); it is not a Hedera settlement claim. Testnet mode must be added only after the configured facilitator, payer, payee, asset, and network are independently verified.
+
+## Sepolia escrow deployment
+
+The local `.env` is ignored and must remain private. Enter the testnet deployer key there locally; never pass it on a command line or in chat. The deploy command compiles `JobEscrow`, checks that the RPC reports Sepolia chain ID `11155111`, checks the deployer balance, submits the deployment, waits for confirmations, verifies code at the receipt address, and only then updates `BATON_ESCROW_ADDRESS`. It refuses a duplicate deployment when that variable is already populated. The `.env` file is set to owner-only permissions (`0600`).
+
+```sh
+npm run deploy:sepolia:escrow
+```
 
 The client communicates with the server API. Chain access, payment authority, encryption keys, and provider credentials stay out of browser code. Worker processes may run on separate hosts and use the shared server-side packages; a checkpoint or API request does not itself grant tool or data access.
 

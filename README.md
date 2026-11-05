@@ -45,17 +45,19 @@ requests.md                      Public-input queue; no secrets
 
 ## Current status
 
-The D1 authority/payments slice is locally verified. It has a versioned protocol, canonical SHA-256 commitments, EIP-712 offer/takeover hash helpers, a durable atomic operation ledger, service-budget reservations, UNKNOWN handling, worker epoch fencing, an end-to-end local 3/3/4 handoff acceptance run, and Solidity 0.8.28 compilation with tracked ABIs. The user reports the live ENS adapter grant/revoke/wrong-job checks passed. The funded Sepolia A-to-B lifecycle now has a live pass on the existing escrow, including milestone credits and both withdrawals. Arkiv and Hedera flows remain pending.
+**Sepolia lifecycle: LIVE_PASS; full integration: pending.** The live Sepolia baseline includes the funded A-to-B handoff, milestone credits, both withdrawals, and zero escrow balance. Its public transaction evidence is recorded below. The current gateway reads Sepolia worker/epoch/grant/open state before accepting milestones or service operations, and locally checks drain and spending caps. That gateway path has mock-based local coverage; it has not yet been exercised against a fresh live job. The current service provider is still local, so it does not perform a real Hedera x402 payment. Arkiv writes and the joint live recovery flow remain pending.
 
 ### Latest Sepolia snapshot
 
 - ENS resolver: `0x583fDD4b8d345624B1B8438Bd8ca5004bD0352bA`; BATON authority adapter: `0xD659F372D2439075F29e39f5E005d86352Da1A6c`. The user reports the live scoped ENS checks passed.
 - Current escrow in ignored local `.env`: `0x4F802976810690F984cd05640a23b3FFB5B395E1`. The guarded replacement script only saves this field after a successful receipt and non-empty runtime code check. Its transaction hash is not yet in tracked evidence.
 - Worker A: `0x432Eeff3E312f1910F3D04A6449753306fFaA5D2`; Worker B: `0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5`.
-- Worker A: the private signer is configured in ignored local `.env` as `WORKER_A_EVM_PRIVATE_KEY`; an offline check confirmed it derives to the configured Worker A address. The key value is not recorded here.
+- Worker A's configured Arkiv signer derives to its public address. The ignored local `.env` is missing `ARKIV_ACCESS_KEY`, so no live Arkiv write has been verified. No worker-specific env files are present in this checkout.
 - Live funded job `0xcef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3` completed against the existing escrow without redeploying it. The run accepted A’s 3-token milestone, transferred assignment to B at epoch 2, accepted B’s 3- and 4-token milestones, and confirmed claims of 3 tokens by A and 7 by B. Each of the 17 submitted transactions had a successful receipt with two confirmations.
 - The stale A milestone was simulated after takeover and reverted with `StaleEpoch` via `eth_call`; it was not sent as a reverting transaction. Final token balances were A `3`, B `7`, escrow `0` (18 decimals). Reward token: test-only `BatonTestToken` at `0x6044f549F604A02bA66Ac60d2Aed35fFcCAbb6f9`; it is permissionless to mint and is only for Sepolia acceptance, not a real-value asset.
 - Full transaction and receipt evidence: [evidence/sepolia-jobs/cef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3.json](evidence/sepolia-jobs/cef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3.json). The run was launched from Mac Terminal because this execution sandbox cannot resolve the Sepolia RPC host.
+
+The local gateway regression also covers stale/revoked chain workers, over-cap requests, retained UNKNOWN reservations, and a simulated post-settlement crash where B reuses A's paid output after stores are reopened. The crash case uses a fake provider and proves local idempotency only; it is not a Hedera settlement.
 
 Public configuration and needed actions are tracked in [`status/d1.json`](status/d1.json) and [`requests.md`](requests.md). The full scope and D1/D2 allocation remain in [`plan.md`](plan.md).
 
@@ -69,7 +71,7 @@ cp .env.example .env
 npm run dev
 ```
 
-The client runs at `http://127.0.0.1:5173`; the API runs at `http://127.0.0.1:4000`. The health endpoint is `/api/health`. Fill the relevant `.env` values before connecting any external integration. Keep `.env` private; only `VITE_*` variables are exposed to browser code.
+The client runs at `http://127.0.0.1:5173`; the API runs at `http://127.0.0.1:4000`. The health endpoint is `/api/health`. Fill the relevant `.env` values before connecting any external integration. The server loads the checkout root `.env` with `dotenv`; inherited process variables take precedence unless cleared before startup. Keep `.env` private; only `VITE_*` variables are exposed to browser code.
 
 ## Verification commands
 
@@ -87,7 +89,7 @@ npm run test:sepolia:worker-grants # checks scoped grants for WORKER_A_ADDRESS a
 npm run demo:sepolia:job-lifecycle # funded A-to-B escrow lifecycle; reuses BATON_ESCROW_ADDRESS
 ```
 
-The local acceptance prints machine-readable evidence. It creates a funded job with rewards `3/3/4` and a separate `20 HBAR` service budget, assigns A, settles one paid operation, accepts a checkpoint, drains the gateway, transfers the task to B, rejects stale A requests, settles two B operations, accepts the remaining checkpoints, and verifies A/B claims of `3/7`. It also checks stable-operation idempotency and that UNKNOWN keeps its reservation held.
+The local acceptance prints machine-readable evidence. It creates a funded job with rewards `3/3/4` and a separate `20 HBAR` service budget, assigns A, settles one paid operation, accepts a checkpoint, drains the gateway, transfers the task to B, rejects stale A requests, settles two B operations, accepts the remaining checkpoints, and verifies A/B claims of `3/7`. It also checks stable-operation idempotency, UNKNOWN reservation retention, authority-reader rejection paths, spending caps, and one-provider-call payment-crash recovery. All payment and chain checks in this local acceptance are simulated.
 
 ## Authority and spending API
 
@@ -97,7 +99,7 @@ The server exposes the local integration boundary used by the console and worker
 |---|---|
 | `POST /api/jobs` | Freeze job terms, milestones and service policy; configure the ledger budget |
 | `POST /api/jobs/:id/assign` | Assign the initial worker and establish epoch 1 |
-| `POST /api/jobs/:id/checkpoints` | Verify the expected head and accept the next fixed milestone |
+| `POST /api/jobs/:id/checkpoints` | Verify the expected head, local worker/epoch, and live chain authority when configured before accepting the milestone locally |
 | `POST /api/jobs/:id/drain` | Stop new gateway admissions before handoff |
 | `POST /api/jobs/:id/takeover` | Require exact head/epoch and a compatibility commitment, then increment epoch |
 | `POST /api/jobs/:id/services/execute` | Reserve budget before provider submission and persist the receipt/output reference |

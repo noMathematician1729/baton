@@ -1,4 +1,5 @@
-import { digest, type GatewayOperation, type Hex, type JobSnapshot } from "../../protocol/v1.js";
+import { digest, type CheckpointHead, type GatewayOperation, type Hex, type JobSnapshot } from "../../protocol/v1.js";
+import type { JobAuthorityReader } from "../../chain/sepoliaAuthority.js";
 import { OperationLedger, type LedgerBalance } from "../ledger/operationLedger.js";
 import { JobStore } from "../../domain/jobs/jobStore.js";
 
@@ -46,11 +47,18 @@ export class LocalPaymentProvider implements PaymentProvider {
 }
 
 export class Gateway {
+  private readonly jobQueues = new Map<string, Promise<void>>();
+
   public constructor(
     private readonly jobs: JobStore,
     private readonly ledger: OperationLedger,
     private readonly provider: PaymentProvider,
+    private readonly authority?: JobAuthorityReader,
   ) {}
+
+  public get requiresChainAuthority(): boolean {
+    return this.authority !== undefined;
+  }
 
   public async quote(jobId: string, service: string, amount: bigint): Promise<{ approved: boolean; reason?: string; balance?: LedgerBalance }> {
     const job = await this.requireJob(jobId);
@@ -63,44 +71,149 @@ export class Gateway {
   }
 
   public async execute(request: PaymentRequest): Promise<GatewayOperation> {
-    const job = await this.requireJob(request.jobId);
-    this.assertAdmission(job, request.worker, request.epoch);
-    const fingerprint = digest({ ...request, amount: request.amount.toString() });
-    const operation = await this.ledger.reserve({ ...request, requestFingerprint: fingerprint, nonce: `${Date.now()}` });
-    if (operation.state === "OUTPUT_AVAILABLE" || operation.state === "SETTLED") return operation;
-    try {
-      await this.ledger.transition(operation.operationId, "SUBMITTED");
-      const result = await this.provider.submit(request);
-      await this.ledger.transition(operation.operationId, "SETTLED", result);
-      return this.ledger.transition(operation.operationId, "OUTPUT_AVAILABLE", result);
-    } catch (error) {
-      await this.ledger.transition(operation.operationId, "UNKNOWN", { failureCode: error instanceof Error ? error.message : "PAYMENT_UNKNOWN" });
-      throw new Error("PAYMENT_UNKNOWN: operation is held for reconciliation");
-    }
+    return this.withJobLock(request.jobId, async () => {
+      const job = await this.requireJob(request.jobId);
+      await this.assertAdmission(job, request.worker, request.epoch);
+      const fingerprint = paymentFingerprint(request);
+      const operation = await this.ledger.reserve({
+        ...request,
+        requestFingerprint: fingerprint,
+        nonce: `${Date.now()}`,
+      });
+
+      if (operation.state !== "RESERVED") return this.reuseOrReconcile(operation, request);
+
+      try {
+        await this.ledger.transition(operation.operationId, "SUBMITTED");
+        const result = await this.provider.submit(request);
+        await this.ledger.transition(operation.operationId, "SETTLED", result);
+        const available = await this.ledger.transition(operation.operationId, "OUTPUT_AVAILABLE", result);
+        return this.recordAuthorizedReuse(available, request);
+      } catch {
+        const latest = await this.ledger.getOperation(operation.operationId);
+        if (latest?.state === "SUBMITTED") {
+          try {
+            await this.ledger.transition(operation.operationId, "UNKNOWN", { failureCode: "PAYMENT_OUTCOME_UNKNOWN" });
+          } catch {
+            // Preserve the last durable state; recovery will reconcile it before any retry.
+          }
+        }
+        throw new Error("PAYMENT_UNKNOWN: operation is held for reconciliation");
+      }
+    });
   }
 
-  public async reconcile(operationId: string): Promise<GatewayOperation> {
-    const operation = await this.ledger.getOperation(operationId);
-    if (!operation) throw new Error("OPERATION_NOT_FOUND");
-    if (operation.state === "OUTPUT_AVAILABLE") return operation;
-    const result = await this.provider.reconcile(operation);
-    if (!isSettledResult(result)) {
-      if (operation.state === "UNKNOWN") throw new Error("PAYMENT_STILL_UNKNOWN: reservation remains held");
-      return operation;
-    }
-    if (operation.state === "UNKNOWN") await this.ledger.transition(operationId, "SUBMITTED");
-    if (operation.state !== "SETTLED") await this.ledger.transition(operationId, "SETTLED", result);
-    return this.ledger.transition(operationId, "OUTPUT_AVAILABLE", result);
+  public async reconcile(operationId: string, worker: Hex, epoch: number): Promise<GatewayOperation> {
+    const existing = await this.ledger.getOperation(operationId);
+    if (!existing) throw new Error("OPERATION_NOT_FOUND");
+    return this.withJobLock(existing.jobId, async () => {
+      const job = await this.requireJob(existing.jobId);
+      await this.assertAdmission(job, worker, epoch);
+      const current = await this.ledger.getOperation(operationId);
+      if (!current) throw new Error("OPERATION_NOT_FOUND");
+      return this.reuseOrReconcile(current, { ...current, worker, epoch });
+    });
+  }
+
+  public async assign(jobId: string, worker: Hex): Promise<JobSnapshot> {
+    return this.withJobLock(jobId, async () => {
+      const job = await this.requireJob(jobId);
+      if (this.authority) {
+        await this.authority.assertAssignedWorker({
+          chainJobId: this.requireChainJobId(job),
+          buyer: job.terms.buyer,
+          worker,
+          epoch: 1,
+        });
+      }
+      return this.jobs.assign(jobId, worker);
+    });
+  }
+
+  public async acceptMilestone(input: {
+    jobId: string;
+    worker: Hex;
+    epoch: number;
+    expectedHead: Hex;
+    newHead: CheckpointHead;
+  }): Promise<JobSnapshot> {
+    return this.withJobLock(input.jobId, async () => {
+      const job = await this.requireJob(input.jobId);
+      await this.assertAdmission(job, input.worker, input.epoch);
+      return this.jobs.acceptMilestone(input);
+    });
   }
 
   public async drain(jobId: string): Promise<JobSnapshot> {
-    return this.jobs.drain(jobId);
+    return this.withJobLock(jobId, () => this.jobs.drain(jobId));
+  }
+
+  public async takeover(input: {
+    jobId: string;
+    successor: Hex;
+    expectedHead: Hex;
+    expectedEpoch: number;
+    compatibilityReport: Hex;
+  }): Promise<JobSnapshot> {
+    return this.withJobLock(input.jobId, async () => {
+      const job = await this.requireJob(input.jobId);
+      if (!job.task.drained) throw new Error("TASK_MUST_BE_DRAINED");
+      if (this.authority) {
+        await this.authority.assertAssignedWorker({
+          chainJobId: this.requireChainJobId(job),
+          buyer: job.terms.buyer,
+          worker: input.successor,
+          epoch: input.expectedEpoch + 1,
+        });
+      }
+      return this.jobs.takeover(input);
+    });
   }
 
   public async resume(jobId: string): Promise<JobSnapshot> {
-    const job = await this.requireJob(jobId);
-    if (!job.task.assignedWorker) throw new Error("WORKER_NOT_ASSIGNED");
-    return this.jobs.resume(jobId);
+    return this.withJobLock(jobId, async () => {
+      const job = await this.requireJob(jobId);
+      if (!job.task.assignedWorker) throw new Error("WORKER_NOT_ASSIGNED");
+      if (this.authority) {
+        await this.authority.assertAssignedWorker({
+          chainJobId: this.requireChainJobId(job),
+          buyer: job.terms.buyer,
+          worker: job.task.assignedWorker,
+          epoch: job.task.epoch,
+        });
+      }
+      return this.jobs.resume(jobId);
+    });
+  }
+
+  private async reuseOrReconcile(operation: GatewayOperation, request: PaymentRequest): Promise<GatewayOperation> {
+    if (operation.state === "OUTPUT_AVAILABLE") return this.recordAuthorizedReuse(operation, request);
+    if (operation.state === "SETTLED") {
+      const available = await this.ledger.transition(operation.operationId, "OUTPUT_AVAILABLE");
+      return this.recordAuthorizedReuse(available, request);
+    }
+    if (operation.state === "FAILED") throw new Error("PAYMENT_FAILED: operation is terminal");
+    if (operation.state !== "SUBMITTED" && operation.state !== "UNKNOWN") {
+      throw new Error("OPERATION_STATE_NOT_RECOVERABLE");
+    }
+
+    let result: PaymentResult | { settled: false };
+    try {
+      result = await this.provider.reconcile(operation);
+    } catch {
+      throw new Error("PAYMENT_UNKNOWN: provider reconciliation is unavailable; reservation remains held");
+    }
+    if (!isSettledResult(result)) {
+      throw new Error("PAYMENT_UNKNOWN: provider has not confirmed settlement; reservation remains held");
+    }
+    await this.ledger.transition(operation.operationId, "SETTLED", result);
+    const available = await this.ledger.transition(operation.operationId, "OUTPUT_AVAILABLE", result);
+    return this.recordAuthorizedReuse(available, request);
+  }
+
+  private async recordAuthorizedReuse(operation: GatewayOperation, request: PaymentRequest): Promise<GatewayOperation> {
+    if (operation.worker.toLowerCase() === request.worker.toLowerCase() && operation.epoch === request.epoch) return operation;
+    return this.ledger.recordReuse(operation.operationId, request.worker, request.epoch);
   }
 
   private async requireJob(jobId: string): Promise<JobSnapshot> {
@@ -109,13 +222,52 @@ export class Gateway {
     return job;
   }
 
-  private assertAdmission(job: JobSnapshot, worker: Hex, epoch: number): void {
-    if (job.task.assignedWorker !== worker) throw new Error("WORKER_NOT_ASSIGNED");
+  private async assertAdmission(job: JobSnapshot, worker: Hex, epoch: number): Promise<void> {
+    if (job.task.assignedWorker?.toLowerCase() !== worker.toLowerCase()) throw new Error("WORKER_NOT_ASSIGNED");
     if (job.task.epoch !== epoch) throw new Error("STALE_EPOCH");
     if (job.task.drained || job.task.status !== "FUNDED") throw new Error("GATEWAY_DRAINED");
+    if (this.authority) {
+      await this.authority.assertCurrentWorker({
+        chainJobId: this.requireChainJobId(job),
+        buyer: job.terms.buyer,
+        worker,
+        epoch,
+      });
+    }
+  }
+
+  private requireChainJobId(job: JobSnapshot): Hex {
+    if (!job.chainJobId) throw new Error("CHAIN_JOB_ID_REQUIRED");
+    return job.chainJobId;
+  }
+
+  private async withJobLock<T>(jobId: string, action: () => Promise<T>): Promise<T> {
+    const previous = this.jobQueues.get(jobId) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const queued = previous.then(() => gate);
+    this.jobQueues.set(jobId, queued);
+    await previous;
+    try {
+      return await action();
+    } finally {
+      release();
+      if (this.jobQueues.get(jobId) === queued) this.jobQueues.delete(jobId);
+    }
   }
 }
 
+function paymentFingerprint(request: PaymentRequest): Hex {
+  return digest({
+    jobId: request.jobId,
+    taskId: request.taskId,
+    service: request.service,
+    inputDigest: request.inputDigest,
+    amount: request.amount.toString(),
+    asset: request.asset,
+  });
+}
+
 function isSettledResult(result: PaymentResult | { settled: false }): result is PaymentResult {
-  return !('settled' in result);
+  return !("settled" in result);
 }

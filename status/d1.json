@@ -1,8 +1,8 @@
 {
   "owner": "D1",
-  "updatedAt": "2026-11-06T03:16:41+05:30",
+  "updatedAt": "2026-11-06T03:59:40+05:30",
   "elapsedHours": 0,
-  "currentTask": "Validate live gateway/chain behavior and Hedera x402 after the Sepolia escrow lifecycle pass",
+  "currentTask": "Locally verify Sepolia-bound gateway guards and prepare the joint live Arkiv/Hedera recovery run",
   "completedFeatures": [
     "Versioned protocol types, canonical hashing and EIP-712 offer/takeover hash helpers",
     "Durable atomic operation ledger with reservation, settlement, UNKNOWN and reconciliation states",
@@ -23,21 +23,29 @@
     "Stale A offer reverted with StaleEpoch in an eth_call simulation; A/B job grants, wrong-job denial, and grant revocation assertions passed",
     "Test-only reward token deployed at 0x6044f549F604A02bA66Ac60d2Aed35fFcCAbb6f9; full Sepolia transaction and balance evidence recorded",
     "Repeatable local acceptance scenario including idempotency and UNKNOWN reservation checks",
+    "Gateway chain reader verifies Sepolia chain, escrow buyer/adapter, worker, epoch, scoped grant, cutoff, and open/drain state before milestone or service admission",
+    "Gateway serializes drain against operations and enforces service allowlist, available balance, and per-request cap before provider submission",
+    "Local mocked-authority checks reject stale/revoked workers and over-cap requests before provider calls; the checkpoint API now uses the same gateway admission guard",
+    "Local payment-crash simulation reopens stores after settlement and lets B reuse A's output with one provider submission; UNKNOWN retries do not resubmit",
     "Configured Sepolia RPC in ignored local .env and verified chain ID 11155111",
     "Resolved baton.eth on Sepolia to 0x0f35bDe4F4b1270813c5116DA20915FCD49e47FA; ENS resolver 0x583fDD4b8d345624B1B8438Bd8ca5004bD0352bA",
     "Secured .env with owner-only file permissions and added guarded escrow deployment command",
     "Earlier JobEscrow deployment at 0x141FA2cE7805d87AEb363a2A725CAa0A0E945deC has a recorded successful receipt; it is superseded by the current local escrow setting",
     "Saved BATON_ESCROW_ADDRESS in ignored local .env with mode 0600; private deployer key was not printed or committed"
   ],
-  "nextGate": "Run npm run demo:sepolia:job-lifecycle from Mac Terminal against the existing escrow; then review live evidence and continue Hedera x402 work",
+  "nextGate": "After Arkiv access and process environment are configured, restart the API and jointly run a fresh real Hedera purchase, Arkiv checkpoint, Sepolia acceptance, and A-to-B recovery",
   "blockers": [
     "Execution sandbox Node, curl and Foundry cannot resolve the Sepolia RPC host; funded lifecycle transactions must run from local Mac Terminal",
-    "The Hedera x402 facilitator/endpoint and a proven live settlement are not configured; local payer credentials are present"
+    "ARKIV_ACCESS_KEY is missing from the ignored checkout root .env; no worker-specific env files were found",
+    "The existing API process could not be inspected or stopped from this execution shell because macOS returned EPERM; dotenv loads root .env but inherited process variables take precedence",
+    "The live Hedera x402 facilitator/endpoint and settlement are not verified; D2's provider, Arkiv adapter, and durable ledger are not integrated into this D1 server path"
   ],
   "neededInputs": [
-    "Validate live gateway/chain behavior for confirmation thresholds, reservation reconciliation, drain/restart and stale-epoch rejection",
-    "Configure the Hedera x402 facilitator/endpoint and validate a live settlement"
+    "Set Worker A's Arkiv access key privately in root .env, then verify only variable names and restart the API from the owning Mac Terminal",
+    "Set Worker B's Arkiv access key and signer in B's local environment before B recovery",
+    "Integrate D2's Arkiv, Hedera x402, and durable ledger adapters; configure a live endpoint and coordinate the A/B run",
+    "Run the live Sepolia-bound gateway against a fresh open job and verify authority, drain, and service-cap behavior"
   ],
-  "evidenceRefs": ["scripts/acceptance-local.mjs", "scripts/check-signing-vector.mjs", "scripts/deploy-escrow.mjs", "scripts/test-ens-authority-sepolia.mjs", "scripts/test-worker-ens-grants-sepolia.mjs", "scripts/demo-sepolia-job-lifecycle.mjs", "evidence/sepolia-jobs/cef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3.json", "server/contracts/abi/BatonTestToken.json", "server/contracts/abi/JobAuthority.json", "server/contracts/abi/JobEscrow.json", "server/contracts/src/BatonTestToken.sol", "server/contracts/src/JobAuthority.sol", "server/src/services/ledger/operationLedger.ts", "server/contracts/src/JobEscrow.sol"],
-  "releaseLabel": "locally verified; live integrations pending"
+  "evidenceRefs": ["scripts/acceptance-local.mjs", "scripts/check-signing-vector.mjs", "scripts/deploy-escrow.mjs", "scripts/test-ens-authority-sepolia.mjs", "scripts/test-worker-ens-grants-sepolia.mjs", "scripts/demo-sepolia-job-lifecycle.mjs", "evidence/sepolia-jobs/cef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3.json", "server/src/chain/sepoliaAuthority.ts", "server/src/services/gateway/gateway.ts", "server/src/services/ledger/operationLedger.ts", "server/contracts/abi/BatonTestToken.json", "server/contracts/abi/JobAuthority.json", "server/contracts/abi/JobEscrow.json", "server/contracts/src/BatonTestToken.sol", "server/contracts/src/JobAuthority.sol", "server/contracts/src/JobEscrow.sol"],
+  "releaseLabel": "Sepolia lifecycle: LIVE_PASS; full integration: pending."
 }

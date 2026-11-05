@@ -46,6 +46,16 @@ D1 owns `contracts/`, `services/gateway/`, `services/ledger/`, `packages/chain/`
 
 Use branches/worktrees `build/authority-payments` and `build/runtime-recovery`. Merge small passing changes at least every two hours. D1 merges chain/gateway changes; D2 merges runtime/UI changes; rebase before editing shared lockfiles. Pin one package manager and commit the lockfile. Neither developer edits the other's directories without a coordinated handoff. Cross-review security-sensitive changes before deployment, not every cosmetic patch.
 
+### D1 gateway and environment update — 2026-11-06
+
+**Sepolia lifecycle: LIVE_PASS; full integration: pending.** The funded lifecycle and its evidence below remain the Sepolia regression baseline.
+
+D1 has wired a read-only Sepolia authority reader into gateway assignment, milestone acceptance, takeover/resume, and paid-operation admission. It verifies the configured escrow/adapter, Sepolia chain ID, buyer, active worker/epoch, grant, cutoff, and open/drained/paused/closed state. The gateway serializes drain against work and enforces approved services, available budget, and per-request caps before provider submission. Local acceptance passes the mocked stale/revoked-worker and over-cap cases, UNKNOWN retry without resubmission, and a simulated payment-crash recovery where B reuses A's settled output with one provider submission. These are local checks; the gateway has not yet run against a fresh live job or real payment provider.
+
+The operator configured Worker A's Arkiv signer in the ignored checkout `.env`; its derived public address matches Worker A. The root `.env` has no `ARKIV_ACCESS_KEY`, and this checkout has no worker-specific env files. The server loads root `.env` through `dotenv`, where inherited process variables take precedence. The restricted execution shell could not inspect or stop the existing API process (`EPERM`), so restart and inherited-variable verification remain with the owning Mac Terminal session.
+
+Remaining live gates: add the intended worker's Arkiv access key privately; integrate D2's Arkiv and Hedera x402 adapters and durable ledger; jointly run a real purchase, Arkiv checkpoint, Sepolia acceptance, A termination, and B recovery; then repeat payment-crash against the provider's durable idempotency record. At fetch time D1's branch matched its upstream. D2's branch had advanced to `49394af`; its cumulative tree lacks D1's latest Sepolia evidence and lifecycle/deployment scripts, so it was reviewed but not merged wholesale. Preserve those artifacts during selective integration.
+
 Independence means both can code against fixed types, fixtures and adapters while live dependencies are prepared. Integration still requires the short shared gates. Waiting for an ABI, account or endpoint is not an instruction to stop: continue local contract tests, reference adapters, fixtures or UI against the same interface.
 
 ### D1 progress snapshot — 2026-11-06 (Asia/Kolkata)
@@ -55,32 +65,34 @@ This snapshot records D1's work only. D2 should add or update a separate D2 snap
 **Completed by D1**
 
 - Protocol/signing foundation: versioned protocol types, canonical hashing, EIP-712 offer/takeover helpers and signing-vector coverage.
-- Local authority/payment path: `JobEscrow` and `JobAuthority` sources, durable reservation/settlement/UNKNOWN/reconciliation ledger, epoch/drain fencing, local milestone lifecycle and acceptance scenario.
+- Local authority/payment path: `JobEscrow` and `JobAuthority` sources, durable reservation/settlement/UNKNOWN/reconciliation ledger, epoch/drain fencing, local milestone lifecycle and acceptance scenario. The gateway now reads Sepolia escrow/adapter state for worker, epoch, scoped grant and open/drain checks; it serializes drain with requests and enforces service allowlists, balance reservations and per-request caps.
 - ENS authority adapter: `JobAuthority` reads the ENSv2 Permissioned Resolver's `roles(resource, account)` and checks `ROLE_SET_DATA` at the resource derived from `baton.job.v1:<lowercase-job-id>`. The user reports the live grant/revoke/wrong-job checks passed for adapter `0xD659F372D2439075F29e39f5E005d86352Da1A6c`; the resolver and adapter remain separate in local `.env`.
 - Escrow redeploy workflow: `JobEscrow` has a zero-argument constructor. Added an explicit replace command that checks the configured resolver and adapter, verifies Sepolia chain ID, waits for the deployment receipt, checks runtime code, then updates `BATON_ESCROW_ADDRESS` while preserving `.env` mode `0600`.
 - Worker authority workflow: configured the user's actual Worker A/B public addresses in ignored `.env` and added a script to test each worker's temporary scoped grant, wrong-job denial, and revoke through the deployed adapter.
-- Funded job lifecycle: completed a live Sepolia run against the configured escrow using a test-only mintable ERC-20. A received and withdrew 3 tokens; after takeover to B at epoch 2, B received and withdrew 7. Stale A was rejected with `StaleEpoch` in an `eth_call` simulation. All 17 submitted transactions had successful receipts with two confirmations. Worker A's signer was configured privately and matched its public address. Full evidence is in `evidence/sepolia-jobs/cef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3.json`.
+- Funded job lifecycle: completed a live Sepolia run against the configured escrow using a test-only mintable ERC-20. A received and withdrew 3 tokens; after takeover to B at epoch 2, B received and withdrew 7. Escrow ended at zero. Stale A was rejected with `StaleEpoch` in an `eth_call` simulation. All 17 submitted transactions had successful receipts with two confirmations. Worker A's signer was configured privately and matched its public address. Full evidence is in `evidence/sepolia-jobs/cef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3.json`.
 - Contract build: Solidity 0.8.28 compilation and generated tracked ABIs.
 - Earlier escrow deployment: `JobEscrow` at `0x141FA2cE7805d87AEb363a2A725CAa0A0E945deC` has a recorded receipt at `0xeb56aa6e3020bbcdf4dc146bcfa2a3cba3e86474820d77709a75822df32ddfb7`; this address is superseded by the current local setting.
 - Current local escrow setting: `BATON_ESCROW_ADDRESS=0x4F802976810690F984cd05640a23b3FFB5B395E1`; reuse this address for the funded job and do not redeploy it. The current deployment transaction hash is not in tracked evidence.
-- Previous deployment code and status are pushed to `build/authority-payments` at commit `4068a10`; the ENS adapter changes in this update are in the working tree.
+- D1's Sepolia lifecycle and public evidence are pushed to `build/authority-payments` at commit `9d09feb`.
+- Gateway regression: local mock authority rejects stale/revoked workers and over-cap requests before provider calls; UNKNOWN retries do not resubmit; a simulated post-settlement crash reopens stores and lets B reuse A's output with one provider submission. This is local simulation, not live Hedera x402 proof.
 
 **Operator-side inputs verified**
 
 - Configured Sepolia RPC returned chain ID `11155111`; `baton.eth` resolved to buyer address `0x0f35bDe4F4b1270813c5116DA20915FCD49e47FA`, matching the locally configured deployer.
 - Deployer credentials stayed in ignored local `.env`, which has mode `0600`; no secret value was copied into the repository or chat.
+- `ARKIV_SIGNER_PRIVATE_KEY` derives to Worker A `0x432Eeff3E312f1910F3D04A6449753306fFaA5D2`. `ARKIV_ACCESS_KEY` is missing from the checkout root `.env`; no worker-specific env files were found. The server loads that root `.env`, while inherited process variables take precedence. The restricted shell could not inspect or stop the running API process (`EPERM`), so restart and effective-process verification remain for the owning Mac Terminal session.
 
 **Remaining for D1**
 
-- Validate live gateway/chain behavior for confirmation thresholds, reservation reconciliation, drain/restart and stale-epoch rejection. Local ledger acceptance and the escrow milestone pass do not prove live gateway settlement.
-- Validate live gateway/chain behavior for confirmation thresholds, reservation reconciliation, drain/restart and stale-epoch rejection. Local ledger acceptance is not a live chain pass.
-- Configure and prove the Hedera x402 facilitator/endpoint. Local Hedera account credentials are present in ignored `.env`, but the endpoint is unset and no live settlement is claimed.
+- Run the Sepolia-bound gateway against a fresh open job; current gateway tests use a mocked chain reader and do not prove live gateway behavior.
+- Add the intended worker's Arkiv access key privately, then verify effective env configuration and restart the API.
+- Integrate D2's Arkiv, Hedera x402 provider and durable ledger; configure a live endpoint and prove a settlement with a retrievable output.
 
 **Joint remaining work**
 
-- Integrate D1's live authority/payment path with D2's Arkiv checkpoint, provider, worker and recovery path on two hosts, then run the complete A-to-B demonstration and record evidence.
+- Integrate D1's live authority path with D2's Arkiv checkpoint, Hedera x402 provider, worker and recovery path on two hosts; run the real purchase → Arkiv checkpoint → Sepolia acceptance → A termination → B recovery flow. Then repeat payment-crash with provider idempotency and record evidence.
 
-**Readiness:** D1's local core, ENS scoped-permission check, and funded Sepolia A-to-B escrow lifecycle are delivered. The reward run used a test-only token; live service-payment integration remains open. Keep the release label `locally verified; live integrations pending`. Track completion by gates and evidence rather than an unweighted percentage.
+**Readiness:** **Sepolia lifecycle: LIVE_PASS; full integration: pending.** The live reward run used a test-only token. D1's authority reader and gateway recovery scenarios pass locally, while real gateway execution, Arkiv writes and Hedera x402 settlement remain open. Track completion by gates and evidence rather than an unweighted percentage.
 
 ## 3. Stack, setup and external dependency gates
 

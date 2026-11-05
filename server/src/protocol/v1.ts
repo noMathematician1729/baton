@@ -96,10 +96,13 @@ export type GatewayOperation = {
   providerReceipt?: string;
   outputDigest?: Hex;
   outputRef?: string;
+  reusedBy?: Array<{ worker: Hex; epoch: number; at: string }>;
   failureCode?: string;
 };
 
 export type JobSnapshot = {
+  /** Optional bytes32 JobEscrow ID bound to this local job for live gateway checks. */
+  chainJobId?: Hex;
   terms: JobTerms;
   task: TaskState;
   credits: RewardCredit[];

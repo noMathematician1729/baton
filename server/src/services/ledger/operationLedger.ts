@@ -101,9 +101,12 @@ export class OperationLedger {
     return this.mutate((state) => {
       const existing = state.operations[request.operationId];
       if (existing) {
-        if (existing.requestFingerprint !== request.requestFingerprint) {
+        if (!samePaymentIntent(existing, request)) {
           throw new Error("OPERATION_KEY_REUSED: operation ID has a different request fingerprint");
         }
+        // Accept the same paid intent across an authorized worker/epoch handoff.
+        // This also migrates records whose older fingerprint included worker/epoch.
+        existing.requestFingerprint = request.requestFingerprint;
         return existing;
       }
       const budget = state.budgets[request.jobId];
@@ -136,12 +139,22 @@ export class OperationLedger {
       const budget = state.budgets[operation.jobId];
       if (!budget) throw new Error("BUDGET_NOT_CONFIGURED");
       if (next === "SETTLED") {
-        budget.balance.reserved -= operation.amount;
-        budget.balance.settledSpend += operation.amount;
+        const previouslySettled = operation.state === "SETTLED"
+          || operation.state === "OUTPUT_AVAILABLE"
+          || Boolean(operation.providerReceipt);
+        if (!previouslySettled) {
+          budget.balance.reserved -= operation.amount;
+          budget.balance.settledSpend += operation.amount;
+        }
       } else if (next === "FAILED") {
-        budget.balance.reserved -= operation.amount;
-        budget.balance.available += operation.amount;
-        budget.balance.returnedFunds += operation.amount;
+        const previouslySettled = operation.state === "SETTLED"
+          || operation.state === "OUTPUT_AVAILABLE"
+          || Boolean(operation.providerReceipt);
+        if (!previouslySettled) {
+          budget.balance.reserved -= operation.amount;
+          budget.balance.available += operation.amount;
+          budget.balance.returnedFunds += operation.amount;
+        }
       }
       operation.state = next;
       operation.updatedAt = new Date().toISOString();
@@ -161,6 +174,20 @@ export class OperationLedger {
     return Object.values(this.state?.operations ?? {})
       .filter((operation) => operation.jobId === jobId)
       .map((operation) => structuredClone(operation));
+  }
+
+  public async recordReuse(operationId: string, worker: Hex, epoch: number): Promise<GatewayOperation> {
+    return this.mutate((state) => {
+      const operation = state.operations[operationId];
+      if (!operation) throw new Error("OPERATION_NOT_FOUND");
+      if (operation.state !== "OUTPUT_AVAILABLE") throw new Error("PAYMENT_OUTPUT_UNAVAILABLE");
+      if (operation.worker.toLowerCase() === worker.toLowerCase() && operation.epoch === epoch) return operation;
+      const reuses = operation.reusedBy ?? (operation.reusedBy = []);
+      if (!reuses.some((reuse) => reuse.worker.toLowerCase() === worker.toLowerCase() && reuse.epoch === epoch)) {
+        reuses.push({ worker, epoch, at: new Date().toISOString() });
+      }
+      return operation;
+    });
   }
 
   public async getBalance(jobId: string): Promise<LedgerBalance | undefined> {
@@ -196,6 +223,15 @@ export class OperationLedger {
     await writeFile(temporary, JSON.stringify(serialise(this.state), null, 2), "utf8");
     await rename(temporary, this.filePath);
   }
+}
+
+function samePaymentIntent(existing: GatewayOperation, request: ReserveRequest): boolean {
+  return existing.jobId === request.jobId
+    && existing.taskId === request.taskId
+    && existing.service === request.service
+    && existing.inputDigest === request.inputDigest
+    && existing.amount === request.amount
+    && existing.asset === request.asset;
 }
 
 const transitions: Record<OperationState, OperationState[]> = {

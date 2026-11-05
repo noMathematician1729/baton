@@ -18,6 +18,7 @@ import {
 type StoreFile = { version: 1; jobs: Record<string, JobSnapshot> };
 
 export type CreateJobInput = {
+  chainJobId?: Hex;
   buyer: Hex;
   rewardToken: Hex;
   verifier: Hex;
@@ -87,6 +88,7 @@ export class JobStore {
         task,
       };
       const snapshot: JobSnapshot = {
+        chainJobId: input.chainJobId,
         terms,
         task: {
           taskId,

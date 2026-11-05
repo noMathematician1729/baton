@@ -6,12 +6,25 @@ import { env } from "./config/env.js";
 import { JobStore } from "./domain/jobs/jobStore.js";
 import { OperationLedger } from "./services/ledger/operationLedger.js";
 import { Gateway, LocalPaymentProvider } from "./services/gateway/gateway.js";
+import { SepoliaAuthorityReader } from "./chain/sepoliaAuthority.js";
 import { serialise, type CheckpointHead, type Hex } from "./protocol/v1.js";
 
 export function createServices() {
   const jobs = new JobStore(resolve(env.BATON_DATA_DIR, "jobs.json"));
   const ledger = new OperationLedger(resolve(env.BATON_DATA_DIR, "operations.json"));
-  const gateway = new Gateway(jobs, ledger, new LocalPaymentProvider());
+  const chainConfigured = Boolean(env.SEPOLIA_RPC_URL && env.BATON_ESCROW_ADDRESS && env.BATON_AUTHORITY_ADAPTER_ADDRESS);
+  const useChainAuthority = env.GATEWAY_AUTHORITY_MODE === "sepolia"
+    || (env.GATEWAY_AUTHORITY_MODE === "auto" && chainConfigured);
+  if (useChainAuthority && !chainConfigured) throw new Error("CHAIN_AUTHORITY_CONFIG_INCOMPLETE");
+  if (useChainAuthority && env.SEPOLIA_CHAIN_ID !== 11155111) throw new Error("CHAIN_NETWORK_MISMATCH");
+  const authority = useChainAuthority
+    ? new SepoliaAuthorityReader({
+      rpcUrl: env.SEPOLIA_RPC_URL,
+      escrowAddress: env.BATON_ESCROW_ADDRESS,
+      adapterAddress: env.BATON_AUTHORITY_ADAPTER_ADDRESS,
+    })
+    : undefined;
+  const gateway = new Gateway(jobs, ledger, new LocalPaymentProvider(), authority);
   return { jobs, ledger, gateway };
 }
 
@@ -38,7 +51,7 @@ export function createApp() {
       digest: "sha256",
       emptyHead: "0x" + "00".repeat(32),
       confirmationBlocks: env.CONFIRMATION_BLOCKS,
-      networkMode: env.SEPOLIA_RPC_URL && env.BATON_ESCROW_ADDRESS && env.ENS_RESOLVER_ADDRESS && env.BATON_AUTHORITY_ADAPTER_ADDRESS
+      networkMode: gateway.requiresChainAuthority
         ? "testnet-configured"
         : "local",
     });
@@ -62,7 +75,10 @@ export function createApp() {
 
   app.post("/api/jobs", async (request, response) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
+    const chainJobId = optionalChainJobId(body.chainJobId);
+    if (gateway.requiresChainAuthority && !chainJobId) throw new Error("CHAIN_JOB_ID_REQUIRED");
     const job = await jobs.create({
+      chainJobId,
       buyer: address(body.buyer, fallbackAddress("1")),
       rewardToken: address(body.rewardToken, fallbackAddress("2")),
       verifier: address(body.verifier, fallbackAddress("3")),
@@ -78,8 +94,8 @@ export function createApp() {
   });
 
   app.post("/api/jobs/:jobId/assign", async (request, response) => {
-    const worker = address(request.body?.worker, fallbackAddress("a"));
-    response.json(serialise(await jobs.assign(request.params.jobId, worker)));
+    const worker = requiredAddress(request.body?.worker, "WORKER");
+    response.json(serialise(await gateway.assign(request.params.jobId, worker)));
   });
 
   app.post("/api/jobs/:jobId/checkpoints", async (request, response) => {
@@ -91,10 +107,10 @@ export function createApp() {
       schemaVersion: stringValue(body.schemaVersion, "checkpoint.v1"),
       sequence: Number(body.sequence ?? 1),
     };
-    response.json(serialise(await jobs.acceptMilestone({
+    response.json(serialise(await gateway.acceptMilestone({
       jobId: request.params.jobId,
-      worker: address(body.worker, fallbackAddress("a")),
-      epoch: Number(body.epoch ?? 1),
+      worker: requiredAddress(body.worker, "WORKER"),
+      epoch: epochValue(body.epoch),
       expectedHead: digestValue(body.expectedHead, "expectedHead"),
       newHead,
     })));
@@ -106,11 +122,11 @@ export function createApp() {
 
   app.post("/api/jobs/:jobId/takeover", async (request, response) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
-    response.json(serialise(await jobs.takeover({
+    response.json(serialise(await gateway.takeover({
       jobId: request.params.jobId,
-      successor: address(body.successor, fallbackAddress("b")),
+      successor: requiredAddress(body.successor, "SUCCESSOR"),
       expectedHead: digestValue(body.expectedHead, "expectedHead"),
-      expectedEpoch: Number(body.expectedEpoch),
+      expectedEpoch: epochValue(body.expectedEpoch),
       compatibilityReport: digestValue(body.compatibilityReport, "compatibilityReport"),
     })));
   });
@@ -144,8 +160,8 @@ export function createApp() {
       operationId: stringValue(body.operationId, "op_" + request.params.jobId + "_" + String(body.inputDigest ?? Date.now())),
       jobId: request.params.jobId,
       taskId: stringValue(body.taskId, job?.task.taskId ?? ""),
-      worker: address(body.worker, fallbackAddress("a")),
-      epoch: Number(body.epoch ?? 1),
+      worker: requiredAddress(body.worker, "WORKER"),
+      epoch: epochValue(body.epoch),
       service: stringValue(body.service, "batch-data-v1"),
       inputDigest: digestValue(body.inputDigest, "inputDigest"),
       amount: bigintValue(body.amount, 1n),
@@ -155,12 +171,21 @@ export function createApp() {
   });
 
   app.post("/api/services/operations/:operationId/reconcile", async (request, response) => {
-    response.json(serialise(await gateway.reconcile(request.params.operationId)));
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    response.json(serialise(await gateway.reconcile(
+      request.params.operationId,
+      requiredAddress(body.worker, "WORKER"),
+      epochValue(body.epoch),
+    )));
   });
 
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
     const message = error instanceof Error ? error.message : "INTERNAL_ERROR";
-    const status = message.startsWith("JOB_NOT_FOUND") || message.startsWith("OPERATION_NOT_FOUND") ? 404 : 409;
+    const status = message.startsWith("JOB_NOT_FOUND") || message.startsWith("OPERATION_NOT_FOUND")
+      ? 404
+      : message.startsWith("CHAIN_AUTHORITY_UNAVAILABLE")
+        ? 503
+        : 409;
     response.status(status).json({ error: message });
   });
 
@@ -196,6 +221,23 @@ function address(value: unknown, fallback: Hex): Hex {
   const candidate = typeof value === "string" && value.length > 0 ? value : fallback;
   if (!/^0x[0-9a-f]{40}$/i.test(candidate)) throw new Error("INVALID_ADDRESS");
   return candidate.toLowerCase() as Hex;
+}
+
+function requiredAddress(value: unknown, label: string): Hex {
+  if (typeof value !== "string" || !/^0x[0-9a-f]{40}$/i.test(value)) throw new Error(`INVALID_${label}_ADDRESS`);
+  return value.toLowerCase() as Hex;
+}
+
+function epochValue(value: unknown): number {
+  const epoch = Number(value);
+  if (!Number.isSafeInteger(epoch) || epoch < 1) throw new Error("INVALID_EPOCH");
+  return epoch;
+}
+
+function optionalChainJobId(value: unknown): Hex | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string" || !/^0x[0-9a-f]{64}$/i.test(value)) throw new Error("INVALID_CHAIN_JOB_ID");
+  return value.toLowerCase() as Hex;
 }
 
 function fallbackAddress(hexCharacter: string): Hex {

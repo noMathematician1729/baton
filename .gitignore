@@ -1,0 +1,19 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+
+# Foundry output and local chain state
+server/contracts/cache/
+server/contracts/out/
+server/contracts/broadcast/
+
+# Local databases and editor files
+*.sqlite
+*.sqlite3
+.DS_Store
+.idea/
+.vscode/

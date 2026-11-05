@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   deserialise,
+  digest,
   type GatewayOperation,
   type Hex,
   type OperationState,
@@ -100,12 +101,15 @@ export class OperationLedger {
         | undefined;
       if (existing) {
         const operation = parseJson<GatewayOperation>(existing.operation_json);
-        if (!samePaymentIntent(operation, request)) {
-          throw new Error("OPERATION_KEY_REUSED: operation ID has a different request fingerprint");
-        }
-        // Worker and epoch may change after an authorized takeover. Keep the
-        // immutable paid intent as the idempotency key across that handoff.
         if (operation.requestFingerprint !== request.requestFingerprint) {
+          // Migrate records written by the previous gateway fingerprint, which
+          // included worker and epoch. New records require the stable intent
+          // fingerprint and reject arbitrary operation-key reuse.
+          if (!samePaymentIntent(operation, request)
+            || operation.requestFingerprint !== legacyGatewayFingerprint(operation)
+            || request.requestFingerprint !== stablePaymentFingerprint(request)) {
+            throw new Error("OPERATION_KEY_REUSED: operation ID has a different request fingerprint");
+          }
           operation.requestFingerprint = request.requestFingerprint;
           operation.updatedAt = new Date().toISOString();
           db.prepare("UPDATE operations SET request_fingerprint = ?, operation_json = ?, updated_at = ? WHERE operation_id = ?")
@@ -177,10 +181,7 @@ export class OperationLedger {
           if (balance.reserved < operation.amount) throw new Error("LEDGER_INVARIANT_BROKEN");
           balance.reserved -= operation.amount;
           if (next === "SETTLED") balance.settledSpend += operation.amount;
-          else {
-            balance.available += operation.amount;
-            balance.returnedFunds += operation.amount;
-          }
+          else balance.available += operation.amount;
           this.writeBalance(db, operation.jobId, balance);
         }
       }
@@ -350,6 +351,31 @@ function samePaymentIntent(existing: GatewayOperation, request: ReserveRequest):
     && existing.inputDigest === request.inputDigest
     && existing.amount === request.amount
     && existing.asset === request.asset;
+}
+
+function stablePaymentFingerprint(request: ReserveRequest): Hex {
+  return digest({
+    jobId: request.jobId,
+    taskId: request.taskId,
+    service: request.service,
+    inputDigest: request.inputDigest,
+    amount: request.amount.toString(),
+    asset: request.asset,
+  });
+}
+
+function legacyGatewayFingerprint(operation: GatewayOperation): Hex {
+  return digest({
+    operationId: operation.operationId,
+    jobId: operation.jobId,
+    taskId: operation.taskId,
+    worker: operation.worker,
+    epoch: operation.epoch,
+    service: operation.service,
+    inputDigest: operation.inputDigest,
+    amount: operation.amount.toString(),
+    asset: operation.asset,
+  });
 }
 
 const transitions: Record<OperationState, OperationState[]> = {

@@ -40,7 +40,7 @@ The current `build/runtime-recovery` branch contains the integrated D1 authority
 
 ### Verification
 
-The incoming `build/runtime-recovery` branch records a successful `npm run verify` at commit `9976380`, including 15 local tests, Solidity compilation, the signing vector, and acceptance. D1's Sepolia lifecycle remains the live regression baseline. This merge resolution has not been rerun through `npm run verify`; its result is not being claimed here. Neither the recorded local verification nor the Sepolia escrow run made a live x402 payment or Arkiv content write.
+Merged-tree checks passed for client/server typecheck and builds, Solidity compilation, the signing vector, D1 local acceptance, and all 15 non-HTTP tests. Acceptance confirms B recovers A's simulated settled purchase after restart with one provider submission. The API restart test is still unverified in this sandbox because loopback `listen` returns `EPERM`; the `tsx` test launcher also cannot create its temporary IPC socket, so the `npm run verify` command could not complete as written. These checks used local fixtures and made no Sepolia, Arkiv, or x402 calls; testnet spend was zero. D1's Sepolia lifecycle remains the live regression baseline.
 
 ### Sepolia progress
 

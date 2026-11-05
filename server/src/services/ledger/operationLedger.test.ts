@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { digest } from "../../protocol/v1.js";
 import { OperationLedger, type ReserveRequest } from "./operationLedger.js";
 
 const policy = {
@@ -97,6 +98,56 @@ test("operation IDs reject different request fingerprints and budgets stay immut
       /OPERATION_KEY_REUSED/,
     );
     await assert.rejects(ledger.configureBudget("job-1", { ...policy, perRequestCap: 4n }), /BUDGET_IMMUTABLE/);
+  } finally {
+    ledger.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("legacy worker-scoped fingerprints migrate to stable handoff fingerprints", async () => {
+  const root = await mkdtemp(join(tmpdir(), "baton-ledger-migration-"));
+  const ledger = new OperationLedger(join(root, "payment-ledger.sqlite"));
+  try {
+    await ledger.configureBudget("job-1", policy);
+    const legacy = reserveRequest("op-legacy", "nonce-legacy", 2n);
+    const legacyFingerprint = digest({
+      operationId: legacy.operationId,
+      jobId: legacy.jobId,
+      taskId: legacy.taskId,
+      worker: legacy.worker,
+      epoch: legacy.epoch,
+      service: legacy.service,
+      inputDigest: legacy.inputDigest,
+      amount: legacy.amount.toString(),
+      asset: legacy.asset,
+    });
+    await ledger.reserve({ ...legacy, requestFingerprint: legacyFingerprint });
+
+    const stableFingerprint = digest({
+      jobId: legacy.jobId,
+      taskId: legacy.taskId,
+      service: legacy.service,
+      inputDigest: legacy.inputDigest,
+      amount: legacy.amount.toString(),
+      asset: legacy.asset,
+    });
+    const reused = await ledger.reserve({
+      ...legacy,
+      worker: "0x" + "b".repeat(40),
+      epoch: 2,
+      requestFingerprint: stableFingerprint,
+      nonce: "nonce-after-takeover",
+    });
+
+    assert.equal(reused.requestFingerprint, stableFingerprint);
+    assert.equal(reused.worker, legacy.worker, "the original operation owner should remain in the audit record");
+    assert.deepEqual(await ledger.getBalance("job-1"), {
+      deposits: 10n,
+      available: 8n,
+      reserved: 2n,
+      settledSpend: 0n,
+      returnedFunds: 0n,
+    });
   } finally {
     ledger.close();
     await rm(root, { recursive: true, force: true });

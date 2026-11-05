@@ -3,9 +3,9 @@
   "executionRole": "D2",
   "branch": "build/authority-payments (merged from build/runtime-recovery)",
   "startedAt": "2026-11-05T22:17:32+05:30",
-  "updatedAt": "2026-11-06T04:24:49+05:30",
+  "updatedAt": "2026-11-06T04:35:27+05:30",
   "elapsedHours": 4.75,
-  "currentTask": "D2 runtime/recovery modules integrated with D1's live Sepolia authority and lifecycle baseline; live Arkiv/x402 work remains.",
+  "currentTask": "D2 runtime/recovery integrated; merged-tree checks pass apart from the sandbox-blocked loopback API restart test.",
   "completedFeatures": [
     "React and Node TypeScript workspaces pass typecheck and production build",
     "Checkpoint manifest schema and AES-256-GCM manifest/chunk encryption",
@@ -18,6 +18,7 @@
     "UNKNOWN reservations survive restart and retries do not submit the same payment again",
     "D1 protocol, signing vector, job lifecycle, gateway, escrow and authority sources integrated",
     "D1 and D2 changes merged on build/authority-payments; D1 Sepolia scripts and public evidence retained",
+    "Merged-tree typecheck/build, 15 non-HTTP tests, SQLite payment-crash acceptance, contract compilation, and signing vector pass",
     "Full npm run verify passes: client/server typecheck and builds, 15 tests including an HTTP restart recovery test, Solidity compile, signing recovery and D1 acceptance",
     "Read-only Sepolia check confirms chain ID, escrow bytecode, and ENS name-to-resolver link; no writes or transactions",
     "11 local checkpoint, storage, runtime, worker, MCP, and admission tests pass after final status correction",
@@ -29,7 +30,7 @@
     "Arkiv content write/readback and entity ownership/renewal policy remain unverified",
     "No x402 payment was attempted; the integrated payment provider is still a local fixture even though Hedera variables are present",
     "B-host availability for isolated cold recovery is unconfirmed",
-    "The current merge resolution has not yet been rerun through npm run verify",
+    "The API restart test cannot bind loopback in this sandbox (EPERM), and the standard tsx test launcher cannot create its IPC socket",
     "User-directed Arkiv-only content storage overrides plan.md mirror scenarios",
     "npm audit reports a high and low advisory through solc 0.8.28 -> tmp 0.0.33; its dry-run proposes compiler/dependency updates that still need review"
   ],
@@ -37,7 +38,7 @@
     "Set ARKIV_ACCESS_KEY privately and define Arkiv entity ownership/renewal policy (R-D1-04/R-D2-04)",
     "B-host availability for isolated cold recovery run (R-D2-02)",
     "Review compiler/security advisory fix while preserving reproducible contract compiler settings",
-    "Run npm run verify on the merged tree before calling it locally verified"
+    "Run the API restart test in an environment that permits loopback sockets"
   ],
   "evidenceRefs": [
     "npm run verify · all local verification passed · 2026-11-05T19:55Z",

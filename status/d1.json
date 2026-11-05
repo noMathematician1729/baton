@@ -1,8 +1,8 @@
 {
   "owner": "D1",
-  "updatedAt": "2026-11-06T04:24:49+05:30",
+  "updatedAt": "2026-11-06T04:35:27+05:30",
   "elapsedHours": 0,
-  "currentTask": "Integrate runtime/recovery from build/runtime-recovery while preserving the Sepolia authority and lifecycle baseline",
+  "currentTask": "Verify and publish the merged runtime/recovery plus Sepolia authority baseline",
   "completedFeatures": [
     "Versioned protocol types, canonical hashing and EIP-712 offer/takeover hash helpers",
     "Durable atomic operation ledger with reservation, settlement, UNKNOWN and reconciliation states",
@@ -28,6 +28,7 @@
     "Local mocked-authority checks reject stale/revoked workers and over-cap requests before provider calls; the checkpoint API now uses the same gateway admission guard",
     "Local payment-crash simulation reopens stores after settlement and lets B reuse A's output with one provider submission; UNKNOWN retries do not resubmit",
     "Safely merged D2 runtime/recovery with D1 gateway authority, SQLite payment ledger, payment-crash acceptance, and public Sepolia evidence",
+    "Merged-tree client/server typecheck and builds, contract compile, signing vector, D1 acceptance, and 15 non-HTTP tests pass",
     "Configured Sepolia RPC in ignored local .env and verified chain ID 11155111",
     "Resolved baton.eth on Sepolia to 0x0f35bDe4F4b1270813c5116DA20915FCD49e47FA; ENS resolver 0x583fDD4b8d345624B1B8438Bd8ca5004bD0352bA",
     "Secured .env with owner-only file permissions and added guarded escrow deployment command",
@@ -40,14 +41,14 @@
     "ARKIV_ACCESS_KEY is missing from the ignored checkout root .env; no worker-specific env files were found",
     "The existing API process could not be inspected or stopped from this execution shell because macOS returned EPERM; dotenv loads root .env but inherited process variables take precedence",
     "The live Hedera x402 facilitator/endpoint and settlement are not verified; the API still uses its local payment-provider fixture",
-    "The current merge resolution has not yet been rerun through npm run verify"
+    "The API restart test cannot bind loopback in this sandbox (EPERM), and the standard tsx test launcher cannot create its IPC socket; the other merged-tree checks pass"
   ],
   "neededInputs": [
     "Set Worker A's Arkiv access key privately in root .env, then verify only variable names and restart the API from the owning Mac Terminal",
     "Set Worker B's Arkiv access key and signer in B's local environment before B recovery",
     "Define Arkiv entity ownership and renewal authority, then set ARKIV_ACCESS_KEY privately",
     "Configure a real Hedera x402 endpoint and coordinate the joint A/B run, including B-host cold recovery",
-    "Run npm run verify on the merged tree before calling this merge locally verified"
+    "Run the API restart test in an environment that permits loopback sockets; remaining merged-tree checks already passed"
   ],
   "evidenceRefs": ["scripts/acceptance-local.mjs", "scripts/check-signing-vector.mjs", "scripts/deploy-escrow.mjs", "scripts/test-ens-authority-sepolia.mjs", "scripts/test-worker-ens-grants-sepolia.mjs", "scripts/demo-sepolia-job-lifecycle.mjs", "evidence/sepolia-jobs/cef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3.json", "server/src/chain/sepoliaAuthority.ts", "server/src/services/gateway/gateway.ts", "server/src/services/ledger/operationLedger.ts", "server/contracts/abi/BatonTestToken.json", "server/contracts/abi/JobAuthority.json", "server/contracts/abi/JobEscrow.json", "server/contracts/src/BatonTestToken.sol", "server/contracts/src/JobAuthority.sol", "server/contracts/src/JobEscrow.sol"],
   "releaseLabel": "Sepolia lifecycle: LIVE_PASS; full integration: pending."

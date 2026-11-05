@@ -1,8 +1,8 @@
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
-import { resolve } from "node:path";
-import { env } from "./config/env.js";
+import { isAbsolute, resolve } from "node:path";
+import { env, SERVER_ROOT } from "./config/env.js";
 import { JobStore } from "./domain/jobs/jobStore.js";
 import { OperationLedger } from "./services/ledger/operationLedger.js";
 import { Gateway, LocalPaymentProvider } from "./services/gateway/gateway.js";
@@ -10,8 +10,14 @@ import { SepoliaAuthorityReader } from "./chain/sepoliaAuthority.js";
 import { serialise, type CheckpointHead, type Hex } from "./protocol/v1.js";
 
 export function createServices() {
-  const jobs = new JobStore(resolve(env.BATON_DATA_DIR, "jobs.json"));
-  const ledger = new OperationLedger(resolve(env.BATON_DATA_DIR, "operations.json"));
+  const dataDirectory = isAbsolute(env.BATON_DATA_DIR)
+    ? env.BATON_DATA_DIR
+    : resolve(SERVER_ROOT, env.BATON_DATA_DIR);
+  const ledgerPath = isAbsolute(env.PAYMENT_LEDGER_PATH)
+    ? env.PAYMENT_LEDGER_PATH
+    : resolve(SERVER_ROOT, env.PAYMENT_LEDGER_PATH);
+  const jobs = new JobStore(resolve(dataDirectory, "jobs.json"));
+  const ledger = new OperationLedger(ledgerPath);
   const chainConfigured = Boolean(env.SEPOLIA_RPC_URL && env.BATON_ESCROW_ADDRESS && env.BATON_AUTHORITY_ADAPTER_ADDRESS);
   const useChainAuthority = env.GATEWAY_AUTHORITY_MODE === "sepolia"
     || (env.GATEWAY_AUTHORITY_MODE === "auto" && chainConfigured);
@@ -28,9 +34,9 @@ export function createServices() {
   return { jobs, ledger, gateway };
 }
 
-export function createApp() {
+export function createApp(services = createServices()) {
   const app = express();
-  const { jobs, ledger, gateway } = createServices();
+  const { jobs, ledger, gateway } = services;
 
   app.disable("x-powered-by");
   app.use(helmet());
@@ -45,6 +51,21 @@ export function createApp() {
     });
   });
 
+  app.get("/api/status", (_request, response) => {
+    response.json({
+      api: "ready",
+      contentStore: "arkiv",
+      configuration: {
+        arkiv: Boolean(env.ARKIV_ACCESS_KEY && env.ARKIV_SIGNER_PRIVATE_KEY && env.CHECKPOINT_ENCRYPTION_KEY),
+        sepolia: Boolean(env.SEPOLIA_RPC_URL && env.BATON_ESCROW_ADDRESS && env.BATON_AUTHORITY_ADAPTER_ADDRESS),
+        ens: Boolean(env.ENS_JOB_NAME && env.ENS_RESOLVER_ADDRESS),
+        hederaX402: Boolean(env.HEDERA_ACCOUNT_ID && env.HEDERA_PRIVATE_KEY && env.X402_FACILITATOR_URL),
+      },
+      paymentLedger: { backend: "sqlite", implementation: "node:sqlite" },
+      paymentProvider: "local-fixture",
+    });
+  });
+
   app.get("/api/protocol", (_request, response) => {
     response.json({
       protocol: "baton.protocol.v1",
@@ -53,9 +74,19 @@ export function createApp() {
       confirmationBlocks: env.CONFIRMATION_BLOCKS,
       networkMode: gateway.requiresChainAuthority
         ? "testnet-configured"
-        : "local",
+        : "local-fixture",
     });
   });
+
+  const localFixtureOnly: express.RequestHandler = (_request, response, next) => {
+    if (env.NODE_ENV === "production") {
+      response.status(503).json({ error: "LOCAL_FIXTURE_DISABLED" });
+      return;
+    }
+    next();
+  };
+  app.use("/api/jobs", localFixtureOnly);
+  app.use("/api/services", localFixtureOnly);
 
   app.get("/api/jobs", async (_request, response) => {
     response.json(serialise(await jobs.list()));
@@ -67,11 +98,13 @@ export function createApp() {
     response.json(serialise({ job, operations: await ledger.listOperations(request.params.jobId), balance: await ledger.getBalance(request.params.jobId) }));
   });
 
-  app.post("/api/demo/reset", async (_request, response) => {
-    await jobs.reset();
-    await ledger.reset();
-    response.status(204).end();
-  });
+  if (env.NODE_ENV !== "production") {
+    app.post("/api/demo/reset", async (_request, response) => {
+      await jobs.reset();
+      await ledger.reset();
+      response.status(204).end();
+    });
+  }
 
   app.post("/api/jobs", async (request, response) => {
     const body = (request.body ?? {}) as Record<string, unknown>;

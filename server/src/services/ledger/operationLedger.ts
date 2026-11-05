@@ -1,5 +1,6 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import {
   deserialise,
   type GatewayOperation,
@@ -17,12 +18,6 @@ export type LedgerBalance = {
   returnedFunds: bigint;
 };
 
-type LedgerFile = {
-  version: 1;
-  budgets: Record<string, { policy: ServicePolicy; balance: LedgerBalance }>;
-  operations: Record<string, GatewayOperation>;
-};
-
 export type ReserveRequest = {
   operationId: string;
   jobId: string;
@@ -37,88 +32,102 @@ export type ReserveRequest = {
   nonce: string;
 };
 
-export type SettledOperation = {
-  providerReceipt: string;
-  outputDigest?: Hex;
-  outputRef?: string;
+type BudgetRow = {
+  policy_json: string;
+  deposits: string;
+  available: string;
+  reserved: string;
+  settled_spend: string;
+  returned_funds: string;
 };
 
-/**
- * A small durable ledger with the same transactional boundary required by the
- * production adapter. Writes are atomic (temp file + rename) and serialized in
- * process. A future SQLite adapter can implement this interface without changing
- * gateway or worker code.
- */
-export class OperationLedger {
-  private readonly filePath: string;
-  private state: LedgerFile | undefined;
-  private queue: Promise<unknown> = Promise.resolve();
+type OperationRow = { operation_json: string };
+type OperationPatch = Partial<Pick<GatewayOperation, "providerReceipt" | "outputDigest" | "outputRef" | "failureCode" | "reusedBy">>;
 
-  public constructor(filePath: string) {
-    this.filePath = filePath;
-  }
+/** Durable operation and service-budget ledger backed by the gateway's local SQLite database. */
+export class OperationLedger {
+  private db: DatabaseSync | undefined;
+
+  public constructor(private readonly filePath: string) {}
 
   public async init(): Promise<void> {
-    await mkdir(dirname(this.filePath), { recursive: true });
-    try {
-      this.state = deserialise<LedgerFile>(await JSON.parse(await readFile(this.filePath, "utf8")));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      this.state = { version: 1, budgets: {}, operations: {} };
-      await this.persist();
-    }
+    this.database();
+  }
+
+  public close(): void {
+    this.db?.close();
+    this.db = undefined;
   }
 
   public async reset(): Promise<void> {
-    await this.mutate((state) => {
-      state.budgets = {};
-      state.operations = {};
+    this.transaction((db) => {
+      db.exec("DELETE FROM operations; DELETE FROM budgets;");
     });
   }
 
   public async configureBudget(jobId: string, policy: ServicePolicy): Promise<LedgerBalance> {
-    return this.mutate((state) => {
-      const current = state.budgets[jobId];
-      if (current) {
-        if (current.policy.asset !== policy.asset || current.policy.budget !== policy.budget) {
+    return this.transaction((db) => {
+      const policyJson = json(policy);
+      const existing = db.prepare("SELECT policy_json FROM budgets WHERE job_id = ?").get(jobId) as
+        | { policy_json: string }
+        | undefined;
+      if (existing) {
+        if (existing.policy_json !== policyJson) {
           throw new Error("BUDGET_IMMUTABLE: service policy cannot be rewritten after funding");
         }
-        return current.balance;
+        return balanceFromRow(this.budgetRow(db, jobId));
       }
-      const balance = {
+
+      const balance: LedgerBalance = {
         deposits: policy.budget,
         available: policy.budget,
         reserved: 0n,
         settledSpend: 0n,
         returnedFunds: 0n,
-      } satisfies LedgerBalance;
-      state.budgets[jobId] = { policy, balance };
+      };
+      db.prepare(`
+        INSERT INTO budgets (job_id, policy_json, deposits, available, reserved, settled_spend, returned_funds)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(jobId, policyJson, ...balanceValues(balance));
       return balance;
     });
   }
 
   public async reserve(request: ReserveRequest): Promise<GatewayOperation> {
-    return this.mutate((state) => {
-      const existing = state.operations[request.operationId];
+    return this.transaction((db) => {
+      const existing = db.prepare("SELECT operation_json FROM operations WHERE operation_id = ?").get(request.operationId) as
+        | OperationRow
+        | undefined;
       if (existing) {
-        if (!samePaymentIntent(existing, request)) {
+        const operation = parseJson<GatewayOperation>(existing.operation_json);
+        if (!samePaymentIntent(operation, request)) {
           throw new Error("OPERATION_KEY_REUSED: operation ID has a different request fingerprint");
         }
-        // Accept the same paid intent across an authorized worker/epoch handoff.
-        // This also migrates records whose older fingerprint included worker/epoch.
-        existing.requestFingerprint = request.requestFingerprint;
-        return existing;
+        // Worker and epoch may change after an authorized takeover. Keep the
+        // immutable paid intent as the idempotency key across that handoff.
+        if (operation.requestFingerprint !== request.requestFingerprint) {
+          operation.requestFingerprint = request.requestFingerprint;
+          operation.updatedAt = new Date().toISOString();
+          db.prepare("UPDATE operations SET request_fingerprint = ?, operation_json = ?, updated_at = ? WHERE operation_id = ?")
+            .run(operation.requestFingerprint, json(operation), operation.updatedAt, operation.operationId);
+        }
+        return operation;
       }
-      const budget = state.budgets[request.jobId];
-      if (!budget) throw new Error("BUDGET_NOT_CONFIGURED");
-      if (budget.policy.asset !== request.asset) throw new Error("ASSET_NOT_APPROVED");
-      if (!budget.policy.approvedServices.includes(request.service)) throw new Error("SERVICE_NOT_APPROVED");
-      if (request.amount <= 0n || request.amount > budget.policy.perRequestCap) {
+
+      const row = this.budgetRow(db, request.jobId);
+      const policy = parseJson<ServicePolicy>(row.policy_json);
+      const balance = balanceFromRow(row);
+      if (policy.asset !== request.asset) throw new Error("ASSET_NOT_APPROVED");
+      if (!policy.approvedServices.includes(request.service)) throw new Error("SERVICE_NOT_APPROVED");
+      if (request.amount <= 0n || request.amount > policy.perRequestCap) {
         throw new Error("REQUEST_CAP_EXCEEDED");
       }
-      if (budget.balance.available < request.amount) throw new Error("BUDGET_EXHAUSTED");
-      budget.balance.available -= request.amount;
-      budget.balance.reserved += request.amount;
+      if (balance.available < request.amount) throw new Error("BUDGET_EXHAUSTED");
+
+      balance.available -= request.amount;
+      balance.reserved += request.amount;
+      this.writeBalance(db, request.jobId, balance);
+
       const timestamp = new Date().toISOString();
       const operation: GatewayOperation = {
         ...request,
@@ -126,102 +135,211 @@ export class OperationLedger {
         createdAt: timestamp,
         updatedAt: timestamp,
       };
-      state.operations[request.operationId] = operation;
+      db.prepare(`
+        INSERT INTO operations (operation_id, job_id, request_fingerprint, nonce, state, amount, operation_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        operation.operationId,
+        operation.jobId,
+        operation.requestFingerprint,
+        operation.nonce,
+        operation.state,
+        operation.amount.toString(),
+        json(operation),
+        operation.createdAt,
+        operation.updatedAt,
+      );
+      this.recordEvent(db, operation.operationId, null, operation.state, {});
       return operation;
     });
   }
 
-  public async transition(operationId: string, next: OperationState, patch: Partial<GatewayOperation> = {}): Promise<GatewayOperation> {
-    return this.mutate((state) => {
-      const operation = state.operations[operationId];
-      if (!operation) throw new Error("OPERATION_NOT_FOUND");
-      assertTransition(operation.state, next);
-      const budget = state.budgets[operation.jobId];
-      if (!budget) throw new Error("BUDGET_NOT_CONFIGURED");
-      if (next === "SETTLED") {
-        const previouslySettled = operation.state === "SETTLED"
-          || operation.state === "OUTPUT_AVAILABLE"
+  public async transition(
+    operationId: string,
+    next: OperationState,
+    patch: OperationPatch = {},
+  ): Promise<GatewayOperation> {
+    return this.transaction((db) => {
+      const row = db.prepare("SELECT operation_json FROM operations WHERE operation_id = ?").get(operationId) as
+        | OperationRow
+        | undefined;
+      if (!row) throw new Error("OPERATION_NOT_FOUND");
+      const operation = parseJson<GatewayOperation>(row.operation_json);
+      const previousState = operation.state;
+      assertTransition(previousState, next);
+
+      if (next === "SETTLED" || next === "FAILED") {
+        const balance = balanceFromRow(this.budgetRow(db, operation.jobId));
+        const alreadySettled = previousState === "SETTLED"
+          || previousState === "OUTPUT_AVAILABLE"
           || Boolean(operation.providerReceipt);
-        if (!previouslySettled) {
-          budget.balance.reserved -= operation.amount;
-          budget.balance.settledSpend += operation.amount;
-        }
-      } else if (next === "FAILED") {
-        const previouslySettled = operation.state === "SETTLED"
-          || operation.state === "OUTPUT_AVAILABLE"
-          || Boolean(operation.providerReceipt);
-        if (!previouslySettled) {
-          budget.balance.reserved -= operation.amount;
-          budget.balance.available += operation.amount;
-          budget.balance.returnedFunds += operation.amount;
+        if (!alreadySettled) {
+          if (balance.reserved < operation.amount) throw new Error("LEDGER_INVARIANT_BROKEN");
+          balance.reserved -= operation.amount;
+          if (next === "SETTLED") balance.settledSpend += operation.amount;
+          else {
+            balance.available += operation.amount;
+            balance.returnedFunds += operation.amount;
+          }
+          this.writeBalance(db, operation.jobId, balance);
         }
       }
+
+      Object.assign(operation, patch);
       operation.state = next;
       operation.updatedAt = new Date().toISOString();
-      Object.assign(operation, patch);
+      db.prepare(`
+        UPDATE operations SET state = ?, operation_json = ?, updated_at = ? WHERE operation_id = ?
+      `).run(next, json(operation), operation.updatedAt, operationId);
+      this.recordEvent(db, operationId, previousState, next, patch);
       return operation;
     });
   }
 
   public async getOperation(operationId: string): Promise<GatewayOperation | undefined> {
-    await this.ready();
-    const operation = this.state?.operations[operationId];
-    return operation ? structuredClone(operation) : undefined;
+    const row = this.database().prepare("SELECT operation_json FROM operations WHERE operation_id = ?").get(operationId) as
+      | OperationRow
+      | undefined;
+    return row ? parseJson<GatewayOperation>(row.operation_json) : undefined;
   }
 
   public async listOperations(jobId: string): Promise<GatewayOperation[]> {
-    await this.ready();
-    return Object.values(this.state?.operations ?? {})
-      .filter((operation) => operation.jobId === jobId)
-      .map((operation) => structuredClone(operation));
+    const rows = this.database().prepare(`
+      SELECT operation_json FROM operations WHERE job_id = ? ORDER BY created_at, operation_id
+    `).all(jobId) as OperationRow[];
+    return rows.map((row) => parseJson<GatewayOperation>(row.operation_json));
   }
 
   public async recordReuse(operationId: string, worker: Hex, epoch: number): Promise<GatewayOperation> {
-    return this.mutate((state) => {
-      const operation = state.operations[operationId];
-      if (!operation) throw new Error("OPERATION_NOT_FOUND");
+    return this.transaction((db) => {
+      const row = db.prepare("SELECT operation_json FROM operations WHERE operation_id = ?").get(operationId) as
+        | OperationRow
+        | undefined;
+      if (!row) throw new Error("OPERATION_NOT_FOUND");
+      const operation = parseJson<GatewayOperation>(row.operation_json);
       if (operation.state !== "OUTPUT_AVAILABLE") throw new Error("PAYMENT_OUTPUT_UNAVAILABLE");
       if (operation.worker.toLowerCase() === worker.toLowerCase() && operation.epoch === epoch) return operation;
+
       const reuses = operation.reusedBy ?? (operation.reusedBy = []);
       if (!reuses.some((reuse) => reuse.worker.toLowerCase() === worker.toLowerCase() && reuse.epoch === epoch)) {
-        reuses.push({ worker, epoch, at: new Date().toISOString() });
+        const reuse = { worker, epoch, at: new Date().toISOString() };
+        reuses.push(reuse);
+        operation.updatedAt = reuse.at;
+        db.prepare("UPDATE operations SET operation_json = ?, updated_at = ? WHERE operation_id = ?")
+          .run(json(operation), operation.updatedAt, operationId);
+        this.recordEvent(db, operationId, operation.state, operation.state, { reusedBy: [reuse] });
       }
       return operation;
     });
   }
 
   public async getBalance(jobId: string): Promise<LedgerBalance | undefined> {
-    await this.ready();
-    const balance = this.state?.budgets[jobId]?.balance;
-    return balance ? structuredClone(balance) : undefined;
+    const row = this.database().prepare(`
+      SELECT deposits, available, reserved, settled_spend, returned_funds FROM budgets WHERE job_id = ?
+    `).get(jobId) as Omit<BudgetRow, "policy_json"> | undefined;
+    return row ? balanceFromRow(row) : undefined;
   }
 
   public async getPolicy(jobId: string): Promise<ServicePolicy | undefined> {
-    await this.ready();
-    const policy = this.state?.budgets[jobId]?.policy;
-    return policy ? structuredClone(policy) : undefined;
+    const row = this.database().prepare("SELECT policy_json FROM budgets WHERE job_id = ?").get(jobId) as
+      | { policy_json: string }
+      | undefined;
+    return row ? parseJson<ServicePolicy>(row.policy_json) : undefined;
   }
 
-  private async mutate<T>(fn: (state: LedgerFile) => T): Promise<T> {
-    const task = this.queue.then(async () => {
-      await this.ready();
-      const state = this.state as LedgerFile;
-      const result = fn(state);
-      await this.persist();
+  private database(): DatabaseSync {
+    if (this.db) return this.db;
+    mkdirSync(dirname(this.filePath), { recursive: true });
+    const db = new DatabaseSync(this.filePath);
+    try {
+      db.exec(`
+        PRAGMA journal_mode = WAL;
+        PRAGMA synchronous = FULL;
+        PRAGMA foreign_keys = ON;
+        PRAGMA busy_timeout = 5000;
+        CREATE TABLE IF NOT EXISTS budgets (
+          job_id TEXT PRIMARY KEY,
+          policy_json TEXT NOT NULL,
+          deposits TEXT NOT NULL,
+          available TEXT NOT NULL,
+          reserved TEXT NOT NULL,
+          settled_spend TEXT NOT NULL,
+          returned_funds TEXT NOT NULL
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS operations (
+          operation_id TEXT PRIMARY KEY,
+          job_id TEXT NOT NULL REFERENCES budgets(job_id),
+          request_fingerprint TEXT NOT NULL,
+          nonce TEXT NOT NULL UNIQUE,
+          state TEXT NOT NULL,
+          amount TEXT NOT NULL,
+          operation_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS operations_by_job ON operations(job_id, created_at);
+        CREATE TABLE IF NOT EXISTS operation_events (
+          event_id INTEGER PRIMARY KEY,
+          operation_id TEXT NOT NULL REFERENCES operations(operation_id) ON DELETE CASCADE,
+          from_state TEXT,
+          to_state TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          patch_json TEXT NOT NULL
+        ) STRICT;
+      `);
+      this.db = db;
+      return db;
+    } catch (error) {
+      db.close();
+      throw error;
+    }
+  }
+
+  private transaction<T>(fn: (db: DatabaseSync) => T): T {
+    const db = this.database();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = fn(db);
+      db.exec("COMMIT");
       return structuredClone(result);
-    });
-    this.queue = task.catch(() => undefined);
-    return task;
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
-  private async ready(): Promise<void> {
-    if (!this.state) await this.init();
+  private budgetRow(db: DatabaseSync, jobId: string): BudgetRow {
+    const row = db.prepare(`
+      SELECT policy_json, deposits, available, reserved, settled_spend, returned_funds
+      FROM budgets WHERE job_id = ?
+    `).get(jobId) as BudgetRow | undefined;
+    if (!row) throw new Error("BUDGET_NOT_CONFIGURED");
+    return row;
   }
 
-  private async persist(): Promise<void> {
-    const temporary = `${this.filePath}.tmp`;
-    await writeFile(temporary, JSON.stringify(serialise(this.state), null, 2), "utf8");
-    await rename(temporary, this.filePath);
+  private writeBalance(db: DatabaseSync, jobId: string, balance: LedgerBalance): void {
+    db.prepare(`
+      UPDATE budgets SET available = ?, reserved = ?, settled_spend = ?, returned_funds = ? WHERE job_id = ?
+    `).run(
+      balance.available.toString(),
+      balance.reserved.toString(),
+      balance.settledSpend.toString(),
+      balance.returnedFunds.toString(),
+      jobId,
+    );
+  }
+
+  private recordEvent(
+    db: DatabaseSync,
+    operationId: string,
+    from: OperationState | null,
+    to: OperationState,
+    patch: OperationPatch,
+  ): void {
+    db.prepare(`
+      INSERT INTO operation_events (operation_id, from_state, to_state, created_at, patch_json)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(operationId, from, to, new Date().toISOString(), json(patch));
   }
 }
 
@@ -248,4 +366,32 @@ function assertTransition(current: OperationState, next: OperationState): void {
   if (!transitions[current].includes(next)) {
     throw new Error(`INVALID_OPERATION_TRANSITION: ${current} -> ${next}`);
   }
+}
+
+function json(value: unknown): string {
+  return JSON.stringify(serialise(value));
+}
+
+function parseJson<T>(value: string): T {
+  return deserialise<T>(JSON.parse(value));
+}
+
+function balanceFromRow(row: Omit<BudgetRow, "policy_json"> | BudgetRow): LedgerBalance {
+  return {
+    deposits: BigInt(row.deposits),
+    available: BigInt(row.available),
+    reserved: BigInt(row.reserved),
+    settledSpend: BigInt(row.settled_spend),
+    returnedFunds: BigInt(row.returned_funds),
+  };
+}
+
+function balanceValues(balance: LedgerBalance): string[] {
+  return [
+    balance.deposits.toString(),
+    balance.available.toString(),
+    balance.reserved.toString(),
+    balance.settledSpend.toString(),
+    balance.returnedFunds.toString(),
+  ];
 }

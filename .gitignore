@@ -26,6 +26,7 @@ server/contracts/broadcast/
 # Local databases and editor files
 *.sqlite
 *.sqlite3
+*.sqlite-*
 *.db
 .baton-data/
 .DS_Store

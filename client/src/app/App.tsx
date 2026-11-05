@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getApiHealth } from "../lib/api/health";
+import { getRuntimeStatus, type RuntimeStatus } from "../lib/api/status";
 
 type ApiStatus = "checking" | "online" | "offline";
 
@@ -26,6 +27,7 @@ const pillars = [
 
 export function App() {
   const [apiStatus, setApiStatus] = useState<ApiStatus>("checking");
+  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -33,6 +35,11 @@ export function App() {
       .then(() => setApiStatus("online"))
       .catch(() => {
         if (!controller.signal.aborted) setApiStatus("offline");
+      });
+    getRuntimeStatus(controller.signal)
+      .then(setRuntimeStatus)
+      .catch(() => {
+        if (!controller.signal.aborted) setRuntimeStatus(null);
       });
     return () => controller.abort();
   }, []);
@@ -97,6 +104,35 @@ export function App() {
               <span className="card-tag">{pillar.tag}</span>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section className="integration-section" aria-labelledby="integration-heading">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">LOCAL CONFIGURATION</p>
+            <h2 id="integration-heading">Ready for <em>the next gate.</em></h2>
+          </div>
+          <p className="section-intro">Configuration presence only. A green status does not mean a live chain or payment integration has passed.</p>
+        </div>
+        <div className="integration-grid">
+          {[
+            ["Arkiv writer", runtimeStatus?.configuration.arkiv],
+            ["Sepolia escrow", runtimeStatus?.configuration.sepolia],
+            ["ENS job grant", runtimeStatus?.configuration.ens],
+            ["Hedera x402 payer", runtimeStatus?.configuration.hederaX402],
+          ].map(([name, configured]) => (
+            <div className="integration-item" key={String(name)}>
+              <span className="integration-name">{name}</span>
+              <span className={configured ? "integration-value configured" : "integration-value"}>
+                {configured === undefined ? "Unknown" : configured ? "Configured" : "Needs setup"}
+              </span>
+            </div>
+          ))}
+          <div className="integration-item">
+            <span className="integration-name">Payment ledger</span>
+            <span className="integration-value">SQLite ledger · node:sqlite</span>
+          </div>
         </div>
       </section>
 

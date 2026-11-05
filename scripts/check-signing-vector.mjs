@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { recoverTypedDataAddress } from "viem";
-import { hashOffer, OFFER_TYPES } from "../server/dist/chain/signing.js";
+import { hashOffer, OFFER_TYPES } from "../server/dist/src/chain/signing.js";
 
 const vector = JSON.parse(await readFile(new URL("../server/src/chain/signing-vector.json", import.meta.url), "utf8"));
 const offer = { ...vector.offer, epoch: BigInt(vector.offer.epoch), nonce: BigInt(vector.offer.nonce), expiry: BigInt(vector.offer.expiry) };

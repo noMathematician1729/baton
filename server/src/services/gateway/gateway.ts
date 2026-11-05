@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { digest, type CheckpointHead, type GatewayOperation, type Hex, type JobSnapshot } from "../../protocol/v1.js";
 import type { JobAuthorityReader } from "../../chain/sepoliaAuthority.js";
 import { OperationLedger, type LedgerBalance } from "../ledger/operationLedger.js";
@@ -78,17 +79,22 @@ export class Gateway {
       const operation = await this.ledger.reserve({
         ...request,
         requestFingerprint: fingerprint,
-        nonce: `${Date.now()}`,
+        nonce: randomUUID(),
       });
 
       if (operation.state !== "RESERVED") return this.reuseOrReconcile(operation, request);
 
       try {
         await this.ledger.transition(operation.operationId, "SUBMITTED");
-        const result = await this.provider.submit(request);
-        await this.ledger.transition(operation.operationId, "SETTLED", result);
-        const available = await this.ledger.transition(operation.operationId, "OUTPUT_AVAILABLE", result);
-        return this.recordAuthorizedReuse(available, request);
+      } catch (error) {
+        const current = await this.ledger.getOperation(operation.operationId);
+        if (current && current.state !== "RESERVED") return this.reuseOrReconcile(current, request);
+        throw error;
+      }
+
+      let result: PaymentResult;
+      try {
+        result = await this.provider.submit(request);
       } catch {
         const latest = await this.ledger.getOperation(operation.operationId);
         if (latest?.state === "SUBMITTED") {
@@ -100,6 +106,38 @@ export class Gateway {
         }
         throw new Error("PAYMENT_UNKNOWN: operation is held for reconciliation");
       }
+
+      let current = await this.ledger.getOperation(operation.operationId);
+      if (!current) throw new Error("OPERATION_NOT_FOUND");
+      if (current.state === "OUTPUT_AVAILABLE") return this.recordAuthorizedReuse(current, request);
+      if (current.state === "SETTLED") {
+        const available = await this.ledger.transition(operation.operationId, "OUTPUT_AVAILABLE", result);
+        return this.recordAuthorizedReuse(available, request);
+      }
+      if (current.state !== "SUBMITTED" && current.state !== "UNKNOWN") {
+        throw new Error(`PAYMENT_STATE_UNEXPECTED: ${current.state}`);
+      }
+
+      try {
+        await this.ledger.transition(operation.operationId, "SETTLED", result);
+      } catch (error) {
+        current = await this.ledger.getOperation(operation.operationId);
+        if (current?.state === "OUTPUT_AVAILABLE") return this.recordAuthorizedReuse(current, request);
+        if (current?.state !== "SETTLED") {
+          if (current?.state === "SUBMITTED") {
+            await this.ledger.transition(operation.operationId, "UNKNOWN", {
+              failureCode: error instanceof Error ? error.message : "SETTLEMENT_RECORDING_FAILED",
+            });
+          }
+          throw new Error("PAYMENT_UNKNOWN: settlement could not be recorded");
+        }
+      }
+
+      current = await this.ledger.getOperation(operation.operationId);
+      if (current?.state === "OUTPUT_AVAILABLE") return this.recordAuthorizedReuse(current, request);
+      if (current?.state !== "SETTLED") throw new Error("PAYMENT_UNKNOWN: settlement state is not durable");
+      const available = await this.ledger.transition(operation.operationId, "OUTPUT_AVAILABLE", result);
+      return this.recordAuthorizedReuse(available, request);
     });
   }
 
@@ -206,7 +244,19 @@ export class Gateway {
     if (!isSettledResult(result)) {
       throw new Error("PAYMENT_UNKNOWN: provider has not confirmed settlement; reservation remains held");
     }
-    await this.ledger.transition(operation.operationId, "SETTLED", result);
+    let current = await this.ledger.getOperation(operation.operationId);
+    if (!current) throw new Error("OPERATION_NOT_FOUND");
+    if (current.state !== "SETTLED") {
+      try {
+        await this.ledger.transition(operation.operationId, "SETTLED", result);
+      } catch (error) {
+        current = await this.ledger.getOperation(operation.operationId);
+        if (current?.state !== "SETTLED" && current?.state !== "OUTPUT_AVAILABLE") throw error;
+      }
+    }
+    current = await this.ledger.getOperation(operation.operationId);
+    if (!current) throw new Error("OPERATION_NOT_FOUND");
+    if (current.state === "OUTPUT_AVAILABLE") return this.recordAuthorizedReuse(current, request);
     const available = await this.ledger.transition(operation.operationId, "OUTPUT_AVAILABLE", result);
     return this.recordAuthorizedReuse(available, request);
   }

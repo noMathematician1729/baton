@@ -1,17 +1,21 @@
-import { resolve } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadEnv } from "dotenv";
 import { z } from "zod";
 
-const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "../../..");
+const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+const serverRoot = resolve(moduleDirectory, moduleDirectory.split(sep).includes("dist") ? "../../.." : "../..");
+const repoRoot = resolve(serverRoot, "..");
 loadEnv({ path: resolve(repoRoot, ".env") });
+
+export const SERVER_ROOT = serverRoot;
 
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   SERVER_HOST: z.string().default("127.0.0.1"),
   SERVER_PORT: z.coerce.number().int().min(1).max(65535).default(4000),
   CLIENT_ORIGIN: z.string().url().default("http://127.0.0.1:5173"),
-  DATABASE_URL: z.string().default(""),
+  PAYMENT_LEDGER_PATH: z.string().min(1).default("./data/payment-ledger.sqlite"),
   SEPOLIA_RPC_URL: z.string().default(""),
   SEPOLIA_CHAIN_ID: z.coerce.number().int().default(11155111),
   GATEWAY_AUTHORITY_MODE: z.enum(["auto", "local", "sepolia"]).default("auto"),

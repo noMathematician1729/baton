@@ -6,4 +6,4 @@ Worker execution can be deployed on separate operator hosts. The shared worker/r
 
 The root `.env.example` lists local configuration. The API starts without external credentials so the client and health endpoint can run before integrations are configured. Never commit `.env` or place server secrets in `VITE_*` variables.
 
-Checkpoint manifests, large artifact chunks, and paid outputs use Arkiv as the planned content store. The payment ledger's persistence backend is deferred between Arkiv and PostgreSQL. The installed `pg` driver is provisional and does not initialize a connection or select a backend.
+Checkpoint manifests, large artifact chunks, and paid outputs use Arkiv as the content store. The buyer-host service-payment operation ledger uses SQLite through Node's built-in `node:sqlite` module at `PAYMENT_LEDGER_PATH`. It stores operation state, budget reservations, receipts, output references and append-only transition records. Store encrypted paid output payloads in Arkiv. The API currently wires a local payment-provider fixture; it does not perform live x402 settlement.

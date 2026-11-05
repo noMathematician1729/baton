@@ -71,6 +71,12 @@ h2 { font: 500 clamp(31px, 4vw, 46px)/1.12 "Manrope", sans-serif; letter-spacing
 .pillar-card h3 { font: 500 19px "Manrope", sans-serif; letter-spacing: -.02em; margin: 24px 0 8px; }
 .pillar-card p { color: #9eaca3; font-size: 11px; line-height: 1.6; margin-bottom: 17px; max-width: 265px; }
 .card-tag { align-self: flex-start; border: 1px solid rgba(197,250,118,.24); color: var(--lime); padding: 5px 7px; font: 9px var(--mono); }
+.integration-section { padding: 22px 0 66px; }
+.integration-grid { border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(5, 1fr); }
+.integration-item { min-height: 70px; padding: 16px 12px 13px 0; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; justify-content: space-between; gap: 12px; }
+.integration-name { color: #dfe8e1; font-size: 11px; }
+.integration-value { color: #e4b184; font: 9px var(--mono); }
+.integration-value.configured { color: var(--lime); }
 footer { border-top: 1px solid var(--line); display: flex; justify-content: space-between; padding: 18px 0 23px; color: #89978f; font: 9px var(--mono); letter-spacing: .05em; }
 .footer-separator { padding: 0 5px; color: var(--lime); }
 .footer-note { letter-spacing: 0; }
@@ -87,6 +93,7 @@ footer { border-top: 1px solid var(--line); display: flex; justify-content: spac
   .orbit-inner { width: 220px; height: 120px; }
   .section-heading { align-items: start; flex-direction: column; gap: 14px; }
   .pillar-grid { grid-template-columns: 1fr; }
+  .integration-grid { grid-template-columns: repeat(2, 1fr); gap: 0 12px; }
   .pillar-card { min-height: 180px; }
   footer { gap: 12px; flex-direction: column; }
 }

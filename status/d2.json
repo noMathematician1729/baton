@@ -1,0 +1,63 @@
+{
+  "owner": "D2",
+  "executionRole": "D2",
+  "branch": "build/authority-payments (merged from build/runtime-recovery)",
+  "startedAt": "2026-11-05T22:17:32+05:30",
+  "updatedAt": "2026-11-06T04:24:49+05:30",
+  "elapsedHours": 4.75,
+  "currentTask": "D2 runtime/recovery modules integrated with D1's live Sepolia authority and lifecycle baseline; live Arkiv/x402 work remains.",
+  "completedFeatures": [
+    "React and Node TypeScript workspaces pass typecheck and production build",
+    "Checkpoint manifest schema and AES-256-GCM manifest/chunk encryption",
+    "Deterministic batch and Beta-Bernoulli state export/import adapters",
+    "Local encrypted A-to-B recovery demo with matching quantitative continuation",
+    "Arkiv entity/chunk adapter, retention extension, digest verification, and delta reuse checks implemented; live write not verified",
+    "Synthetic MCP tool probe and capability/tool admission filters implemented",
+    "Hedera x402 provider client adapter implemented; live settlement not verified",
+    "SQLite operation ledger with WAL, durable transactions, unique operation IDs/nonces and transition history",
+    "UNKNOWN reservations survive restart and retries do not submit the same payment again",
+    "D1 protocol, signing vector, job lifecycle, gateway, escrow and authority sources integrated",
+    "D1 and D2 changes merged on build/authority-payments; D1 Sepolia scripts and public evidence retained",
+    "Full npm run verify passes: client/server typecheck and builds, 15 tests including an HTTP restart recovery test, Solidity compile, signing recovery and D1 acceptance",
+    "Read-only Sepolia check confirms chain ID, escrow bytecode, and ENS name-to-resolver link; no writes or transactions",
+    "11 local checkpoint, storage, runtime, worker, MCP, and admission tests pass after final status correction",
+    "Worker CLI and synthetic MCP stdio launcher are available",
+    "Read-only Arkiv RPC and Hedera account checks passed; no content write or payment was made"
+  ],
+  "nextGate": "G5/G8: define Arkiv ownership, verify B-host recovery, and run the live x402 payment-crash flow",
+  "blockers": [
+    "Arkiv content write/readback and entity ownership/renewal policy remain unverified",
+    "No x402 payment was attempted; the integrated payment provider is still a local fixture even though Hedera variables are present",
+    "B-host availability for isolated cold recovery is unconfirmed",
+    "The current merge resolution has not yet been rerun through npm run verify",
+    "User-directed Arkiv-only content storage overrides plan.md mirror scenarios",
+    "npm audit reports a high and low advisory through solc 0.8.28 -> tmp 0.0.33; its dry-run proposes compiler/dependency updates that still need review"
+  ],
+  "neededInputs": [
+    "Set ARKIV_ACCESS_KEY privately and define Arkiv entity ownership/renewal policy (R-D1-04/R-D2-04)",
+    "B-host availability for isolated cold recovery run (R-D2-02)",
+    "Review compiler/security advisory fix while preserving reproducible contract compiler settings",
+    "Run npm run verify on the merged tree before calling it locally verified"
+  ],
+  "evidenceRefs": [
+    "npm run verify · all local verification passed · 2026-11-05T19:55Z",
+    "Read-only Sepolia probe · chain ID, escrow code and ENS resolver link verified; permission interface probe failed · 2026-11-05T21:32Z",
+    "User-reported live ENS scoped grant, wrong-job denial, and revoke checks passed; D1 Sepolia lifecycle evidence retained in evidence/sepolia-jobs/",
+    "HTTP API integration · create job, execute local payment and recover SQLite ledger after app restart",
+    "SQLite ledger tests · 3 passing; UNKNOWN restart, conservation, immutable policy, concurrent reservations",
+    "D1 acceptance · A/B 3/7 credits; stale worker rejected; UNKNOWN retry held after restart",
+    "Read-only Arkiv RPC and Hedera account checks · 2026-11-05T17:48Z",
+    "npm run demo:local",
+    "server/packages/checkpoint/src/",
+    "server/packages/runtime/src/",
+    "server/packages/storage/src/arkiv.ts",
+    "server/apps/worker/src/",
+    "BATON_Architecture.md",
+    "context.md",
+    ".env.example",
+    "server/services/tools/",
+    "server/services/admission/",
+    "server/services/provider/hederaX402.ts",
+    "client/src/app/App.tsx"
+  ]
+}

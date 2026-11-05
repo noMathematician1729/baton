@@ -3,8 +3,8 @@
   "executionRole": "D2",
   "branch": "build/runtime-recovery",
   "startedAt": "2026-11-05T22:17:32+05:30",
-  "updatedAt": "2026-11-06T01:13:38+05:30",
-  "elapsedHours": 2.91,
+  "updatedAt": "2026-11-06T01:25:11+05:30",
+  "elapsedHours": 3.13,
   "currentTask": "Integrated D1 authority/payments with D2 recovery; SQLite ledger and full local verification pass.",
   "completedFeatures": [
     "React and Node TypeScript workspaces pass typecheck and production build",
@@ -17,7 +17,7 @@
     "SQLite operation ledger with WAL, durable transactions, unique operation IDs/nonces and transition history",
     "UNKNOWN reservations survive restart and retries do not submit the same payment again",
     "D1 protocol, signing vector, job lifecycle, gateway, escrow and authority sources integrated",
-    "Full npm run verify passes: client/server typecheck and builds, 14 tests, Solidity compile, signing recovery and D1 acceptance",
+    "Full npm run verify passes: client/server typecheck and builds, 15 tests including an HTTP restart recovery test, Solidity compile, signing recovery and D1 acceptance",
     "11 local checkpoint, storage, runtime, worker, MCP, and admission tests pass after final status correction",
     "Worker CLI and synthetic MCP stdio launcher are available",
     "Read-only Arkiv RPC and Hedera account checks passed; no content write or payment was made"
@@ -37,7 +37,8 @@
     "Valid local checkpoint encryption key and public Arkiv configuration for live probes (R-D2-03)"
   ],
   "evidenceRefs": [
-    "npm run verify · all local verification passed · 2026-11-05T19:43Z",
+    "npm run verify · all local verification passed · 2026-11-05T19:55Z",
+    "HTTP API integration · create job, execute local payment and recover SQLite ledger after app restart",
     "SQLite ledger tests · 3 passing; UNKNOWN restart, conservation, immutable policy, concurrent reservations",
     "D1 acceptance · A/B 3/7 credits; stale worker rejected; UNKNOWN retry held after restart",
     "Read-only Arkiv RPC and Hedera account checks · 2026-11-05T17:48Z",

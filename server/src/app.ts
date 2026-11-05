@@ -19,9 +19,9 @@ export function createServices() {
   return { jobs, ledger, gateway };
 }
 
-export function createApp() {
+export function createApp(services = createServices()) {
   const app = express();
-  const { jobs, ledger, gateway } = createServices();
+  const { jobs, ledger, gateway } = services;
 
   app.disable("x-powered-by");
   app.use(helmet());

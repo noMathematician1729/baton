@@ -18,12 +18,12 @@ The console runs at `http://127.0.0.1:5173`; the API runs at `http://127.0.0.1:4
 
 <!-- BATON-STATUS:START -->
 
-Generated 2026-11-05T19:44:39.064Z · working tree based on commit `1a360d4`. Refresh with `npm run status:refresh`. Status older than 60 minutes is marked STALE.
+Generated 2026-11-05T19:55:42.948Z · working tree based on commit `962ccf1`. Refresh with `npm run status:refresh`. Status older than 60 minutes is marked STALE.
 
 | Owner | Updated | Next gate | Current work | Blockers |
 |---|---|---|---|---|
 | D1 | STALE (2026-11-05T22:41:53+05:30) | H00:00 · Connect configured Sepolia/ENS authority and real Hedera x402 provider | Authority, rewards, spending and local acceptance flow | Sepolia RPC, deployed escrow and ENS resolver addresses are not configured in .env; Hedera payer/facilitator credentials and a proven x402 endpoint are not configured |
-| D2 | 2026-11-06T01:13:38+05:30 | H02:54 · G2: live Arkiv/Sepolia/ENS verification and B-host cold recovery | Integrated D1 authority/payments with D2 recovery; SQLite ledger and full local verification pass. | CHECKPOINT_ENCRYPTION_KEY was missing or invalid at the last redacted check; Arkiv content write/readback and ownership/renewal policy remain unverified; SEPOLIA_RPC_URL, BATON_ESCROW_ADDRESS, and ENS_RESOLVER_ADDRESS were missing at the last redacted check; Sepolia/ENS reads remain unverified; No x402 payment was attempted; the integrated payment provider is still a local fixture; B-host availability for isolated cold recovery is unconfirmed; User-directed Arkiv-only content storage overrides plan.md mirror scenarios; npm install reported two dependency advisories, including one high severity; they have not been reviewed or fixed |
+| D2 | 2026-11-06T01:25:11+05:30 | H03:07 · G2: live Arkiv/Sepolia/ENS verification and B-host cold recovery | Integrated D1 authority/payments with D2 recovery; SQLite ledger and full local verification pass. | CHECKPOINT_ENCRYPTION_KEY was missing or invalid at the last redacted check; Arkiv content write/readback and ownership/renewal policy remain unverified; SEPOLIA_RPC_URL, BATON_ESCROW_ADDRESS, and ENS_RESOLVER_ADDRESS were missing at the last redacted check; Sepolia/ENS reads remain unverified; No x402 payment was attempted; the integrated payment provider is still a local fixture; B-host availability for isolated cold recovery is unconfirmed; User-directed Arkiv-only content storage overrides plan.md mirror scenarios; npm install reported two dependency advisories, including one high severity; they have not been reviewed or fixed |
 
 Feature code and local checks are not evidence of a live integration. See [gate evidence](docs/gates.md) for tested modes and results. The SQLite payment ledger passes local transaction and restart checks; the provider remains a fixture. Checkpoints, artifacts, and paid output payloads are intended for Arkiv; no live write/readback or independent content mirror is claimed.
 <!-- BATON-STATUS:END -->
@@ -33,7 +33,7 @@ Feature code and local checks are not evidence of a live integration. See [gate 
 ```sh
 npm run typecheck       # client and server TypeScript
 npm run build           # client and server production builds
-npm test                # D2 checkpoint, storage, runtime, worker, MCP and admission tests
+npm test                # D2 suites plus SQLite ledger and HTTP recovery tests
 npm run test:signing    # deterministic EIP-712 hash/recovery vector
 npm run test:local      # D1 authority, payment-budget and handoff acceptance fixture
 npm run contracts:compile

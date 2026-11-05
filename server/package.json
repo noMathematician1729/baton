@@ -17,7 +17,8 @@
     "test:runtime": "tsx --test packages/runtime/src/index.test.ts",
     "test:tools": "tsx --test services/tools/index.test.ts",
     "test:admission": "tsx --test services/admission/index.test.ts",
-    "test:ledger": "tsx --test src/services/ledger/operationLedger.test.ts"
+    "test:ledger": "tsx --test src/services/ledger/operationLedger.test.ts",
+    "test:api": "tsx --test src/app.integration.test.ts"
   },
   "dependencies": {
     "@arkiv-network/sdk": "^1.0.1",

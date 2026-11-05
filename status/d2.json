@@ -3,9 +3,9 @@
   "executionRole": "D2",
   "branch": "build/runtime-recovery",
   "startedAt": "2026-11-05T22:17:32+05:30",
-  "updatedAt": "2026-11-06T01:32:24+05:30",
-  "elapsedHours": 3.25,
-  "currentTask": "Integrated D1 authority/payments with D2 recovery; SQLite ledger and full local verification pass.",
+  "updatedAt": "2026-11-06T03:02:42+05:30",
+  "elapsedHours": 4.75,
+  "currentTask": "Read-only Sepolia check passes chain and ENS lookup; configured ENS resolver does not satisfy BATON isAuthorized interface.",
   "completedFeatures": [
     "React and Node TypeScript workspaces pass typecheck and production build",
     "Checkpoint manifest schema and AES-256-GCM manifest/chunk encryption",
@@ -18,13 +18,14 @@
     "UNKNOWN reservations survive restart and retries do not submit the same payment again",
     "D1 protocol, signing vector, job lifecycle, gateway, escrow and authority sources integrated",
     "Full npm run verify passes: client/server typecheck and builds, 15 tests including an HTTP restart recovery test, Solidity compile, signing recovery and D1 acceptance",
+    "Read-only Sepolia check confirms chain ID, escrow bytecode, and ENS name-to-resolver link; no writes or transactions",
     "11 local checkpoint, storage, runtime, worker, MCP, and admission tests pass after final status correction",
     "Worker CLI and synthetic MCP stdio launcher are available",
     "Read-only Arkiv RPC and Hedera account checks passed; no content write or payment was made"
   ],
-  "nextGate": "G2: resolve job-authority resolver, run live read checks, define Arkiv ownership, and verify B-host recovery",
+  "nextGate": "G2: deploy/identify BATON-compatible ENS permission adapter, define Arkiv ownership, and verify B-host recovery",
   "blockers": [
-    "ENS_RESOLVER_ADDRESS is missing or not a valid address; the job-scoped resolver must implement isAuthorized(bytes32,address)",
+    "ENS_RESOLVER_ADDRESS currently points to the ENSv2 name resolver; its isAuthorized(bytes32,address) probe failed, so the BATON permission adapter is missing",
     "Arkiv content write/readback and entity ownership/renewal policy remain unverified",
     "Sepolia/ENS reads have not been rerun against the current RPC, escrow, and resolver configuration",
     "No x402 payment was attempted; the integrated payment provider is still a local fixture even though Hedera variables are present",
@@ -33,13 +34,14 @@
     "npm audit reports a high and low advisory through solc 0.8.28 -> tmp 0.0.33; its dry-run proposes compiler/dependency updates that still need review"
   ],
   "neededInputs": [
-    "Deployed job-scoped permission resolver address implementing isAuthorized(bytes32,address) (R-D1-01)",
+    "Deploy or identify a BATON-compatible adapter that maps ENSv2 grants to isAuthorized(bytes32,address) (R-D1-01)",
     "Arkiv entity ownership and renewal policy before a live content write (R-D2-04)",
     "B-host availability for isolated cold recovery run (R-D2-02)",
     "Review compiler/security advisory fix while preserving reproducible contract compiler settings"
   ],
   "evidenceRefs": [
     "npm run verify · all local verification passed · 2026-11-05T19:55Z",
+    "Read-only Sepolia probe · chain ID, escrow code and ENS resolver link verified; permission interface probe failed · 2026-11-05T21:32Z",
     "HTTP API integration · create job, execute local payment and recover SQLite ledger after app restart",
     "SQLite ledger tests · 3 passing; UNKNOWN restart, conservation, immutable policy, concurrent reservations",
     "D1 acceptance · A/B 3/7 credits; stale worker rejected; UNKNOWN retry held after restart",

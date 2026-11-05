@@ -11,7 +11,7 @@ const schema = z.object({
   SERVER_HOST: z.string().default("127.0.0.1"),
   SERVER_PORT: z.coerce.number().int().min(1).max(65535).default(4000),
   CLIENT_ORIGIN: z.string().url().default("http://127.0.0.1:5173"),
-  DATABASE_URL: z.string().default(""),
+  PAYMENT_LEDGER_PATH: z.string().min(1).default("./data/payment-ledger.sqlite"),
   SEPOLIA_RPC_URL: z.string().default(""),
   SEPOLIA_CHAIN_ID: z.coerce.number().int().default(11155111),
   BATON_ESCROW_ADDRESS: z.string().default(""),

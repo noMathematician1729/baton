@@ -7,12 +7,20 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "demo:local": "tsx apps/worker/src/cli.ts demo-local",
+    "status:refresh": "tsx ../scripts/status/refresh.ts",
+    "tools:stdio": "tsx services/tools/stdio.ts",
+    "test:worker": "tsx --test apps/worker/src/localDemo.test.ts",
+    "test:checkpoint": "tsx --test packages/checkpoint/src/index.test.ts",
+    "test:storage": "tsx --test packages/storage/src/arkiv.test.ts",
+    "test:runtime": "tsx --test packages/runtime/src/index.test.ts",
+    "test:tools": "tsx --test services/tools/index.test.ts",
+    "test:admission": "tsx --test services/admission/index.test.ts"
   },
   "dependencies": {
     "@arkiv-network/sdk": "^1.0.1",
     "@ensdomains/ensjs": "^5.2.12",
-    "@hiero-ledger/sdk": "^2.90.1",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@openzeppelin/contracts": "^5.6.1",
     "@x402/core": "^2.30.0",
@@ -22,7 +30,6 @@
     "dotenv": "^18.0.9",
     "express": "^5.3.0",
     "helmet": "^8.3.0",
-    "pg": "^8.23.1",
     "viem": "^2.57.16",
     "zod": "^4.6.7"
   },
@@ -30,7 +37,6 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.6",
-    "@types/pg": "^8.23.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   }

@@ -14,6 +14,7 @@ server/contracts/broadcast/
 # Local databases and editor files
 *.sqlite
 *.sqlite3
+*.sqlite-*
 .DS_Store
 .idea/
 .vscode/

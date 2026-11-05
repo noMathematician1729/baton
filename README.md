@@ -1,48 +1,10 @@
 # BATON
 
-BATON is a client/server monorepo. The React buyer console is the client; the Node.js API, worker execution, domain services, persistence adapters, and contract sources live under the server.
+BATON is a client/server monorepo for resumable work. The React + TypeScript client is the buyer console; the Node.js + TypeScript server contains the API, worker packages, and Web3 integrations.
 
-```text
-client/                         Buyer-facing frontend
-  package.json                  React, TypeScript, Vite
-  src/
-    app/                        Application shell and navigation
-    features/
-      jobs/                     Job setup and status
-      checkpoints/              Checkpoint review and recovery
-      handoff/                  Worker assignment and takeover
-      receipts/                 Reward and service receipts
-    lib/api/                    Typed calls to the server API
+## Quick start
 
-server/                         Backend and worker-side code
-  package.json                  Node.js, TypeScript, Arkiv, ENS, x402
-  src/
-    api/                        HTTP routes and request validation
-    config/                     Environment-backed configuration
-    domain/jobs/                Job and task rules
-    services/
-      admission/                Eligibility and compatibility checks
-      access/                   Scoped tool and data access
-      payments/                 Hedera x402 gateway and budget controls
-      ledger/                   Durable service-operation records
-      verifier/                 Deliverable and checkpoint verification
-    worker/                     Worker CLI and execution orchestration
-  contracts/
-    src/                        Sepolia escrow and ENS authority contracts
-    test/                       Contract tests
-    foundry.toml                Foundry project configuration
-  packages/
-    checkpoint/src/             Portable checkpoint schema and crypto
-    storage/src/                Arkiv manifests, artifact chunks, and retention
-    runtime/src/                Worker state export/import and reconstruction
-
-BATON_Architecture.md            Detailed architecture and invariants
-context.md                       Product context and demo requirements
-```
-
-## Getting started
-
-Requirements: Node.js 22.12 or newer and npm. Foundry is needed for contract development. The payment-ledger backend (Arkiv vs PostgreSQL) is deferred; the local scaffold has no database requirement.
+Requirements: Node.js 22.12+ and npm 10+.
 
 ```sh
 npm install
@@ -50,14 +12,63 @@ cp .env.example .env
 npm run dev
 ```
 
-The client runs at `http://127.0.0.1:5173`; the API runs at `http://127.0.0.1:4000`. The health endpoint is `/api/health`. Fill the relevant `.env` values before connecting any external integration. Keep `.env` private; only `VITE_*` variables are exposed to browser code.
+The console runs at `http://127.0.0.1:5173`; the API runs at `http://127.0.0.1:4000`. The local app starts without credentials. Fill `.env` values only when exercising the matching integration, and keep all secret values out of browser variables and source control.
 
-The client communicates with the server API. Chain access, payment authority, encryption keys, and provider credentials stay out of browser code. Worker processes may run on separate hosts and use the shared server-side packages; a checkpoint or API request does not itself grant tool or data access.
+## Current status
 
-This repository currently contains the project skeleton only. The integrations and guarantees in the architecture documents are design requirements, not implemented or verified behavior.
+<!-- BATON-STATUS:START -->
 
-## Dependencies and configuration
+Generated 2026-11-05T17:51:20.144Z · working tree based on commit `796151b`. Refresh with `npm run status:refresh`. Status older than 60 minutes is marked STALE.
 
-The client includes React, TypeScript, Vite, viem, and ENSjs. The server includes Express, Arkiv SDK, viem, ENSjs, Hiero's Hedera SDK, x402 core/fetch/Hedera, the MCP SDK, and OpenZeppelin contracts. PostgreSQL's `pg` driver remains available as a candidate ledger adapter; no database connection is initialized.
+| Owner | Updated | Next gate | Current work | Blockers |
+|---|---|---|---|---|
+| D1 | NOT REPORTED | — | — | status/d1.json is missing |
+| D2 | 2026-11-05T23:20:30+05:30 | H01:03 · G1/H02 (2026-11-06 00:17 IST); B-host availability input due H01 | Final pre-push verification complete; resolve remaining env and shared-protocol blockers for H02. | D1 protocol stub and signing vectors are not present in this checkout; D1 is not ready; CHECKPOINT_ENCRYPTION_KEY is missing or invalid; Arkiv content write/readback remains unverified; SEPOLIA_RPC_URL, BATON_ESCROW_ADDRESS, and ENS_RESOLVER_ADDRESS are missing; Sepolia/ENS reads remain unverified; No x402 payment was attempted; SQLite ledger implementation and settlement recovery are pending; User-directed Arkiv-only content storage overrides plan.md mirror scenarios; SQLite payment-ledger implementation and transaction/recovery tests remain pending |
 
-All checkpoint and task-artifact content is planned for encrypted Arkiv entities. The root `.env.example` covers local ports, Sepolia/ENS deployments, Arkiv access and signers, worker signing, checkpoint key access, and Hedera x402 credentials. Set these when implementing the corresponding integration. Arkiv entity ownership and renewal authority still need to be finalized before live storage writes.
+Feature code and local checks are not evidence of a live integration. See [gate evidence](docs/gates.md) for tested modes and results. The payment-operation ledger is assigned to SQLite; its implementation remains pending. Checkpoints, artifacts, and paid output payloads are stored in Arkiv; there is no independent mirror or alternate artifact store.
+<!-- BATON-STATUS:END -->
+
+## Run locally
+
+```sh
+npm run demo:local       # encrypted A-to-B checkpoint and quantitative-state continuation
+npm run tools:mcp         # launch the synthetic MCP service over stdio
+npm test                 # local checkpoint, worker, runtime, MCP tool, and admission checks
+npm run typecheck
+npm run build
+npm run status:refresh   # merge D1/D2 status files into this README section
+```
+
+The local demo uses a synthetic fixture and a demo-only encryption key. It makes no network calls and does not establish Arkiv, ENS, Sepolia, or Hedera connectivity.
+
+## Repository layout
+
+```text
+client/                         React + TypeScript + Vite buyer console
+  src/app/                      Console shell and integration status
+  src/lib/api/                  Typed calls to the server API
+server/                         Node.js + TypeScript backend
+  src/                          Express API and environment configuration
+  apps/worker/                  Worker CLI and local handoff scenario
+  packages/checkpoint/          Versioned manifest schema and AES-GCM envelope
+  packages/runtime/             Deterministic and Beta-Bernoulli state adapters
+  packages/storage/             Encrypted Arkiv entities and artifact chunks
+  services/admission/           Candidate hard-filter and price ranking
+  services/provider/            Hedera x402 client adapter
+  services/tools/               Synthetic MCP service and conformance probe
+scripts/scenarios/              Human-runnable local scenarios
+scripts/status/                 README status generation
+status/                         Per-owner progress reports
+docs/gates.md                   Local/live evidence and human checks
+```
+
+## Integrations and decisions
+
+- Checkpoints and task artifacts are encrypted before they are written to Arkiv. No independent mirror or alternate artifact store is used.
+- SQLite is selected for the buyer-host service-payment operation ledger. `PAYMENT_LEDGER_PATH` names its local file; implementation and transaction/recovery tests are still pending.
+- The SQLite ledger stores operation and payment metadata. Encrypted paid outputs, checkpoints, and task artifacts remain in Arkiv.
+- Arkiv writes are not yet demonstrated live. Entity ownership and renewal authority must be finalized before enabling them.
+- `/api/status` reports whether environment variables are present. “Configured” is not a live connectivity or acceptance result.
+- `.env.example` lists local, Sepolia/ENS, Arkiv, worker-key, checkpoint-key, and Hedera x402 settings. Keep real credentials in the ignored local `.env` or a host keystore.
+
+See [context.md](context.md) for current product/storage decisions, [plan.md](plan.md) for the build gates, and [BATON_Architecture.md](BATON_Architecture.md) for the architecture and invariants.

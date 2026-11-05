@@ -16,7 +16,11 @@
     "dev:client": "npm run dev --workspace=client",
     "dev:server": "npm run dev --workspace=server",
     "build": "npm run build --workspace=client && npm run build --workspace=server",
-    "typecheck": "npm run typecheck --workspace=client && npm run typecheck --workspace=server"
+    "typecheck": "npm run typecheck --workspace=client && npm run typecheck --workspace=server",
+    "demo:local": "npm run demo:local --workspace=server",
+    "tools:mcp": "npm run tools:stdio --workspace=server",
+    "status:refresh": "npm run status:refresh --workspace=server",
+    "test": "npm run test:checkpoint --workspace=server && npm run test:storage --workspace=server && npm run test:runtime --workspace=server && npm run test:worker --workspace=server && npm run test:tools --workspace=server && npm run test:admission --workspace=server"
   },
   "devDependencies": {
     "concurrently": "^10.0.6"

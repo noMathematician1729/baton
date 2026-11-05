@@ -2,7 +2,7 @@
 
 Revision: 5 November 2026. Status: design specification, not deployed or integration-verified. Required integrations: Arkiv, ENS and Hedera x402. This revision replaces the earlier architecture scope reflected in context(2).md. The older linked architecture could not be retrieved; this document reconstructs the complete revised design from the accessible current context rather than claiming to preserve unseen details.
 
-Current storage decision: Arkiv holds encrypted checkpoint manifests and all task artifacts, including large inputs and paid outputs. No separate artifact store or independent mirror is planned. The payment-ledger backend (Arkiv vs PostgreSQL) is explicitly deferred. Arkiv entity ownership and renewal authority must be finalized before live storage writes.
+Current storage decision: Arkiv holds encrypted checkpoint manifests and all task artifacts, including large inputs and paid outputs. No separate artifact store or independent mirror is planned. SQLite is the selected persistence backend for the buyer-controlled service-payment operation ledger. Keep encrypted content payloads in Arkiv and payment-operation metadata in SQLite. Arkiv entity ownership and renewal authority must be finalized before live storage writes.
 
 ## 1. Product and guarantees
 
@@ -21,7 +21,7 @@ The portable unit is a task with an agreed output contract. It is not an arbitra
 | Worker runtime and adapters | Import/export task state, call approved tools, reconstruct model context and submit signed offers. |
 | Tool and MCP access broker | Establish separately authorized scoped tool connections. It cannot grant rights the resource owner has not approved. |
 | Buyer-controlled service gateway | Holds Hedera payer authority, fences old epochs, reserves service budget and submits x402 requests. |
-| Durable operation ledger | Record of service intents, reservations, ambiguous outcomes, settlement receipts and paid output references, recoverable independently of the outgoing worker. Arkiv vs PostgreSQL persistence is deferred. |
+| SQLite operation ledger | Buyer-host record of service intents, reservations, ambiguous outcomes, settlement receipts and paid-output references, recoverable independently of the outgoing worker. It stores metadata and state transitions; encrypted output payloads remain in Arkiv. |
 | Buyer console and verification service | Define terms, evaluate evidence, approve checkpoints and assignment, expose receipts and recovery status. |
 
 ```mermaid
@@ -96,9 +96,19 @@ An authenticated request binds jobId, taskId, current epoch, assigned worker, se
 
 The ledger records intent before sending payment. Serialize budget reservation with operation creation. Enforce job and task caps across all concurrent tasks; an in-memory counter is insufficient. Require available budget >= the maximum approved debit. Keep network/facilitator fees in an explicit policy allowance, and reject unexpected assets, payees or price increases.
 
+### SQLite persistence and transaction model
+
+Use one durable SQLite database on the buyer-controlled gateway host, configured by `PAYMENT_LEDGER_PATH` (default `./data/payment-ledger.sqlite`, relative to the server process directory). Only the gateway writes this database. Run one active gateway writer per database file; do not put the file on a network filesystem or use it for active-active gateway replicas. Worker processes use authenticated gateway APIs and never open the ledger file directly.
+
+Use WAL journaling, `synchronous=FULL`, foreign-key enforcement and a bounded busy timeout. Create the operation intent and reserve its maximum approved debit in one `BEGIN IMMEDIATE` transaction. Enforce unique constraints for the stable logical operation key and request nonce. A retry with the same operation key and input fingerprint reads the existing operation; the same key with different job/task/service/input data fails closed. Record state transitions and accounting deltas transactionally so restart reconciliation can distinguish INTENT, RESERVED, SUBMITTED, SETTLED, OUTPUT_AVAILABLE, FAILED and UNKNOWN.
+
+UNKNOWN retains its reservation until an authoritative reconciliation resolves settlement. A confirmed settlement converts the reservation to spend once; confirmed non-settlement releases it. Keep the receipt, provider reference, output digest and Arkiv entity references in SQLite. Keep paid output bytes encrypted in Arkiv. Never store plaintext tool results, private keys or bearer tokens in the ledger. Persist the SQLite data directory on a durable local volume and use SQLite's consistent backup/checkpoint mechanism before copying database files; recover pending operations before reopening gateway admissions after restart.
+
+The database path and ledger implementation are local configuration, not secrets. Ignore the main database and its WAL/SHM sidecars in Git. Live x402 requests remain disabled until atomic reservation, concurrency, restart and UNKNOWN-state reconciliation tests pass.
+
 Operation states: INTENT, RESERVED, SUBMITTED, SETTLED, OUTPUT_AVAILABLE, FAILED and UNKNOWN. A settled payment lacking an output is not a refundable failed request. UNKNOWN keeps its reservation until definitive reconciliation. Settlement converts the reservation into spent funds; verified non-settlement releases it. Encrypt recovered service outputs, persist them in Arkiv and verify readback before marking them durably available. An Arkiv write failure after settlement preserves the settled/unknown-output state and triggers reconciliation rather than a second payment.
 
-Budget invariant, per asset: serviceDeposits = available + reserved + settledSpend + returnedFunds. No automatic conversion between HBAR, stablecoins and Sepolia reward tokens is assumed. Ledger entries bind settlement receipts to request and output digests. Checkpoints copy references; the durable ledger remains authoritative for in-flight purchases independently of worker checkpoints. Its persistence backend is deferred between Arkiv and PostgreSQL. Any selected backend must demonstrate atomic reservation, concurrency control, durability and reconciliation before paid requests are enabled; installing a driver or storing receipt copies does not establish those properties.
+Budget invariant, per asset: serviceDeposits = available + reserved + settledSpend + returnedFunds. No automatic conversion between HBAR, stablecoins and Sepolia reward tokens is assumed. SQLite ledger entries bind settlement receipts to request and output digests. Checkpoints copy references; the durable ledger remains authoritative for in-flight purchases independently of worker checkpoints. SQLite must demonstrate atomic reservation, concurrency control, durability and reconciliation before paid requests are enabled; selecting a backend does not establish those properties.
 
 The paid endpoint must support stable operation IDs and retrieving previously purchased results for the buyer-authorized successor. On a timeout, query ledger, facilitator/network settlement and provider status before retrying. x402 alone does not guarantee exactly-once service execution, portable entitlements or duplicate-charge prevention. If an outcome cannot be determined, block that operation and request reconciliation; do not silently repay.
 
@@ -155,11 +165,11 @@ Reward invariant: totalFunded = unallocated + outstandingCredits + outstandingRe
 | server/src/services/admission | Eligibility, tool probes, conformance and candidate ranking |
 | server/src/services/access | Scoped credential grants and revocation coordination |
 | server/src/services/payments | Gateway, x402 client, budget reservations and settlement reconciliation |
-| server/src/services/ledger | Durable operation history and recovery queries; backend deferred |
+| server/services/ledger | SQLite-backed durable operation history and recovery queries; implementation pending |
 | server/src/services/verifier | Deliverable checks and signed acceptance evidence |
 | client and server/src/worker | Buyer console, worker execution and receipts |
 
-The repository contains the client/server scaffold, dependency configuration and API health route. The domain modules above are implementation boundaries; their contract, storage, worker and payment behavior remains to be implemented.
+The repository contains the client/server scaffold, D2 checkpoint/runtime/storage adapters, local worker and MCP scenarios, and API status routes. Contract authority and the SQLite payment ledger remain unimplemented; live Arkiv, ENS, Sepolia and Hedera behavior remains unverified.
 
 ## 11. Acceptance scenarios
 

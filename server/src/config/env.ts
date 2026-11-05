@@ -32,6 +32,8 @@ const schema = z.object({
   X402_FACILITATOR_URL: z.string().default(""),
   X402_NETWORK: z.string().default("hedera:testnet"),
   LOG_LEVEL: z.string().default("info"),
+  BATON_DATA_DIR: z.string().default(".baton-data"),
+  CONFIRMATION_BLOCKS: z.coerce.number().int().min(0).default(2),
 });
 
 export const env = schema.parse(process.env);

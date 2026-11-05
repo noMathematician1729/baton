@@ -1,10 +1,14 @@
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadEnv } from "dotenv";
 import { z } from "zod";
 
-const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "../../..");
+const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+const serverRoot = resolve(moduleDirectory, moduleDirectory.split("/").includes("dist") ? "../../.." : "../..");
+const repoRoot = resolve(serverRoot, "..");
 loadEnv({ path: resolve(repoRoot, ".env") });
+
+export const SERVER_ROOT = serverRoot;
 
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -32,6 +36,8 @@ const schema = z.object({
   X402_FACILITATOR_URL: z.string().default(""),
   X402_NETWORK: z.string().default("hedera:testnet"),
   LOG_LEVEL: z.string().default("info"),
+  BATON_DATA_DIR: z.string().default(".baton-data"),
+  CONFIRMATION_BLOCKS: z.coerce.number().int().min(0).default(2),
 });
 
 export const env = schema.parse(process.env);

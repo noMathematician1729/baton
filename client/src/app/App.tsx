@@ -131,7 +131,7 @@ export function App() {
           ))}
           <div className="integration-item">
             <span className="integration-name">Payment ledger</span>
-            <span className="integration-value">SQLite selected · implementation pending</span>
+            <span className="integration-value">SQLite ledger · node:sqlite</span>
           </div>
         </div>
       </section>

@@ -6,6 +6,18 @@ coverage/
 !.env.example
 *.log
 
+# Private key material and local wallet exports
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_ed25519
+**/private_keys/
+**/keystore/
+
 # Foundry output and local chain state
 server/contracts/cache/
 server/contracts/out/
@@ -15,6 +27,8 @@ server/contracts/broadcast/
 *.sqlite
 *.sqlite3
 *.sqlite-*
+*.db
+.baton-data/
 .DS_Store
 .idea/
 .vscode/

@@ -9,7 +9,8 @@ export type RuntimeStatus = {
     ens: boolean;
     hederaX402: boolean;
   };
-  paymentLedger: { backend: "sqlite"; implementation: "pending" };
+  paymentLedger: { backend: "sqlite"; implementation: "node:sqlite" };
+  paymentProvider: "local-fixture";
 };
 
 export async function getRuntimeStatus(signal?: AbortSignal): Promise<RuntimeStatus> {

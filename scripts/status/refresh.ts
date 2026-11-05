@@ -55,7 +55,7 @@ const block = [
   renderOwner(d1, "D1", Date.now()),
   renderOwner(d2, "D2", Date.now()),
   "",
-  "Feature code and local checks are not evidence of a live integration. See [gate evidence](docs/gates.md) for tested modes and results. The payment-operation ledger is assigned to SQLite; its implementation remains pending. Checkpoints, artifacts, and paid output payloads are stored in Arkiv; there is no independent mirror or alternate artifact store.",
+  "Feature code and local checks are not evidence of a live integration. See [gate evidence](docs/gates.md) for tested modes and results. The SQLite payment ledger passes local transaction and restart checks; the provider remains a fixture. Checkpoints, artifacts, and paid output payloads are intended for Arkiv; no live write/readback or independent content mirror is claimed.",
   endMarker,
 ].join("\n");
 

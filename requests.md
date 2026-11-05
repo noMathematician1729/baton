@@ -1,17 +1,20 @@
-# External inputs and coordination
+# BATON input queue
 
-Secrets go into the owning host's ignored .env or keystore. Do not send secret values in chat.
+Times are Asia/Kolkata. Secrets must be entered into the local `.env`/keystore, never this file or chat.
 
-| ID | Requester | Responsible | Item/action | Requested at (Asia/Kolkata) | Needed by (Asia/Kolkata) | Gate | State |
+| ID | Requester | Responsible person | Item/action | Requested at | Needed by | Gate | State |
 |---|---|---|---|---|---|---|---|
-| R-D2-01 | D2 | D1 | Publish protocol head/checkpoint types and typed signing fixture; D2 will keep storage envelope separate | 2026-11-05 22:21 | 2026-11-05 22:47 | G0 | BLOCKED |
-| R-D2-02 | D2 | B operator + D2 | Confirm B host is available for isolated cold recovery and has a separate worker directory | 2026-11-05 22:21 | 2026-11-05 23:17 | G1 | REQUESTED |
-| R-D2-03 | D2 | D2 | Provide private Arkiv/RPC credentials and signer through local ignored env/keystore; do not paste values into chat | 2026-11-05 22:21 | 2026-11-06 00:17 | G2 | REQUESTED |
+| R-D1-01 | D1 | Buyer/operator | Provide public Sepolia escrow and explicit job-authority resolver addresses for read-only verification | 2026-11-05 22:32 | Before live authority gate | G2/G4 | REQUESTED |
+| R-D1-02 | D1 | Buyer/operator | Confirm RPC connectivity and public buyer/A/B addresses; keep private keys local | 2026-11-05 22:32 | Before live signing gate | G4/G5 | REQUESTED |
+| R-D1-03 | D1 | Build environment | Make solc 0.8.28 available locally or enable the Foundry compiler download | 2026-11-05 22:32 | Before contract deployment | G3/G4 | BLOCKED |
+| R-D2-01 | D2 | D1 | Publish protocol head/checkpoint types and typed signing fixture | 2026-11-05 22:21 | 2026-11-05 22:47 | G0 | READY |
+| R-D2-02 | D2 | B operator + D2 | Confirm B host availability and its separate worker directory | 2026-11-05 22:21 | 2026-11-05 23:17 | G1 | REQUESTED |
+| R-D2-03 | D2 | D2 | Complete the local checkpoint key and remaining Sepolia config in ignored `.env`; do not paste secrets in chat | 2026-11-05 22:21 | Before live storage/authority gate | G2/G4 | REQUESTED |
 
 ## Current decisions
 
-- All checkpoint and artifact payloads go to Arkiv; no application-managed artifact store or independent mirror.
-- SQLite is selected for the buyer-host payment-operation ledger; it stores ledger metadata while encrypted checkpoint/artifact/paid-output content stays in Arkiv.
-- Arkiv entity ownership and renewal authority remain undecided. Live writes stay disabled until this policy and the live retention path are proven.
-- At H00:30, D1 was not ready to publish the shared interface; continue against D2 adapters per user direction. No local D1 branch/status file is present.
-- Final redacted `.env` check: Arkiv Rabdi read and Hedera account lookup passed. `CHECKPOINT_ENCRYPTION_KEY`, Sepolia RPC, escrow address and ENS resolver are missing/invalid. `PAYMENT_LEDGER_PATH` may use its server default. No Arkiv write or paid x402 request was made.
+- All encrypted checkpoint and task-artifact content goes to Arkiv. No independent mirror or alternate artifact store.
+- SQLite is selected for buyer-host payment-operation metadata. `PAYMENT_LEDGER_PATH` configures the local database file; it is separate from Arkiv payload storage.
+- Arkiv entity ownership and renewal authority must be finalized before content writes are enabled.
+- The last redacted environment check passed Arkiv Rabdi RPC and Hedera account reads. It found `CHECKPOINT_ENCRYPTION_KEY`, Sepolia RPC, escrow address and ENS resolver missing/invalid. No Arkiv content write or paid x402 request was made.
+- The D1 protocol/signing files are now available on `build/authority-payments`; integration is in progress.

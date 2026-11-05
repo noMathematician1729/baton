@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.12.0",
+    "node": ">=22.13.0",
     "npm": ">=10"
   },
   "workspaces": [
@@ -20,7 +20,11 @@
     "demo:local": "npm run demo:local --workspace=server",
     "tools:mcp": "npm run tools:stdio --workspace=server",
     "status:refresh": "npm run status:refresh --workspace=server",
-    "test": "npm run test:checkpoint --workspace=server && npm run test:storage --workspace=server && npm run test:runtime --workspace=server && npm run test:worker --workspace=server && npm run test:tools --workspace=server && npm run test:admission --workspace=server"
+    "test": "npm run test:checkpoint --workspace=server && npm run test:storage --workspace=server && npm run test:runtime --workspace=server && npm run test:worker --workspace=server && npm run test:tools --workspace=server && npm run test:admission --workspace=server && npm run test:ledger --workspace=server",
+    "test:local": "npm run build --workspace=server && node scripts/acceptance-local.mjs",
+    "test:signing": "npm run build --workspace=server && node scripts/check-signing-vector.mjs",
+    "contracts:compile": "node scripts/compile-contracts.mjs",
+    "verify": "npm run typecheck && npm run build && npm test && npm run contracts:compile && npm run test:signing && npm run test:local"
   },
   "devDependencies": {
     "concurrently": "^10.0.6"

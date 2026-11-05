@@ -1,0 +1,26 @@
+{
+  "owner": "D1",
+  "updatedAt": "2026-11-05T22:41:53+05:30",
+  "elapsedHours": 0,
+  "currentTask": "Authority, rewards, spending and local acceptance flow",
+  "completedFeatures": [
+    "Versioned protocol types, canonical hashing and EIP-712 offer/takeover hash helpers",
+    "Durable atomic operation ledger with reservation, settlement, UNKNOWN and reconciliation states",
+    "Epoch and drain fencing for stale workers",
+    "Local three-milestone job lifecycle with immutable A/B reward credits",
+    "Solidity JobEscrow and explicit job-scoped authority adapter sources",
+    "Solidity 0.8.28 compile and generated tracked ABIs",
+    "Repeatable local acceptance scenario including idempotency and UNKNOWN reservation checks"
+  ],
+  "nextGate": "Connect configured Sepolia/ENS authority and real Hedera x402 provider",
+  "blockers": [
+    "Sepolia RPC, deployed escrow and ENS resolver addresses are not configured in .env",
+    "Hedera payer/facilitator credentials and a proven x402 endpoint are not configured"
+  ],
+  "neededInputs": [
+    "Public Sepolia escrow address and deployed authority resolver address",
+    "RPC URL and buyer/worker public addresses for live read-only verification"
+  ],
+  "evidenceRefs": ["scripts/acceptance-local.mjs", "scripts/check-signing-vector.mjs", "server/contracts/abi/JobEscrow.json", "server/src/services/ledger/operationLedger.ts", "server/contracts/src/JobEscrow.sol"],
+  "releaseLabel": "locally verified; live integrations pending"
+}

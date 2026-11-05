@@ -1,10 +1,10 @@
 # BATON
 
-BATON is a client/server monorepo for resumable work. The React + TypeScript client is the buyer console; the Node.js + TypeScript server contains the API, worker packages, and Web3 integrations.
+BATON is a client/server monorepo for resumable work. The React + TypeScript client is the buyer console; the Node.js + TypeScript server contains the API, worker runtime, protocol, authority contracts, payment gateway and Arkiv adapters.
 
 ## Quick start
 
-Requirements: Node.js 22.12+ and npm 10+.
+Requirements: Node.js 22.13+ and npm 10+. Foundry with Solidity 0.8.28 is used for contract builds.
 
 ```sh
 npm install
@@ -12,63 +12,63 @@ cp .env.example .env
 npm run dev
 ```
 
-The console runs at `http://127.0.0.1:5173`; the API runs at `http://127.0.0.1:4000`. The local app starts without credentials. Fill `.env` values only when exercising the matching integration, and keep all secret values out of browser variables and source control.
+The console runs at `http://127.0.0.1:5173`; the API runs at `http://127.0.0.1:4000`. The local app starts without external credentials. Keep `.env` private; only `.env.example` belongs in Git.
 
 ## Current status
 
 <!-- BATON-STATUS:START -->
 
-Generated 2026-11-05T17:51:20.144Z · working tree based on commit `796151b`. Refresh with `npm run status:refresh`. Status older than 60 minutes is marked STALE.
+Generated 2026-11-05T19:44:39.064Z · working tree based on commit `1a360d4`. Refresh with `npm run status:refresh`. Status older than 60 minutes is marked STALE.
 
 | Owner | Updated | Next gate | Current work | Blockers |
 |---|---|---|---|---|
-| D1 | NOT REPORTED | — | — | status/d1.json is missing |
-| D2 | 2026-11-05T23:20:30+05:30 | H01:03 · G1/H02 (2026-11-06 00:17 IST); B-host availability input due H01 | Final pre-push verification complete; resolve remaining env and shared-protocol blockers for H02. | D1 protocol stub and signing vectors are not present in this checkout; D1 is not ready; CHECKPOINT_ENCRYPTION_KEY is missing or invalid; Arkiv content write/readback remains unverified; SEPOLIA_RPC_URL, BATON_ESCROW_ADDRESS, and ENS_RESOLVER_ADDRESS are missing; Sepolia/ENS reads remain unverified; No x402 payment was attempted; SQLite ledger implementation and settlement recovery are pending; User-directed Arkiv-only content storage overrides plan.md mirror scenarios; SQLite payment-ledger implementation and transaction/recovery tests remain pending |
+| D1 | STALE (2026-11-05T22:41:53+05:30) | H00:00 · Connect configured Sepolia/ENS authority and real Hedera x402 provider | Authority, rewards, spending and local acceptance flow | Sepolia RPC, deployed escrow and ENS resolver addresses are not configured in .env; Hedera payer/facilitator credentials and a proven x402 endpoint are not configured |
+| D2 | 2026-11-06T01:13:38+05:30 | H02:54 · G2: live Arkiv/Sepolia/ENS verification and B-host cold recovery | Integrated D1 authority/payments with D2 recovery; SQLite ledger and full local verification pass. | CHECKPOINT_ENCRYPTION_KEY was missing or invalid at the last redacted check; Arkiv content write/readback and ownership/renewal policy remain unverified; SEPOLIA_RPC_URL, BATON_ESCROW_ADDRESS, and ENS_RESOLVER_ADDRESS were missing at the last redacted check; Sepolia/ENS reads remain unverified; No x402 payment was attempted; the integrated payment provider is still a local fixture; B-host availability for isolated cold recovery is unconfirmed; User-directed Arkiv-only content storage overrides plan.md mirror scenarios; npm install reported two dependency advisories, including one high severity; they have not been reviewed or fixed |
 
-Feature code and local checks are not evidence of a live integration. See [gate evidence](docs/gates.md) for tested modes and results. The payment-operation ledger is assigned to SQLite; its implementation remains pending. Checkpoints, artifacts, and paid output payloads are stored in Arkiv; there is no independent mirror or alternate artifact store.
+Feature code and local checks are not evidence of a live integration. See [gate evidence](docs/gates.md) for tested modes and results. The SQLite payment ledger passes local transaction and restart checks; the provider remains a fixture. Checkpoints, artifacts, and paid output payloads are intended for Arkiv; no live write/readback or independent content mirror is claimed.
 <!-- BATON-STATUS:END -->
 
-## Run locally
+## Verify locally
 
 ```sh
-npm run demo:local       # encrypted A-to-B checkpoint and quantitative-state continuation
-npm run tools:mcp         # launch the synthetic MCP service over stdio
-npm test                 # local checkpoint, worker, runtime, MCP tool, and admission checks
-npm run typecheck
-npm run build
-npm run status:refresh   # merge D1/D2 status files into this README section
+npm run typecheck       # client and server TypeScript
+npm run build           # client and server production builds
+npm test                # D2 checkpoint, storage, runtime, worker, MCP and admission tests
+npm run test:signing    # deterministic EIP-712 hash/recovery vector
+npm run test:local      # D1 authority, payment-budget and handoff acceptance fixture
+npm run contracts:compile
+npm run verify          # full local verification sequence
 ```
 
-The local demo uses a synthetic fixture and a demo-only encryption key. It makes no network calls and does not establish Arkiv, ENS, Sepolia, or Hedera connectivity.
+`npm run demo:local` demonstrates an encrypted A-to-B checkpoint handoff with synthetic batches and quantitative state. It makes no network calls. The D1 acceptance uses a local payment-provider fixture; it does not claim Hedera settlement.
 
-## Repository layout
+## Architecture and data boundaries
+
+- Sepolia escrow contracts hold reward terms, accepted heads, epochs, credits and refunds. The ENS adapter reads an explicit job-scoped resolver; deployed addresses and permissions remain unverified.
+- The buyer-host gateway uses SQLite for operation intents, reservations, settlement state and receipt/output references. `PAYMENT_LEDGER_PATH` defaults to `./data/payment-ledger.sqlite` relative to the server directory. The gateway is the only writer.
+- Checkpoint manifests, artifacts and paid-output payloads are intended to be encrypted and stored in Arkiv. The adapter passes local tests, but live write/readback is unverified. There is no independent mirror or alternate content store.
+- SQLite stores payment metadata, not content payloads. The payment ledger is not replicated to worker hosts.
+- The local gateway provider and JSON job store are development fixtures; live Sepolia, ENS and x402 authorization/settlement remain separate integration gates.
+
+## API and project layout
+
+The server exposes `/api/health`, `/api/status`, `/api/protocol`, job lifecycle routes, and service-operation quote/execute/reconcile routes. The local payment provider is explicitly a fixture.
 
 ```text
 client/                         React + TypeScript + Vite buyer console
-  src/app/                      Console shell and integration status
-  src/lib/api/                  Typed calls to the server API
-server/                         Node.js + TypeScript backend
-  src/                          Express API and environment configuration
-  apps/worker/                  Worker CLI and local handoff scenario
-  packages/checkpoint/          Versioned manifest schema and AES-GCM envelope
-  packages/runtime/             Deterministic and Beta-Bernoulli state adapters
-  packages/storage/             Encrypted Arkiv entities and artifact chunks
-  services/admission/           Candidate hard-filter and price ranking
-  services/provider/            Hedera x402 client adapter
-  services/tools/               Synthetic MCP service and conformance probe
-scripts/scenarios/              Human-runnable local scenarios
-scripts/status/                 README status generation
-status/                         Per-owner progress reports
-docs/gates.md                   Local/live evidence and human checks
+server/src/protocol/            Versioned job, checkpoint-head and payment types
+server/src/chain/               EIP-712 helpers and signing vector
+server/src/domain/jobs/         Local job/task lifecycle fixture
+server/src/services/gateway/    Admission, spending and reconciliation flow
+server/src/services/ledger/     SQLite payment-operation ledger
+server/contracts/               Solidity escrow, authority adapter and ABIs
+server/packages/checkpoint/     Encrypted recovery manifest
+server/packages/storage/        Arkiv manifests and encrypted artifact chunks
+server/packages/runtime/        Deterministic and quantitative state adapters
+server/apps/worker/             Worker CLI and local handoff scenario
+server/services/                Provider, MCP and candidate-admission adapters
+scripts/                        Local scenarios, status refresh and contract checks
+status/                         Per-owner progress and gate evidence
 ```
 
-## Integrations and decisions
-
-- Checkpoints and task artifacts are encrypted before they are written to Arkiv. No independent mirror or alternate artifact store is used.
-- SQLite is selected for the buyer-host service-payment operation ledger. `PAYMENT_LEDGER_PATH` names its local file; implementation and transaction/recovery tests are still pending.
-- The SQLite ledger stores operation and payment metadata. Encrypted paid outputs, checkpoints, and task artifacts remain in Arkiv.
-- Arkiv writes are not yet demonstrated live. Entity ownership and renewal authority must be finalized before enabling them.
-- `/api/status` reports whether environment variables are present. “Configured” is not a live connectivity or acceptance result.
-- `.env.example` lists local, Sepolia/ENS, Arkiv, worker-key, checkpoint-key, and Hedera x402 settings. Keep real credentials in the ignored local `.env` or a host keystore.
-
-See [context.md](context.md) for current product/storage decisions, [plan.md](plan.md) for the build gates, and [BATON_Architecture.md](BATON_Architecture.md) for the architecture and invariants.
+SQLite settings and current decisions are described in [BATON_Architecture.md](BATON_Architecture.md), [context.md](context.md), and [.env.example](.env.example). The build plan and ownership gates are in [plan.md](plan.md); test modes and live-read evidence are in [docs/gates.md](docs/gates.md).

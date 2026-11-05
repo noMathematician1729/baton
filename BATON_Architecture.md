@@ -104,7 +104,7 @@ Use WAL journaling, `synchronous=FULL`, foreign-key enforcement and a bounded bu
 
 UNKNOWN retains its reservation until an authoritative reconciliation resolves settlement. A confirmed settlement converts the reservation to spend once; confirmed non-settlement releases it. Keep the receipt, provider reference, output digest and Arkiv entity references in SQLite. Keep paid output bytes encrypted in Arkiv. Never store plaintext tool results, private keys or bearer tokens in the ledger. Persist the SQLite data directory on a durable local volume and use SQLite's consistent backup/checkpoint mechanism before copying database files; recover pending operations before reopening gateway admissions after restart.
 
-The database path and ledger implementation are local configuration, not secrets. Ignore the main database and its WAL/SHM sidecars in Git. Live x402 requests remain disabled until atomic reservation, concurrency, restart and UNKNOWN-state reconciliation tests pass.
+The database path and ledger implementation are local configuration, not secrets. Ignore the main database and its WAL/SHM sidecars in Git. The local `node:sqlite` adapter uses WAL, `synchronous=FULL`, a bounded busy timeout, serialized transactions, uniqueness constraints and append-only transition records. `npm run test:ledger` checks persistence, UNKNOWN reservations, budget conservation, immutable policies and competing reservations. The API currently uses a local payment fixture; live x402 remains disabled until a real provider and authenticated gateway path are integrated and verified.
 
 Operation states: INTENT, RESERVED, SUBMITTED, SETTLED, OUTPUT_AVAILABLE, FAILED and UNKNOWN. A settled payment lacking an output is not a refundable failed request. UNKNOWN keeps its reservation until definitive reconciliation. Settlement converts the reservation into spent funds; verified non-settlement releases it. Encrypt recovered service outputs, persist them in Arkiv and verify readback before marking them durably available. An Arkiv write failure after settlement preserves the settled/unknown-output state and triggers reconciliation rather than a second payment.
 
@@ -165,7 +165,7 @@ Reward invariant: totalFunded = unallocated + outstandingCredits + outstandingRe
 | server/src/services/admission | Eligibility, tool probes, conformance and candidate ranking |
 | server/src/services/access | Scoped credential grants and revocation coordination |
 | server/src/services/payments | Gateway, x402 client, budget reservations and settlement reconciliation |
-| server/services/ledger | SQLite-backed durable operation history and recovery queries; implementation pending |
+| server/services/ledger | SQLite-backed operation history, budget reservations and recovery state; local provider remains a fixture |
 | server/src/services/verifier | Deliverable checks and signed acceptance evidence |
 | client and server/src/worker | Buyer console, worker execution and receipts |
 

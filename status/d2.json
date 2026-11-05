@@ -3,8 +3,8 @@
   "executionRole": "D2",
   "branch": "build/runtime-recovery",
   "startedAt": "2026-11-05T22:17:32+05:30",
-  "updatedAt": "2026-11-06T01:25:11+05:30",
-  "elapsedHours": 3.13,
+  "updatedAt": "2026-11-06T01:32:24+05:30",
+  "elapsedHours": 3.25,
   "currentTask": "Integrated D1 authority/payments with D2 recovery; SQLite ledger and full local verification pass.",
   "completedFeatures": [
     "React and Node TypeScript workspaces pass typecheck and production build",
@@ -22,19 +22,21 @@
     "Worker CLI and synthetic MCP stdio launcher are available",
     "Read-only Arkiv RPC and Hedera account checks passed; no content write or payment was made"
   ],
-  "nextGate": "G2: live Arkiv/Sepolia/ENS verification and B-host cold recovery",
+  "nextGate": "G2: resolve job-authority resolver, run live read checks, define Arkiv ownership, and verify B-host recovery",
   "blockers": [
-    "CHECKPOINT_ENCRYPTION_KEY was missing or invalid at the last redacted check; Arkiv content write/readback and ownership/renewal policy remain unverified",
-    "SEPOLIA_RPC_URL, BATON_ESCROW_ADDRESS, and ENS_RESOLVER_ADDRESS were missing at the last redacted check; Sepolia/ENS reads remain unverified",
-    "No x402 payment was attempted; the integrated payment provider is still a local fixture",
+    "ENS_RESOLVER_ADDRESS is missing or not a valid address; the job-scoped resolver must implement isAuthorized(bytes32,address)",
+    "Arkiv content write/readback and entity ownership/renewal policy remain unverified",
+    "Sepolia/ENS reads have not been rerun against the current RPC, escrow, and resolver configuration",
+    "No x402 payment was attempted; the integrated payment provider is still a local fixture even though Hedera variables are present",
     "B-host availability for isolated cold recovery is unconfirmed",
     "User-directed Arkiv-only content storage overrides plan.md mirror scenarios",
-    "npm install reported two dependency advisories, including one high severity; they have not been reviewed or fixed"
+    "npm audit reports a high and low advisory through solc 0.8.28 -> tmp 0.0.33; its dry-run proposes compiler/dependency updates that still need review"
   ],
   "neededInputs": [
-    "Public Sepolia escrow and resolver addresses and RPC connectivity (R-D1-01/R-D2-03)",
+    "Deployed job-scoped permission resolver address implementing isAuthorized(bytes32,address) (R-D1-01)",
+    "Arkiv entity ownership and renewal policy before a live content write (R-D2-04)",
     "B-host availability for isolated cold recovery run (R-D2-02)",
-    "Valid local checkpoint encryption key and public Arkiv configuration for live probes (R-D2-03)"
+    "Review compiler/security advisory fix while preserving reproducible contract compiler settings"
   ],
   "evidenceRefs": [
     "npm run verify · all local verification passed · 2026-11-05T19:55Z",

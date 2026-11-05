@@ -18,15 +18,43 @@ The console runs at `http://127.0.0.1:5173`; the API runs at `http://127.0.0.1:4
 
 <!-- BATON-STATUS:START -->
 
-Generated 2026-11-05T21:33:21.009Z · working tree based on commit `1a389f5`. Refresh with `npm run status:refresh`. Status older than 60 minutes is marked STALE.
+Generated 2026-11-05T22:40:16.960Z · working tree based on commit `49394af`. Refresh with `npm run status:refresh`. Status older than 60 minutes is marked STALE.
 
 | Owner | Updated | Next gate | Current work | Blockers |
 |---|---|---|---|---|
-| D1 | STALE (2026-11-05T22:41:53+05:30) | H00:00 · Connect configured Sepolia/ENS authority and real Hedera x402 provider | Authority, rewards, spending and local acceptance flow | Sepolia RPC, deployed escrow and ENS resolver addresses are not configured in .env; Hedera payer/facilitator credentials and a proven x402 endpoint are not configured |
-| D2 | 2026-11-06T03:02:42+05:30 | H04:45 · G2: deploy/identify BATON-compatible ENS permission adapter, define Arkiv ownership, and verify B-host recovery | Read-only Sepolia check passes chain and ENS lookup; configured ENS resolver does not satisfy BATON isAuthorized interface. | ENS_RESOLVER_ADDRESS currently points to the ENSv2 name resolver; its isAuthorized(bytes32,address) probe failed, so the BATON permission adapter is missing; Arkiv content write/readback and entity ownership/renewal policy remain unverified; Sepolia/ENS reads have not been rerun against the current RPC, escrow, and resolver configuration; No x402 payment was attempted; the integrated payment provider is still a local fixture even though Hedera variables are present; B-host availability for isolated cold recovery is unconfirmed; User-directed Arkiv-only content storage overrides plan.md mirror scenarios; npm audit reports a high and low advisory through solc 0.8.28 -> tmp 0.0.33; its dry-run proposes compiler/dependency updates that still need review |
+| D1 | 2026-11-06T04:09:41+05:30 | H00:00 · Confirm the ENS resolver/name pairing, then validate a live Hedera x402 settlement. | Reconcile the current ENS resolver settings and complete Hedera x402 integration. | The latest local read-only check found ENS_RESOLVER_ADDRESS did not match the resolver returned for ENS_JOB_NAME; recheck before another authority run.; A live Hedera x402 provider/facilitator and proven settlement are not configured; this API still uses its local payment fixture. |
+| D2 | 2026-11-06T04:09:41+05:30 | H05:52 · Reconcile current ENS resolver settings, verify Arkiv ownership/readback, and confirm B-host recovery. | D1 and D2 code are integrated on build/runtime-recovery; combined post-merge verification passed on build/authority-payments. | The latest local probe found ENS_RESOLVER_ADDRESS did not match the resolver currently returned for ENS_JOB_NAME; the separate BATON adapter was not probed in that check.; Arkiv content write/readback and entity ownership/renewal policy remain unverified.; No x402 payment was attempted; the API provider remains a local fixture.; B-host availability for isolated cold recovery is unconfirmed.; The combined npm audit reports one high and one low advisory in the development compiler dependency chain; no fix has been applied. |
 
 Feature code and local checks are not evidence of a live integration. See [gate evidence](docs/gates.md) for tested modes and results. The SQLite payment ledger passes local transaction and restart checks; the provider remains a fixture. Checkpoints, artifacts, and paid output payloads are intended for Arkiv; no live write/readback or independent content mirror is claimed.
 <!-- BATON-STATUS:END -->
+
+### Work completed on this branch
+
+The current `build/runtime-recovery` branch contains the integrated D1 authority/payments and D2 runtime/recovery implementation.
+
+- **Client and API:** React + TypeScript buyer console, Node.js + TypeScript API, protocol/status endpoints, and local job lifecycle.
+- **Authority and rewards:** versioned protocol, EIP-712 signing helpers, Solidity escrow and job-authority sources, worker epoch fencing, and a local three-milestone acceptance flow.
+- **Payment ledger:** SQLite operation ledger with durable reservations, settlement/reconciliation states, idempotency, budget conservation, concurrency control, and restart recovery. The API still uses a local payment-provider fixture; live x402 settlement is not enabled.
+- **Recovery:** encrypted checkpoint and artifact manifests, Arkiv chunk adapter with local integrity and delta-reuse tests, deterministic and Beta-Bernoulli state import/export, and a local A-to-B worker handoff.
+- **Tools and admission:** MCP discovery/invocation fixtures, candidate capability schema, and hard eligibility filtering.
+
+### Verification
+
+The combined D1/D2 code passed `npm run verify` after this branch was integrated into local branch `build/authority-payments` at commit `9976380`. Client/server typechecks and production builds passed, as did all 15 tests, Solidity compilation, the EIP-712 signing vector, and local acceptance. The 15 tests cover checkpoint encryption (4), storage (2), runtime (2), worker handoff (1), tools (1), admission (1), SQLite ledger (3), and API restart recovery (1). The local acceptance confirmed A/B credits of 3/7, stale-worker rejection, idempotency, and an UNKNOWN reservation held across restart. The verification sent no Sepolia transactions and made no x402 payments.
+
+### Sepolia progress
+
+D1 reports that scoped ENS grant, wrong-job denial, and revoke assertions passed. D1 also reports a funded Sepolia A-to-B lifecycle for job `cef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3`: 17 successful transactions, A claimed 3 test tokens, B claimed 7, and stale A was rejected by a simulated `StaleEpoch` revert. The transaction evidence and runnable Sepolia scripts are currently on `build/authority-payments`; they are not present in this checkout. Although [test.md](test.md) lists live command names, this branch's `package.json` does not yet define those Sepolia scripts.
+
+The latest read-only check recorded on 2026-11-06 reached Sepolia but found that `ENS_RESOLVER_ADDRESS` did not match the resolver returned for `ENS_JOB_NAME`. It did not probe the separate `BATON_AUTHORITY_ADAPTER_ADDRESS`. Reconcile the resolver/name settings before repeating authority checks.
+
+### Remaining work
+
+- Verify the current ENS resolver/name configuration and integrate the live authority workflows into this branch.
+- Define Arkiv entity ownership and renewal authority, then perform a live encrypted write/readback.
+- Validate recovery on Worker B's separate host.
+- Integrate and validate a real Hedera x402 settlement; the API currently uses a local fixture.
+- Review the one high and one low npm audit findings in the contract compiler dependency chain.
 
 ## Verify locally
 

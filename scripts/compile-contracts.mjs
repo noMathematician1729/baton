@@ -6,7 +6,7 @@ import solc from "solc";
 const root = resolve(new URL("..", import.meta.url).pathname);
 const contractsRoot = resolve(root, "server/contracts");
 const sources = {};
-for (const name of ["JobAuthority.sol", "JobEscrow.sol"]) {
+for (const name of ["BatonTestToken.sol", "JobAuthority.sol", "JobEscrow.sol"]) {
   sources[`src/${name}`] = { content: await readFile(resolve(contractsRoot, "src", name), "utf8") };
 }
 
@@ -40,7 +40,7 @@ for (const [sourceName, contracts] of Object.entries(output.contracts ?? {})) {
     const target = resolve(out, contractName);
     await mkdir(dirname(target), { recursive: true });
     await writeFile(`${target}.abi.json`, JSON.stringify(artifact.abi, null, 2));
-    if (contractName === "JobEscrow" || contractName === "JobAuthority") {
+    if (["BatonTestToken", "JobEscrow", "JobAuthority"].includes(contractName)) {
       await writeFile(resolve(abiDir, `${contractName}.json`), JSON.stringify(artifact.abi, null, 2));
     }
     await writeFile(`${target}.bin`, artifact.evm.bytecode.object);

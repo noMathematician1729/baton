@@ -3,7 +3,7 @@
     "inputs": [
       {
         "internalType": "address",
-        "name": "resolver_",
+        "name": "ensResolver_",
         "type": "address"
       }
     ],
@@ -19,6 +19,32 @@
     "inputs": [],
     "name": "ResolverUnset",
     "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ROLE_SET_DATA",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "ensResolver",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
   },
   {
     "inputs": [
@@ -45,16 +71,41 @@
     "type": "function"
   },
   {
-    "inputs": [],
-    "name": "resolver",
-    "outputs": [
+    "inputs": [
       {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
+        "internalType": "bytes32",
+        "name": "jobId",
+        "type": "bytes32"
       }
     ],
-    "stateMutability": "view",
+    "name": "jobGrantKey",
+    "outputs": [
+      {
+        "internalType": "string",
+        "name": "",
+        "type": "string"
+      }
+    ],
+    "stateMutability": "pure",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "jobId",
+        "type": "bytes32"
+      }
+    ],
+    "name": "jobResource",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "pure",
     "type": "function"
   }
 ]

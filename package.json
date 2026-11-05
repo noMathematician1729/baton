@@ -22,6 +22,10 @@
     "demo:local": "npm run test:local",
     "contracts:compile": "node scripts/compile-contracts.mjs",
     "deploy:sepolia:escrow": "npm run contracts:compile && node scripts/deploy-escrow.mjs",
+    "deploy:sepolia:escrow:replace": "npm run contracts:compile && node scripts/deploy-escrow.mjs --replace-existing",
+    "test:sepolia:authority": "npm run contracts:compile && node scripts/test-ens-authority-sepolia.mjs",
+    "test:sepolia:worker-grants": "npm run contracts:compile && node scripts/test-worker-ens-grants-sepolia.mjs",
+    "demo:sepolia:job-lifecycle": "npm run contracts:compile && node scripts/demo-sepolia-job-lifecycle.mjs",
     "verify": "npm run typecheck && npm run build && npm run contracts:compile && npm run test:signing && npm run test:local"
   },
   "devDependencies": {

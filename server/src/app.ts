@@ -38,7 +38,9 @@ export function createApp() {
       digest: "sha256",
       emptyHead: "0x" + "00".repeat(32),
       confirmationBlocks: env.CONFIRMATION_BLOCKS,
-      networkMode: env.SEPOLIA_RPC_URL && env.BATON_ESCROW_ADDRESS ? "testnet-configured" : "local",
+      networkMode: env.SEPOLIA_RPC_URL && env.BATON_ESCROW_ADDRESS && env.ENS_RESOLVER_ADDRESS && env.BATON_AUTHORITY_ADAPTER_ADDRESS
+        ? "testnet-configured"
+        : "local",
     });
   });
 

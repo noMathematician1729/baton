@@ -1,8 +1,8 @@
 {
   "owner": "D1",
-  "updatedAt": "2026-11-06T01:19:08+05:30",
+  "updatedAt": "2026-11-06T03:16:41+05:30",
   "elapsedHours": 0,
-  "currentTask": "Track D1 progress and complete remaining live authority, reward and payment gates",
+  "currentTask": "Validate live gateway/chain behavior and Hedera x402 after the Sepolia escrow lifecycle pass",
   "completedFeatures": [
     "Versioned protocol types, canonical hashing and EIP-712 offer/takeover hash helpers",
     "Durable atomic operation ledger with reservation, settlement, UNKNOWN and reconciliation states",
@@ -10,24 +10,34 @@
     "Local three-milestone job lifecycle with immutable A/B reward credits",
     "Solidity JobEscrow and explicit job-scoped authority adapter sources",
     "Solidity 0.8.28 compile and generated tracked ABIs",
+    "Adapted JobAuthority to ENSv2 roles(resource, account), ROLE_SET_DATA and per-job data-key resources",
+    "Added guarded Sepolia grant/revoke/wrong-job workflow; Solidity compile and server typecheck pass",
+    "User reports ENS live grant/revoke/wrong-job checks passed with BATON_AUTHORITY_ADAPTER_ADDRESS configured",
+    "Added explicit escrow replacement deployment with resolver/adapter preflight, receipt/code verification, and atomic .env update",
+    "Configured actual Worker A/B addresses locally and prepared scoped grant/revoke acceptance script",
+    "Configured Worker A's private signer locally and confirmed its derived address matches WORKER_A_ADDRESS; no key value recorded",
+    "Current local BATON_ESCROW_ADDRESS is 0x4F802976810690F984cd05640a23b3FFB5B395E1; funded job lifecycle runner reuses it",
+    "Added test-only mintable Sepolia reward token and EIP-712 A-to-B lifecycle runner with receipt evidence output",
+    "Live Sepolia job 0xcef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3 passed on the existing escrow; 17 transactions confirmed successfully with two confirmations each",
+    "A accepted milestone 1 and withdrew 3 test tokens; B took over at epoch 2, accepted milestones 2-3, and withdrew 7; escrow token balance verified zero",
+    "Stale A offer reverted with StaleEpoch in an eth_call simulation; A/B job grants, wrong-job denial, and grant revocation assertions passed",
+    "Test-only reward token deployed at 0x6044f549F604A02bA66Ac60d2Aed35fFcCAbb6f9; full Sepolia transaction and balance evidence recorded",
     "Repeatable local acceptance scenario including idempotency and UNKNOWN reservation checks",
     "Configured Sepolia RPC in ignored local .env and verified chain ID 11155111",
     "Resolved baton.eth on Sepolia to 0x0f35bDe4F4b1270813c5116DA20915FCD49e47FA; ENS resolver 0x583fDD4b8d345624B1B8438Bd8ca5004bD0352bA",
     "Secured .env with owner-only file permissions and added guarded escrow deployment command",
-    "Deployed JobEscrow to Sepolia at 0x141FA2cE7805d87AEb363a2A725CAa0A0E945deC; transaction 0xeb56aa6e3020bbcdf4dc146bcfa2a3cba3e86474820d77709a75822df32ddfb7 succeeded with five confirmations and 7,721 bytes of runtime code",
+    "Earlier JobEscrow deployment at 0x141FA2cE7805d87AEb363a2A725CAa0A0E945deC has a recorded successful receipt; it is superseded by the current local escrow setting",
     "Saved BATON_ESCROW_ADDRESS in ignored local .env with mode 0600; private deployer key was not printed or committed"
   ],
-  "nextGate": "Verify the scoped ENS authority adapter and reward token, then exercise live escrow and Hedera x402 flows",
+  "nextGate": "Run npm run demo:sepolia:job-lifecycle from Mac Terminal against the existing escrow; then review live evidence and continue Hedera x402 work",
   "blockers": [
-    "ENS_RESOLVER_ADDRESS is empty; the resolved name resolver is not assumed to implement BATON's isAuthorized job grant interface",
-    "A Sepolia ERC-20 reward token and funded live job have not been established",
+    "Execution sandbox Node, curl and Foundry cannot resolve the Sepolia RPC host; funded lifecycle transactions must run from local Mac Terminal",
     "The Hedera x402 facilitator/endpoint and a proven live settlement are not configured; local payer credentials are present"
   ],
   "neededInputs": [
-    "Verify or implement the scoped authority adapter against baton.eth's resolved Sepolia resolver",
-    "Select or deploy a Sepolia ERC-20 reward token and fund a test job",
+    "Validate live gateway/chain behavior for confirmation thresholds, reservation reconciliation, drain/restart and stale-epoch rejection",
     "Configure the Hedera x402 facilitator/endpoint and validate a live settlement"
   ],
-  "evidenceRefs": ["scripts/acceptance-local.mjs", "scripts/check-signing-vector.mjs", "scripts/deploy-escrow.mjs", "server/contracts/abi/JobEscrow.json", "server/src/services/ledger/operationLedger.ts", "server/contracts/src/JobEscrow.sol"],
+  "evidenceRefs": ["scripts/acceptance-local.mjs", "scripts/check-signing-vector.mjs", "scripts/deploy-escrow.mjs", "scripts/test-ens-authority-sepolia.mjs", "scripts/test-worker-ens-grants-sepolia.mjs", "scripts/demo-sepolia-job-lifecycle.mjs", "evidence/sepolia-jobs/cef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3.json", "server/contracts/abi/BatonTestToken.json", "server/contracts/abi/JobAuthority.json", "server/contracts/abi/JobEscrow.json", "server/contracts/src/BatonTestToken.sol", "server/contracts/src/JobAuthority.sol", "server/src/services/ledger/operationLedger.ts", "server/contracts/src/JobEscrow.sol"],
   "releaseLabel": "locally verified; live integrations pending"
 }

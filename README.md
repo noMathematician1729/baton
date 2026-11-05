@@ -45,9 +45,19 @@ requests.md                      Public-input queue; no secrets
 
 ## Current status
 
-The D1 authority/payments slice is locally verified. It has a versioned protocol, canonical SHA-256 commitments, EIP-712 offer/takeover hash helpers, a durable atomic operation ledger, service-budget reservations, UNKNOWN handling, worker epoch fencing, an end-to-end local 3/3/4 handoff acceptance run, and Solidity 0.8.28 compilation with tracked ABIs. Live Sepolia, ENS, Arkiv and Hedera integrations are pending.
+The D1 authority/payments slice is locally verified. It has a versioned protocol, canonical SHA-256 commitments, EIP-712 offer/takeover hash helpers, a durable atomic operation ledger, service-budget reservations, UNKNOWN handling, worker epoch fencing, an end-to-end local 3/3/4 handoff acceptance run, and Solidity 0.8.28 compilation with tracked ABIs. The user reports the live ENS adapter grant/revoke/wrong-job checks passed. The funded Sepolia A-to-B lifecycle now has a live pass on the existing escrow, including milestone credits and both withdrawals. Arkiv and Hedera flows remain pending.
 
-No Sepolia, ENS, Arkiv or Hedera live pass is claimed yet. Public configuration and needed actions are tracked in [`status/d1.json`](status/d1.json) and [`requests.md`](requests.md). The full scope and D1/D2 allocation remain in [`plan.md`](plan.md).
+### Latest Sepolia snapshot
+
+- ENS resolver: `0x583fDD4b8d345624B1B8438Bd8ca5004bD0352bA`; BATON authority adapter: `0xD659F372D2439075F29e39f5E005d86352Da1A6c`. The user reports the live scoped ENS checks passed.
+- Current escrow in ignored local `.env`: `0x4F802976810690F984cd05640a23b3FFB5B395E1`. The guarded replacement script only saves this field after a successful receipt and non-empty runtime code check. Its transaction hash is not yet in tracked evidence.
+- Worker A: `0x432Eeff3E312f1910F3D04A6449753306fFaA5D2`; Worker B: `0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5`.
+- Worker A: the private signer is configured in ignored local `.env` as `WORKER_A_EVM_PRIVATE_KEY`; an offline check confirmed it derives to the configured Worker A address. The key value is not recorded here.
+- Live funded job `0xcef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3` completed against the existing escrow without redeploying it. The run accepted A’s 3-token milestone, transferred assignment to B at epoch 2, accepted B’s 3- and 4-token milestones, and confirmed claims of 3 tokens by A and 7 by B. Each of the 17 submitted transactions had a successful receipt with two confirmations.
+- The stale A milestone was simulated after takeover and reverted with `StaleEpoch` via `eth_call`; it was not sent as a reverting transaction. Final token balances were A `3`, B `7`, escrow `0` (18 decimals). Reward token: test-only `BatonTestToken` at `0x6044f549F604A02bA66Ac60d2Aed35fFcCAbb6f9`; it is permissionless to mint and is only for Sepolia acceptance, not a real-value asset.
+- Full transaction and receipt evidence: [evidence/sepolia-jobs/cef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3.json](evidence/sepolia-jobs/cef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3.json). The run was launched from Mac Terminal because this execution sandbox cannot resolve the Sepolia RPC host.
+
+Public configuration and needed actions are tracked in [`status/d1.json`](status/d1.json) and [`requests.md`](requests.md). The full scope and D1/D2 allocation remain in [`plan.md`](plan.md).
 
 ## Getting started
 
@@ -71,6 +81,10 @@ npm run test:local      # isolated durable-ledger and handoff acceptance
 npm run verify          # all of the above
 forge build             # escrow sources, when solc 0.8.28 is available
 npm run deploy:sepolia:escrow  # deploys JobEscrow after local RPC/key configuration
+npm run deploy:sepolia:escrow:replace # deploys a new escrow and replaces the address after verification
+npm run test:sepolia:authority # deploys/checks ENS adapter and runs scoped grant assertions
+npm run test:sepolia:worker-grants # checks scoped grants for WORKER_A_ADDRESS and WORKER_B_ADDRESS
+npm run demo:sepolia:job-lifecycle # funded A-to-B escrow lifecycle; reuses BATON_ESCROW_ADDRESS
 ```
 
 The local acceptance prints machine-readable evidence. It creates a funded job with rewards `3/3/4` and a separate `20 HBAR` service budget, assigns A, settles one paid operation, accepts a checkpoint, drains the gateway, transfers the task to B, rejects stale A requests, settles two B operations, accepts the remaining checkpoints, and verifies A/B claims of `3/7`. It also checks stable-operation idempotency and that UNKNOWN keeps its reservation held.
@@ -99,6 +113,22 @@ The local `.env` is ignored and must remain private. Enter the testnet deployer 
 ```sh
 npm run deploy:sepolia:escrow
 ```
+
+When intentionally deploying a fresh escrow over an existing configured address, use `npm run deploy:sepolia:escrow:replace`. It first verifies the configured ENS resolver and BATON authority adapter, then stores the new `BATON_ESCROW_ADDRESS` only after a successful receipt and non-empty runtime code check.
+
+## Sepolia ENS authority adapter
+
+`ENS_RESOLVER_ADDRESS` stores the real resolver returned for `ENS_JOB_NAME`; `BATON_AUTHORITY_ADAPTER_ADDRESS` stores BATON's separate `JobAuthority` contract. `JobAuthority` checks ENSv2 `ROLE_SET_DATA` on the resource for `baton.job.v1:<lowercase-job-id>`, so each job grant is scoped to its own data key. Configure `ENS_JOB_NAME` and the Sepolia RPC in ignored `.env`, then run:
+
+```sh
+npm run test:sepolia:authority
+```
+
+The workflow resolves the name live, checks resolver admin access, deploys the adapter only when its address is unset, then verifies grant → authorized, wrong job → unauthorized, and revoke → unauthorized. It saves the real resolver and adapter addresses to distinct `.env` fields only after all assertions pass. The deployer key stays private and the test grant is revoked.
+
+For the actual worker pair, the public `WORKER_A_ADDRESS` and `WORKER_B_ADDRESS` values are configured in local `.env`. The current escrow is already configured; there is no need to replace it to run `npm run test:sepolia:worker-grants`. The script uses the deployer key only to grant/revoke each worker's temporary job-key role, checks correct-job and wrong-job results through the adapter, and revokes each grant before returning. It refuses to run if either worker already has a resolver-wide `ROLE_SET_DATA` grant, so the revoke assertion remains meaningful.
+
+The funded A-to-B flow has completed against the existing escrow; its receipts are in the linked evidence file above. The runner does not deploy or replace `BATON_ESCROW_ADDRESS`. The recorded reward token is test-only. A repeat run needs at least 10 tokens in the buyer balance: the current runner does not mint again once `BATON_REWARD_TOKEN_ADDRESS` is populated, and this run allocated the full 10-token balance.
 
 The client communicates with the server API. Chain access, payment authority, encryption keys, and provider credentials stay out of browser code. Worker processes may run on separate hosts and use the shared server-side packages; a checkpoint or API request does not itself grant tool or data access.
 

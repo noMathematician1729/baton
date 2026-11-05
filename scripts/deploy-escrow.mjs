@@ -2,7 +2,7 @@ import { chmodSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "dotenv";
-import { createPublicClient, createWalletClient, formatEther, http } from "viem";
+import { createPublicClient, createWalletClient, formatEther, getAddress, http, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
 
@@ -10,6 +10,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const envPath = resolve(root, ".env");
 const envText = readFileSync(envPath, "utf8");
 const env = parse(envText);
+const replaceExisting = process.argv.includes("--replace-existing");
+const unknownArgs = process.argv.slice(2).filter((arg) => arg !== "--replace-existing");
+const adapterAbi = parseAbi(["function ensResolver() view returns (address)"]);
 
 class DeploymentError extends Error {}
 
@@ -18,8 +21,12 @@ try {
   if (!env.SEPOLIA_DEPLOYER_PRIVATE_KEY) {
     throw new DeploymentError("SEPOLIA_DEPLOYER_PRIVATE_KEY is missing from local .env; enter it locally, never in chat or a command line");
   }
-  if (env.BATON_ESCROW_ADDRESS) {
+  if (unknownArgs.length > 0) throw new DeploymentError("Unsupported deployment option; use --replace-existing only when intentionally replacing the configured escrow");
+  if (env.BATON_ESCROW_ADDRESS && !replaceExisting) {
     throw new DeploymentError("BATON_ESCROW_ADDRESS is already set; refusing to deploy a duplicate contract");
+  }
+  if (!env.ENS_RESOLVER_ADDRESS || !env.BATON_AUTHORITY_ADAPTER_ADDRESS) {
+    throw new DeploymentError("ENS_RESOLVER_ADDRESS and BATON_AUTHORITY_ADAPTER_ADDRESS must be configured before deploying the escrow");
   }
 
   const bytecodePath = resolve(root, "server/contracts/out/JobEscrow.bin");
@@ -53,10 +60,31 @@ try {
   if (actualChainId !== sepolia.id) {
     throw new DeploymentError(`RPC returned chain ID ${actualChainId}; expected Sepolia ${sepolia.id}. Nothing was deployed`);
   }
+
+  const ensResolverAddress = getAddress(env.ENS_RESOLVER_ADDRESS);
+  const adapterAddress = getAddress(env.BATON_AUTHORITY_ADAPTER_ADDRESS);
+  const resolverCode = await publicClient.getBytecode({ address: ensResolverAddress });
+  const adapterCode = await publicClient.getBytecode({ address: adapterAddress });
+  if (!resolverCode || resolverCode === "0x") throw new DeploymentError("ENS_RESOLVER_ADDRESS has no deployed code on Sepolia");
+  if (!adapterCode || adapterCode === "0x") throw new DeploymentError("BATON_AUTHORITY_ADAPTER_ADDRESS has no deployed code on Sepolia");
+  const adapterResolver = await publicClient.readContract({ address: adapterAddress, abi: adapterAbi, functionName: "ensResolver" });
+  if (getAddress(adapterResolver) !== ensResolverAddress) {
+    throw new DeploymentError("BATON authority adapter points to a different resolver than ENS_RESOLVER_ADDRESS");
+  }
+
   const balance = await publicClient.getBalance({ address: account.address });
   if (balance === 0n) throw new DeploymentError(`Deployer ${account.address} has no Sepolia ETH for gas; fund this testnet address and retry`);
 
-  console.log(JSON.stringify({ stage: "ready", network: "Sepolia", chainId: actualChainId, deployer: account.address, balanceEth: formatEther(balance) }));
+  console.log(JSON.stringify({
+    stage: "ready",
+    network: "Sepolia",
+    chainId: actualChainId,
+    deployer: account.address,
+    balanceEth: formatEther(balance),
+    ensResolverAddress,
+    batonAuthorityAdapterAddress: adapterAddress,
+    replacingEscrow: env.BATON_ESCROW_ADDRESS ? getAddress(env.BATON_ESCROW_ADDRESS) : null,
+  }));
   const hash = await walletClient.deployContract({ abi, bytecode, account });
   console.log(JSON.stringify({ stage: "submitted", transactionHash: hash }));
 
@@ -71,7 +99,18 @@ try {
   }
 
   saveEscrowAddress(envText, receipt.contractAddress);
-  console.log(JSON.stringify({ stage: "confirmed", network: "Sepolia", chainId: actualChainId, contractAddress: receipt.contractAddress, transactionHash: hash, blockNumber: receipt.blockNumber.toString(), confirmations }));
+  console.log(JSON.stringify({
+    stage: "confirmed",
+    network: "Sepolia",
+    chainId: actualChainId,
+    contractAddress: getAddress(receipt.contractAddress),
+    transactionHash: hash,
+    blockNumber: receipt.blockNumber.toString(),
+    confirmations,
+    receiptStatus: receipt.status,
+    runtimeCodeBytes: (deployedCode.length - 2) / 2,
+    savedToEnv: "BATON_ESCROW_ADDRESS",
+  }));
 } catch (error) {
   if (error instanceof DeploymentError) console.error(`[deploy:escrow] ${error.message}`);
   else console.error("[deploy:escrow] Deployment stopped. Check RPC connectivity and transaction status; the deployer key was not printed.");

@@ -56,9 +56,14 @@ This snapshot records D1's work only. D2 should add or update a separate D2 snap
 
 - Protocol/signing foundation: versioned protocol types, canonical hashing, EIP-712 offer/takeover helpers and signing-vector coverage.
 - Local authority/payment path: `JobEscrow` and `JobAuthority` sources, durable reservation/settlement/UNKNOWN/reconciliation ledger, epoch/drain fencing, local milestone lifecycle and acceptance scenario.
+- ENS authority adapter: `JobAuthority` reads the ENSv2 Permissioned Resolver's `roles(resource, account)` and checks `ROLE_SET_DATA` at the resource derived from `baton.job.v1:<lowercase-job-id>`. The user reports the live grant/revoke/wrong-job checks passed for adapter `0xD659F372D2439075F29e39f5E005d86352Da1A6c`; the resolver and adapter remain separate in local `.env`.
+- Escrow redeploy workflow: `JobEscrow` has a zero-argument constructor. Added an explicit replace command that checks the configured resolver and adapter, verifies Sepolia chain ID, waits for the deployment receipt, checks runtime code, then updates `BATON_ESCROW_ADDRESS` while preserving `.env` mode `0600`.
+- Worker authority workflow: configured the user's actual Worker A/B public addresses in ignored `.env` and added a script to test each worker's temporary scoped grant, wrong-job denial, and revoke through the deployed adapter.
+- Funded job lifecycle: completed a live Sepolia run against the configured escrow using a test-only mintable ERC-20. A received and withdrew 3 tokens; after takeover to B at epoch 2, B received and withdrew 7. Stale A was rejected with `StaleEpoch` in an `eth_call` simulation. All 17 submitted transactions had successful receipts with two confirmations. Worker A's signer was configured privately and matched its public address. Full evidence is in `evidence/sepolia-jobs/cef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3.json`.
 - Contract build: Solidity 0.8.28 compilation and generated tracked ABIs.
-- Escrow deployment: `JobEscrow` deployed at `0x141FA2cE7805d87AEb363a2A725CAa0A0E945deC`; transaction `0xeb56aa6e3020bbcdf4dc146bcfa2a3cba3e86474820d77709a75822df32ddfb7` succeeded, reached five confirmations and has verified runtime code.
-- Deployment code and status are on `build/authority-payments` at commit `45a53bd`.
+- Earlier escrow deployment: `JobEscrow` at `0x141FA2cE7805d87AEb363a2A725CAa0A0E945deC` has a recorded receipt at `0xeb56aa6e3020bbcdf4dc146bcfa2a3cba3e86474820d77709a75822df32ddfb7`; this address is superseded by the current local setting.
+- Current local escrow setting: `BATON_ESCROW_ADDRESS=0x4F802976810690F984cd05640a23b3FFB5B395E1`; reuse this address for the funded job and do not redeploy it. The current deployment transaction hash is not in tracked evidence.
+- Previous deployment code and status are pushed to `build/authority-payments` at commit `4068a10`; the ENS adapter changes in this update are in the working tree.
 
 **Operator-side inputs verified**
 
@@ -67,8 +72,7 @@ This snapshot records D1's work only. D2 should add or update a separate D2 snap
 
 **Remaining for D1**
 
-- Verify or deploy a job-scoped ENS authority adapter. The resolved name-record resolver is `0x583fDD4b8d345624B1B8438Bd8ca5004bD0352bA`, but its support for BATON's `isAuthorized(bytes32,address)` interface is unverified; `ENS_RESOLVER_ADDRESS` remains unset. Prove live grant, revoke and fail-closed behavior before marking ENS authority live.
-- Select or deploy a Sepolia ERC-20 reward token, fund a job, and verify live assignment, milestone acceptance, claims and unused-fund refunds against the deployed escrow. The escrow deployment alone does not prove a reward flow.
+- Validate live gateway/chain behavior for confirmation thresholds, reservation reconciliation, drain/restart and stale-epoch rejection. Local ledger acceptance and the escrow milestone pass do not prove live gateway settlement.
 - Validate live gateway/chain behavior for confirmation thresholds, reservation reconciliation, drain/restart and stale-epoch rejection. Local ledger acceptance is not a live chain pass.
 - Configure and prove the Hedera x402 facilitator/endpoint. Local Hedera account credentials are present in ignored `.env`, but the endpoint is unset and no live settlement is claimed.
 
@@ -76,7 +80,7 @@ This snapshot records D1's work only. D2 should add or update a separate D2 snap
 
 - Integrate D1's live authority/payment path with D2's Arkiv checkpoint, provider, worker and recovery path on two hosts, then run the complete A-to-B demonstration and record evidence.
 
-**Readiness:** D1's local core and one Sepolia escrow deployment are delivered. The full live authority/reward/service-payment demonstration remains open; keep the release label `locally verified; live integrations pending`. Track completion by gates and evidence rather than an unweighted percentage.
+**Readiness:** D1's local core, ENS scoped-permission check, and funded Sepolia A-to-B escrow lifecycle are delivered. The reward run used a test-only token; live service-payment integration remains open. Keep the release label `locally verified; live integrations pending`. Track completion by gates and evidence rather than an unweighted percentage.
 
 ## 3. Stack, setup and external dependency gates
 

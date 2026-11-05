@@ -48,6 +48,36 @@ Use branches/worktrees `build/authority-payments` and `build/runtime-recovery`. 
 
 Independence means both can code against fixed types, fixtures and adapters while live dependencies are prepared. Integration still requires the short shared gates. Waiting for an ABI, account or endpoint is not an instruction to stop: continue local contract tests, reference adapters, fixtures or UI against the same interface.
 
+### D1 progress snapshot — 2026-11-06 (Asia/Kolkata)
+
+This snapshot records D1's work only. D2 should add or update a separate D2 snapshot without replacing this section.
+
+**Completed by D1**
+
+- Protocol/signing foundation: versioned protocol types, canonical hashing, EIP-712 offer/takeover helpers and signing-vector coverage.
+- Local authority/payment path: `JobEscrow` and `JobAuthority` sources, durable reservation/settlement/UNKNOWN/reconciliation ledger, epoch/drain fencing, local milestone lifecycle and acceptance scenario.
+- Contract build: Solidity 0.8.28 compilation and generated tracked ABIs.
+- Escrow deployment: `JobEscrow` deployed at `0x141FA2cE7805d87AEb363a2A725CAa0A0E945deC`; transaction `0xeb56aa6e3020bbcdf4dc146bcfa2a3cba3e86474820d77709a75822df32ddfb7` succeeded, reached five confirmations and has verified runtime code.
+- Deployment code and status are on `build/authority-payments` at commit `45a53bd`.
+
+**Operator-side inputs verified**
+
+- Configured Sepolia RPC returned chain ID `11155111`; `baton.eth` resolved to buyer address `0x0f35bDe4F4b1270813c5116DA20915FCD49e47FA`, matching the locally configured deployer.
+- Deployer credentials stayed in ignored local `.env`, which has mode `0600`; no secret value was copied into the repository or chat.
+
+**Remaining for D1**
+
+- Verify or deploy a job-scoped ENS authority adapter. The resolved name-record resolver is `0x583fDD4b8d345624B1B8438Bd8ca5004bD0352bA`, but its support for BATON's `isAuthorized(bytes32,address)` interface is unverified; `ENS_RESOLVER_ADDRESS` remains unset. Prove live grant, revoke and fail-closed behavior before marking ENS authority live.
+- Select or deploy a Sepolia ERC-20 reward token, fund a job, and verify live assignment, milestone acceptance, claims and unused-fund refunds against the deployed escrow. The escrow deployment alone does not prove a reward flow.
+- Validate live gateway/chain behavior for confirmation thresholds, reservation reconciliation, drain/restart and stale-epoch rejection. Local ledger acceptance is not a live chain pass.
+- Configure and prove the Hedera x402 facilitator/endpoint. Local Hedera account credentials are present in ignored `.env`, but the endpoint is unset and no live settlement is claimed.
+
+**Joint remaining work**
+
+- Integrate D1's live authority/payment path with D2's Arkiv checkpoint, provider, worker and recovery path on two hosts, then run the complete A-to-B demonstration and record evidence.
+
+**Readiness:** D1's local core and one Sepolia escrow deployment are delivered. The full live authority/reward/service-payment demonstration remains open; keep the release label `locally verified; live integrations pending`. Track completion by gates and evidence rather than an unweighted percentage.
+
 ## 3. Stack, setup and external dependency gates
 
 Use TypeScript/viem, Solidity/Foundry/OpenZeppelin, one minimal web console, one buyer backend, SQLite with durable transactions, and a pinned compatible Arkiv SDK/x402 starter. Prefer installed tools; Docker is optional. At H00 inspect actual installed versions and pin the compatible set rather than pulling floating latest versions mid-build. The x402 starter is alpha and version-sensitive: pin its exact commit and supported payment scheme after a successful live request.

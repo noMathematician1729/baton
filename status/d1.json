@@ -1,8 +1,8 @@
 {
   "owner": "D1",
-  "updatedAt": "2026-11-06T00:26:56+05:30",
+  "updatedAt": "2026-11-06T01:19:08+05:30",
   "elapsedHours": 0,
-  "currentTask": "Deploy JobEscrow to Sepolia and verify local deployment configuration",
+  "currentTask": "Track D1 progress and complete remaining live authority, reward and payment gates",
   "completedFeatures": [
     "Versioned protocol types, canonical hashing and EIP-712 offer/takeover hash helpers",
     "Durable atomic operation ledger with reservation, settlement, UNKNOWN and reconciliation states",
@@ -17,14 +17,16 @@
     "Deployed JobEscrow to Sepolia at 0x141FA2cE7805d87AEb363a2A725CAa0A0E945deC; transaction 0xeb56aa6e3020bbcdf4dc146bcfa2a3cba3e86474820d77709a75822df32ddfb7 succeeded with five confirmations and 7,721 bytes of runtime code",
     "Saved BATON_ESCROW_ADDRESS in ignored local .env with mode 0600; private deployer key was not printed or committed"
   ],
-  "nextGate": "Verify the scoped ENS authority adapter against the resolved resolver interface and complete Hedera/x402 live integration setup",
+  "nextGate": "Verify the scoped ENS authority adapter and reward token, then exercise live escrow and Hedera x402 flows",
   "blockers": [
     "ENS_RESOLVER_ADDRESS is empty; the resolved name resolver is not assumed to implement BATON's isAuthorized job grant interface",
-    "Hedera payer/facilitator credentials and a proven x402 endpoint are not configured"
+    "A Sepolia ERC-20 reward token and funded live job have not been established",
+    "The Hedera x402 facilitator/endpoint and a proven live settlement are not configured; local payer credentials are present"
   ],
   "neededInputs": [
     "Verify or implement the scoped authority adapter against baton.eth's resolved Sepolia resolver",
-    "Configure Hedera payer/facilitator credentials and validate the x402 endpoint"
+    "Select or deploy a Sepolia ERC-20 reward token and fund a test job",
+    "Configure the Hedera x402 facilitator/endpoint and validate a live settlement"
   ],
   "evidenceRefs": ["scripts/acceptance-local.mjs", "scripts/check-signing-vector.mjs", "scripts/deploy-escrow.mjs", "server/contracts/abi/JobEscrow.json", "server/src/services/ledger/operationLedger.ts", "server/contracts/src/JobEscrow.sol"],
   "releaseLabel": "locally verified; live integrations pending"

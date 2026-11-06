@@ -5,7 +5,7 @@ import type { WorkerRecord } from "./coreStore.js";
 
 type Handler = (request: express.Request, response: express.Response) => Promise<unknown>;
 
-/** Routes for connected Codex workers and the two-worker core job lifecycle. */
+/** Routes for connected worker runtimes and the two-worker core job lifecycle. */
 export function createCoreRouter(core: CoreService): express.Router {
   const router = express.Router();
   const wrap = (handler: Handler) => (request: express.Request, response: express.Response) => {
@@ -32,10 +32,22 @@ export function createCoreRouter(core: CoreService): express.Router {
   };
 
   // Read models (buyer console / CLI).
-  router.get("/core/workers", wrap(async () => ({ workers: await core.listWorkers() })));
-  router.get("/core/jobs", wrap(async () => ({ jobs: await core.listJobs() })));
-  router.get("/core/jobs/:jobId", wrap(async (req) => core.view(jobId(req))));
-  router.get("/core/jobs/:jobId/reconcile", wrap(async (req) => core.reconcile(jobId(req))));
+  router.get("/core/workers", wrap(async (req) => {
+    buyer(req);
+    return { workers: await core.listWorkers() };
+  }));
+  router.get("/core/jobs", wrap(async (req) => {
+    buyer(req);
+    return { jobs: await core.listJobs() };
+  }));
+  router.get("/core/jobs/:jobId", wrap(async (req) => {
+    buyer(req);
+    return core.view(jobId(req));
+  }));
+  router.get("/core/jobs/:jobId/reconcile", wrap(async (req) => {
+    buyer(req);
+    return core.reconcile(jobId(req));
+  }));
 
   // Buyer controls.
   router.post("/core/workers/:workerId/connect", wrap(async (req) => {

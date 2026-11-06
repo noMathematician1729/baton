@@ -49,9 +49,9 @@ The command passed 16/16 tests, covering signed production route gating, uncerta
 
 The earlier 12/12 and 16/16 Solidity results are historical. The current suite passes 17/17 with pinned solc 0.8.28 using `forge test --root server/contracts --offline`.
 
-## Two Codex workers: connect, run, take over, recover
+## Two worker runtimes: connect, run, take over, recover
 
-This is the live A→B handoff through the normal application path: real Codex app-server runtimes, ENSv2 on Sepolia, encrypted Arkiv checkpoints and the V2 escrow. Every command below is a real testnet action unless marked otherwise. Hedera x402, automatic failure detection and a browser UI for these controls are not part of this path; it is driven through the API and the `baton` CLI.
+This is the A→B handoff through the normal application path: configured Codex or Gemma/ADK runtimes, ENSv2 on Sepolia, encrypted Arkiv checkpoints and the V2 escrow. Every command below is a real testnet action unless marked otherwise. Hedera x402 and automatic failure detection are not part of this path. The managed-worker CLI flow assumes the API and workers share a host; Gemma workers can instead run on the Ollama host as described in `server/apps/worker-adk/README.md`.
 
 ### Identity mapping
 
@@ -60,7 +60,7 @@ Each mapping is explicit and independent. Query it with `npm run baton -- status
 | Concept | Where it lives | Example |
 |---|---|---|
 | Stable worker ID | Registry, `.env.worker-<id>` | `a`, `b` |
-| Codex account | `.baton-data/workers/<id>/codex-home` (mode 0700, never in git) | one ChatGPT account per worker |
+| LLM runtime | worker record and private worker home | Codex app-server or Google ADK with local Ollama/Gemma |
 | Worker wallet | `WORKER_EVM_PRIVATE_KEY` in `.env.worker-<id>`; ownership proven by signature at registration | `0x432E…A5D2` |
 | ENS name | Per-job child name, buyer-owned | `a.job-<id>.baton.eth` |
 | Authority | Escrow `assignedWorker` and `epoch` on Sepolia | ENS is discovery, not authority |
@@ -99,9 +99,9 @@ npm run baton -- connect a
 npm run baton -- connect b --no-open
 ```
 
-`connect` starts the worker's runtime and prints the official OpenAI sign-in link when the worker has no login. Sign in to a different account for each worker. For the second worker, use `--no-open` and open the link in a private window, otherwise the browser reuses the first account's session. Never paste credentials anywhere; the sign-in completes in the browser and returns to the worker's own localhost callback. Your own `~/.codex` login is not touched. Later reconnects reuse the stored login.
+For Codex workers, `connect` starts the runtime and prints the official OpenAI sign-in link when needed. Sign in to a different account for each worker; use `--no-open` for B and open the link in a private window. Never paste credentials anywhere; the sign-in completes in the browser and returns to the worker's localhost callback. For Gemma workers, set the `BATON_WORKER_RUNTIME=adk` settings and start each worker on the Ollama host using the ADK guide; no Codex sign-in is needed.
 
-A worker becomes `available` only after its new process passes the connect smoke test: a real model turn must call a BATON tool and write a file, and the isolation probe must pass (see below). Check with `npm run baton -- workers`.
+A worker becomes `available` only after its new process passes the connect smoke test. Codex must pass its OS sandbox isolation probe; ADK must prove Gemma inference and the workspace-scoped function tool boundary. Check with `npm run baton -- workers`.
 
 ### Run a job
 
@@ -139,7 +139,7 @@ node --env-file=.env.worker-b --import tsx scripts/core/arkiv-retention-check.ts
 npm run test:core --workspace=server   # offline
 ```
 
-`core:e2e` needs both workers connected. It reconnects nothing, so run `connect a` again before the next job: it deliberately terminates A. A run reports PASS only if payouts reconcile and its assertions hold: A wrote milestone 1 at epoch 1, B wrote 2 and 3 at epoch 2, B recovered A's checkpoint and did not regenerate A's outputs, both runtimes did real tool work, the accounts differ, and both sandboxes are isolated.
+`core:e2e` needs both workers connected and runs on the buyer host with their API-managed processes. It reconnects nothing, so connect A again before the next job: it deliberately terminates A. A run reports PASS only if payouts reconcile and its assertions hold: A wrote milestone 1 at epoch 1, B wrote 2 and 3 at epoch 2, B recovered A's checkpoint and did not regenerate A's outputs, both runtimes did real tool work, the worker wallets differ, and each runtime's smoke-verified tool boundary passes. ADK's workspace tool boundary is not an OS-level sandbox.
 
 ### Partial failures and recovery
 
@@ -158,7 +158,7 @@ Limits:
 - The MCP tool bridge and worker daemon run outside the sandbox by design; the bridge holds no secrets.
 - `/opt/homebrew` and `/Library/Developer` are readable for tooling.
 - Arkiv entity owners are worker wallets. Entities use permissionless extension, so anyone can renew them after a worker disappears.
-- The read routes `GET /api/core/*` are unauthenticated and rely on the loopback bind. Do not expose the API publicly as is.
+- Buyer read routes under `GET /api/core/*` require `x-baton-buyer-token`; the browser console keeps that token in tab memory. Worker-context reads use the worker's signed request. Keep `BATON_BUYER_API_TOKEN` private and set the deployed frontend's `VITE_API_URL` and API `CLIENT_ORIGIN` to the deployed URLs.
 
 ## Gateway authority and payment recovery
 

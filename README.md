@@ -123,4 +123,6 @@ scripts/                        Local scenarios, status refresh and contract che
 status/                         Per-owner progress and gate evidence
 ```
 
+For the Ollama-backed Gemma worker setup and remote-host connection steps, see the [ADK demo guide](server/apps/worker-adk/README.md).
+
 SQLite settings and current decisions are described in [BATON_Architecture.md](BATON_Architecture.md) and [.env.example](.env.example). The build plan and ownership gates are in [plan.md](plan.md); test modes and live-read evidence are in [docs/gates.md](docs/gates.md).

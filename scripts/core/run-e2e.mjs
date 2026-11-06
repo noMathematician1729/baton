@@ -2,11 +2,10 @@
 // Operator runbook for one fresh two-worker job, executed through the normal BATON API
 // (the same calls the `baton` CLI makes). Workers A and B must already be connected.
 // The buyer approvals, the termination of A's real process and the takeover request are
-// the operator steps; all task work is done by the Codex workers themselves.
+// the operator steps; task work is done by the configured worker runtimes.
 //   node scripts/core/run-e2e.mjs            clean run
 //   node scripts/core/run-e2e.mjs --drill    also SIGKILL and restart the API while a takeover tx is in flight
 import { execFileSync, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse } from "dotenv";
@@ -38,7 +37,7 @@ async function fetchThroughOutage(url, init) {
 }
 
 async function call(method, path, body) {
-  const response = await fetchThroughOutage(api + path, { method, headers: { "content-type": "application/json", ...(method === "POST" ? { "x-baton-buyer-token": env.BATON_BUYER_API_TOKEN } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const response = await fetchThroughOutage(api + path, { method, headers: { "content-type": "application/json", "x-baton-buyer-token": env.BATON_BUYER_API_TOKEN }, body: body === undefined ? undefined : JSON.stringify(body) });
   const json = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(`${method} ${path} → ${response.status} ${json.error ?? ""}`);
   return json;
@@ -110,7 +109,7 @@ if (drill) {
   const out = openSync(resolve(root, ".baton-data/logs/api.log"), "a", 0o600);
   const restarted = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], { cwd: resolve(root, "server"), detached: true, stdio: ["ignore", out, out] });
   restarted.unref();
-  await until("API back", async () => (await fetch(`${api}/api/core/jobs/${jobId}`).catch(() => undefined))?.ok);
+  await until("API back", async () => (await fetch(`${api}/api/core/jobs/${jobId}`, { headers: { "x-baton-buyer-token": env.BATON_BUYER_API_TOKEN } }).catch(() => undefined))?.ok);
   const rejected = await fetch(`${api}/api/core/jobs/${jobId}/takeover`, { method: "POST", headers: { "content-type": "application/json", "x-baton-buyer-token": env.BATON_BUYER_API_TOKEN }, body: JSON.stringify({ workerId: "b" }) });
   const after = await job(jobId);
   drillReport.apiKilledAt = killedAt;
@@ -158,6 +157,15 @@ const activity = (id) => fullEvents(id).filter((e) => e.state === "turn_complete
 const realWork = (id) => activity(id).some((e) => e.detail.status === "completed" && e.detail.toolCalls?.some((t) => t === "baton_submit_milestone:completed") && (e.detail.commands > 0 || e.detail.fileChanges > 0));
 const hand = accepted.find((c) => c.milestone === 2);
 const finalWorkers = await workers();
+const runtimeBoundaryVerified = (worker) => {
+  const detail = worker.smoke?.detail ?? {};
+  if (worker.runtime.kind === "codex-app-server") return detail.isolated === true;
+  if (worker.runtime.kind === "google-adk-ollama") {
+    return detail.toolUsed === true && detail.toolAccess === "workspace-scoped function tools; no MCP or shell tool";
+  }
+  return false;
+};
+const demoWorkers = finalWorkers.filter((w) => ["a", "b"].includes(w.workerId));
 const checks = {
   duplicateAcceptRefused: duplicateAccept.status === 409,
   aWroteMilestone1AtEpoch1: accepted.find((c) => c.milestone === 1)?.workerId === "a" && accepted.find((c) => c.milestone === 1)?.epoch === 1,
@@ -165,8 +173,8 @@ const checks = {
   bRecoveredAsCheckpointFromEpoch1: hand?.recoveredFrom?.epoch === 1 && hand?.recoveredFrom?.writer === accepted.find((c) => c.milestone === 1)?.writer,
   bDidNotRegenerateAsOutputs: hand ? !hand.newArtifacts.some((file) => ["normalized.json", "clusters.json"].includes(file)) && hand.newArtifacts.includes("analysis.json") : false,
   bothRuntimesDidRealWork: realWork("a") && realWork("b"),
-  distinctCodexAccounts: new Set(finalWorkers.filter((w) => ["a", "b"].includes(w.workerId)).map((w) => w.runtime.account?.email)).size === 2,
-  bothSandboxesIsolated: finalWorkers.filter((w) => ["a", "b"].includes(w.workerId)).every((w) => w.smoke?.detail?.isolated === true),
+  distinctWorkerWallets: new Set(demoWorkers.map((w) => w.address.toLowerCase())).size === 2,
+  bothRuntimeBoundariesVerified: demoWorkers.length === 2 && demoWorkers.every(runtimeBoundaryVerified),
   noDuplicateTakeover: Object.keys(proof.ops).filter((k) => k.startsWith("escrow:takeover")).length === 1,
 };
 step("run-assertions", checks);
@@ -191,10 +199,10 @@ const strip = (events) => events.filter((e) => e.detail?.jobId === jobId).map((e
 const build = {
   commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
   trackedChanges: execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: root, encoding: "utf8" }).trim().split("\n").filter(Boolean),
-  codex: execFileSync("codex", ["--version"], { encoding: "utf8" }).trim(),
+  workerRuntimes: Object.fromEntries(finalWorkers.map((w) => [w.workerId, { kind: w.runtime.kind, model: w.runtime.model }])),
 };
 const evidence = {
-  kind: "baton-core-two-codex-worker-run",
+  kind: "baton-core-two-worker-run",
   build,
   started,
   finished: new Date().toISOString(),
@@ -205,7 +213,7 @@ const evidence = {
   network: "sepolia",
   explorer: "https://sepolia.etherscan.io/tx/",
   job: { ...jobView, spec: { templateId: spec.templateId, title: spec.title, milestones: spec.milestones.map((m) => ({ index: m.index, title: m.title, requiredFiles: m.requiredFiles, rewardTokens: m.rewardTokens })) } },
-  workers: (await workers()).filter((w) => ["a", "b"].includes(w.workerId)).map((w) => ({ workerId: w.workerId, wallet: w.address, codexAccount: { type: w.runtime.account?.type, planType: w.runtime.account?.planType, accountRef: createHash("sha256").update(String(w.runtime.account?.email)).digest("hex").slice(0, 16) }, smoke: w.smoke })),
+  workers: (await workers()).filter((w) => ["a", "b"].includes(w.workerId)).map((w) => ({ workerId: w.workerId, wallet: w.address, runtime: w.runtime, smoke: w.smoke })),
   workerActivity: { a: strip(fullEvents("a")), b: strip(fullEvents("b")) },
   staleCheck: stale,
   reconcile,

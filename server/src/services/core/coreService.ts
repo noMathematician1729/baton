@@ -50,9 +50,12 @@ const tokenAbi = parseAbi([
 ]);
 const EMPTY_HEAD = `0x${"0".repeat(64)}` as Hex;
 const V2_MARKER = keccak256(toBytes("BATON_JOB_ESCROW_V2"));
-const COMPATIBILITY_REPORT = keccak256(toBytes(`baton.compat.v1:codex-app-server:${INCIDENT_TRIAGE_TEMPLATE_ID}`));
 const SERVICE_POLICY = keccak256(toBytes("baton.service-policy.v1:no-paid-services"));
 const HEARTBEAT_STALE_MS = 30_000;
+
+function compatibilityReport(runtimeKind: string): Hex {
+  return keccak256(toBytes(`baton.compat.v1:${runtimeKind}:${INCIDENT_TRIAGE_TEMPLATE_ID}`));
+}
 
 export type CoreConfig = {
   repoRoot: string;
@@ -72,6 +75,7 @@ export type CoreConfig = {
   buyerApiToken: string;
   apiUrl: string;
   confirmations: number;
+  workerLaunchEnabled?: boolean;
 };
 
 export class CoreError extends Error {
@@ -95,6 +99,8 @@ export class CoreService {
   private readonly keys: CheckpointKeyGrantStore;
   private readonly arkiv: ArkivContentStore;
   private readonly running = new Map<string, Promise<void>>();
+  private readonly pendingWorkerLaunchTokens = new Map<string, string>();
+  private readonly pendingWorkerPids = new Map<string, number>();
 
   public constructor(public readonly config: CoreConfig) {
     this.store = new CoreStore(join(config.dataDir, "core-state.json"));
@@ -140,17 +146,22 @@ export class CoreService {
     return { nonce };
   }
 
-  public async register(workerId: string, body: { address: string; nonce: string; signature: Hex; pid?: number; runtime?: WorkerRecord["runtime"]; capabilities?: string[] }) {
+  public async register(workerId: string, body: { address: string; nonce: string; signature: Hex; pid?: number; managed?: boolean; managedToken?: string; runtime?: WorkerRecord["runtime"]; capabilities?: string[] }) {
     const challenge = await this.store.read((s) => s.challenges[workerId]);
     if (!challenge || challenge.nonce !== body.nonce || Date.now() - Date.parse(challenge.at) > 120_000) throw new CoreError(401, "CHALLENGE_INVALID");
+    if (body.managed !== undefined && typeof body.managed !== "boolean") throw new CoreError(400, "WORKER_MANAGEMENT_MODE_INVALID");
+    const launchToken = this.pendingWorkerLaunchTokens.get(workerId);
+    const managed = body.managed === true && Boolean(launchToken) && body.managedToken === launchToken;
+    if (body.managed === true && !managed) throw new CoreError(403, "WORKER_MANAGEMENT_PROOF_INVALID");
     const address = getAddress(body.address);
     const ok = await verifyMessage({ address, message: registrationMessage({ workerId, address, nonce: body.nonce }), signature: body.signature }).catch(() => false);
     if (!ok) throw new CoreError(401, "WALLET_OWNERSHIP_UNVERIFIED");
-    return this.store.mutate((s) => {
+    const registered = await this.store.mutate((s) => {
       delete s.challenges[workerId];
       const existing = s.workers[workerId];
       if (existing && existing.address !== address) throw new CoreError(409, "WORKER_ID_BOUND_TO_OTHER_WALLET");
       if (Object.values(s.workers).some((w) => w.workerId !== workerId && w.address === address)) throw new CoreError(409, "WALLET_BOUND_TO_OTHER_WORKER");
+      const pid = managed ? this.pendingWorkerPids.get(workerId) ?? existing?.pid : undefined;
       const record: WorkerRecord = {
         ...(existing ?? { events: [] }),
         workerId,
@@ -158,17 +169,23 @@ export class CoreService {
         walletVerifiedAt: nowIso(),
         runtime: body.runtime ?? { kind: "codex-app-server" },
         capabilities: body.capabilities ?? [],
-        pid: body.pid ?? existing?.pid,
+        managed,
+        pid,
         connection: "starting",
         lastHeartbeatAt: nowIso(),
-        // Each runtime process must prove inference, tools and isolation for itself.
+        // Each runtime process must prove inference and its declared tool boundary.
         smoke: undefined,
         lastError: undefined,
       } as WorkerRecord;
-      record.events = [...(existing?.events ?? []), { at: nowIso(), state: "registered", detail: { address, pid: body.pid } }].slice(-400);
+      record.events = [...(existing?.events ?? []), { at: nowIso(), state: "registered", detail: { address, ...(pid ? { pid } : {}) } }].slice(-400);
       s.workers[workerId] = record;
       return { workerId, address };
     });
+    if (managed) {
+      this.pendingWorkerLaunchTokens.delete(workerId);
+      this.pendingWorkerPids.delete(workerId);
+    }
+    return registered;
   }
 
   public async authenticateWorker(headers: Record<string, string | string[] | undefined>, method: string, path: string, body: string): Promise<WorkerRecord> {
@@ -244,21 +261,28 @@ export class CoreService {
   /** Starts the worker runtime as its own process group with only its own env file. */
   public async connectWorker(workerId: string): Promise<{ pid: number; log: string }> {
     if (!/^[a-z][a-z0-9-]{0,15}$/.test(workerId)) throw new CoreError(400, "WORKER_ID_INVALID");
+    if (this.config.workerLaunchEnabled === false) throw new CoreError(409, "WORKER_LOCAL_LAUNCH_DISABLED_START_RUNTIME_ON_WORKER_HOST");
+    const existing = await this.store.read((s) => s.workers[workerId]);
+    if (existing?.managed === false && workerIsAlive(existing)) throw new CoreError(409, "WORKER_RUNTIME_MANAGED_ON_WORKER_HOST");
+    const pendingPid = this.pendingWorkerPids.get(workerId);
+    if (pendingPid && isAlive(pendingPid)) throw new CoreError(409, "WORKER_ALREADY_RUNNING");
+    if (existing?.pid && isAlive(existing.pid)) throw new CoreError(409, "WORKER_ALREADY_RUNNING");
     const envFile = resolve(this.config.repoRoot, `.env.worker-${workerId}`);
     readFileSync(envFile); // must exist; contents are never read into this process
-    const existing = await this.store.read((s) => s.workers[workerId]);
-    if (existing?.pid && isAlive(existing.pid)) throw new CoreError(409, "WORKER_ALREADY_RUNNING");
     const logDir = join(this.config.dataDir, "workers", workerId);
     await mkdir(logDir, { recursive: true, mode: 0o700 });
     const logPath = join(logDir, "worker.log");
     const out = openSync(logPath, "a", 0o600);
+    const launchToken = randomBytes(32).toString("hex");
     const child = spawn(process.execPath, [`--env-file=${envFile}`, "--import", "tsx", "server/apps/worker/src/codexWorker.ts"], {
       cwd: this.config.repoRoot,
       detached: true,
       stdio: ["ignore", out, out],
       // Deliberately not inheriting the API environment: it holds buyer secrets.
-      env: { PATH: process.env.PATH, HOME: process.env.HOME, LANG: process.env.LANG, TMPDIR: process.env.TMPDIR, BATON_API_URL: this.config.apiUrl, BATON_WORKER_ID: workerId },
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, LANG: process.env.LANG, TMPDIR: process.env.TMPDIR, BATON_API_URL: this.config.apiUrl, BATON_WORKER_ID: workerId, BATON_WORKER_MANAGED_TOKEN: launchToken },
     });
+    this.pendingWorkerLaunchTokens.set(workerId, launchToken);
+    this.pendingWorkerPids.set(workerId, child.pid!);
     child.unref();
     await this.store.mutate((s) => {
       const w = s.workers[workerId];
@@ -274,7 +298,9 @@ export class CoreService {
   /** Terminates only this worker's runtime process group. Jobs, namespaces and other workers are untouched. */
   public async stopWorker(workerId: string, mode: "kill" | "graceful" = "kill") {
     const worker = await this.store.read((s) => s.workers[workerId]);
-    if (!worker?.pid) throw new CoreError(404, "WORKER_PROCESS_UNKNOWN");
+    if (!worker) throw new CoreError(404, "WORKER_PROCESS_UNKNOWN");
+    if (worker.managed === false) throw new CoreError(409, "WORKER_RUNTIME_MANAGED_ON_WORKER_HOST");
+    if (!worker.pid) throw new CoreError(404, "WORKER_PROCESS_UNKNOWN");
     const pid = worker.pid;
     let signalled = false;
     try {
@@ -290,6 +316,8 @@ export class CoreService {
     }
     await new Promise((ok) => setTimeout(ok, 1000));
     const alive = isAlive(pid);
+    this.pendingWorkerLaunchTokens.delete(workerId);
+    this.pendingWorkerPids.delete(workerId);
     await this.store.mutate((s) => {
       const w = s.workers[workerId]!;
       w.connection = "stopped";
@@ -304,7 +332,7 @@ export class CoreService {
     const candidate = workers
       .filter((w) => !exclude.includes(w.workerId))
       .filter((w) => w.connection === "available" && w.smoke?.passed && w.capabilities.includes(`task:${INCIDENT_TRIAGE_TEMPLATE_ID}`))
-      .filter((w) => w.pid !== undefined && isAlive(w.pid) && Date.now() - Date.parse(w.lastHeartbeatAt ?? "0") < HEARTBEAT_STALE_MS)
+      .filter((w) => workerIsAlive(w) && hasRecentHeartbeat(w))
       .filter((w) => !busy.has(w.workerId))
       .sort((a, b) => a.workerId.localeCompare(b.workerId))[0];
     if (!candidate) throw new CoreError(409, "NO_ELIGIBLE_WORKER_AVAILABLE");
@@ -732,7 +760,7 @@ export class CoreService {
         ackRequest: {
           nonce: BigInt("0x" + randomBytes(16).toString("hex")).toString(),
           expiry: Math.floor(Date.now() / 1000) + 3 * 3600,
-          compatibilityReport: COMPATIBILITY_REPORT,
+          compatibilityReport: compatibilityReport(successor.runtime.kind),
           servicePolicy: SERVICE_POLICY,
           epoch: Number(chainJob[8]),
           expectedHead: chainJob[11],
@@ -906,7 +934,7 @@ export class CoreService {
   public async listWorkers() {
     return this.store.read((s) => Object.values(s.workers).map((w) => ({
       ...w,
-      alive: w.pid ? isAlive(w.pid) : false,
+      alive: workerIsAlive(w),
       events: w.events.slice(-25),
       runtime: { ...w.runtime, account: maskAccount(w.runtime.account) },
     })));
@@ -930,6 +958,16 @@ function isAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+function hasRecentHeartbeat(worker: Pick<WorkerRecord, "lastHeartbeatAt">): boolean {
+  const heartbeat = worker.lastHeartbeatAt ? Date.parse(worker.lastHeartbeatAt) : Number.NaN;
+  return Number.isFinite(heartbeat) && Date.now() - heartbeat < HEARTBEAT_STALE_MS;
+}
+
+function workerIsAlive(worker: Pick<WorkerRecord, "managed" | "pid" | "lastHeartbeatAt">): boolean {
+  if (worker.managed === false) return hasRecentHeartbeat(worker);
+  return worker.pid !== undefined && isAlive(worker.pid);
 }
 
 function require_timingSafeEqual(a: string, b: string): boolean {

@@ -5,6 +5,7 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parse } from "dotenv";
 import { BaseError, ContractFunctionRevertedError, createPublicClient, getAddress, http, type Abi, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
@@ -16,11 +17,16 @@ import { workerRequestMessage } from "../../server/src/services/orchestrator/wor
 const jobId = process.argv[2] as Hex;
 const e = process.env;
 const workerId = e.BATON_WORKER_ID ?? "a";
+const buyerEnv = parse(readFileSync(resolve(import.meta.dirname, "../../.env"), "utf8"));
+const buyerToken = buyerEnv.BATON_BUYER_API_TOKEN;
+if (!buyerToken) throw new Error("BATON_BUYER_API_TOKEN is required in the buyer .env for the private job read");
 const account = privateKeyToAccount(e.WORKER_EVM_PRIVATE_KEY as Hex);
 const api = (e.BATON_API_URL ?? "http://127.0.0.1:4000").replace(/\/$/, "");
 const client = createPublicClient({ chain: sepolia, transport: http(e.SEPOLIA_RPC_URL) });
 const keys = new HttpCheckpointKeyGrantResolver(e.CHECKPOINT_KEY_SERVICE_URL!, e.CHECKPOINT_KEY_SERVICE_TOKEN!, e.CHECKPOINT_KEY_SERVICE_DECRYPTION_PRIVATE_KEY!);
-const job = await fetch(`${api}/api/core/jobs/${jobId}`).then((r) => r.json()) as { taskId: Hex; termsHash: Hex; escrow: Address; acceptanceSpecHashes: Hex[]; checkpoints: Array<{ manifestDigest: Hex; keyId: string; status: string }>; contentKeys: Record<string, { keyId: string }> };
+const jobResponse = await fetch(`${api}/api/core/jobs/${jobId}`, { headers: { "x-baton-buyer-token": buyerToken } });
+if (!jobResponse.ok) throw new Error(`Buyer job read failed: ${jobResponse.status}`);
+const job = await jobResponse.json() as { taskId: Hex; termsHash: Hex; escrow: Address; acceptanceSpecHashes: Hex[]; checkpoints: Array<{ manifestDigest: Hex; keyId: string; status: string }>; contentKeys: Record<string, { keyId: string }> };
 const chainJob = await client.readContract({ address: job.escrow, abi: escrowAbi, functionName: "jobs", args: [jobId] });
 const results: Array<{ action: string; refused: boolean; detail: string }> = [];
 const expectRefusal = async (action: string, attempt: () => Promise<unknown>) => {

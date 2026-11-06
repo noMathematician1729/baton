@@ -34,12 +34,12 @@ export function CoreConsole() {
 
   const refresh = useCallback(async (preferredJobId?: string, signal?: AbortSignal) => {
     try {
-      const overview = await getCoreOverview(signal);
+      const overview = await getCoreOverview(buyerToken.trim(), signal);
       const nextJobId = (preferredJobId ?? selectedJobId)
         && overview.jobs.some((item) => item.jobId === (preferredJobId ?? selectedJobId))
         ? preferredJobId ?? selectedJobId
         : overview.jobs[0]?.jobId;
-      const detail = nextJobId ? await getCoreJob(nextJobId, signal) : null;
+      const detail = nextJobId ? await getCoreJob(nextJobId, buyerToken.trim(), signal) : null;
       if (signal?.aborted) return;
       setWorkers(overview.workers);
       setJobs(overview.jobs);
@@ -51,7 +51,7 @@ export function CoreConsole() {
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, [selectedJobId]);
+  }, [buyerToken, selectedJobId]);
 
   useEffect(() => {
     let stopped = false;
@@ -105,7 +105,7 @@ export function CoreConsole() {
     setActionError("");
     setNotice("");
     try {
-      setReconciliation(await getCoreReconciliation(job.jobId));
+      setReconciliation(await getCoreReconciliation(job.jobId, buyerToken.trim()));
       setNotice("On-chain accounting refreshed.");
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Could not reconcile this job.");
@@ -159,7 +159,7 @@ export function CoreConsole() {
           </div>
           <div className="core-heading-actions">
             <span className={`core-api-state ${apiError ? "is-offline" : loading ? "is-loading" : "is-online"}`}>
-              <i />{apiError ? "Core unavailable" : loading ? "Connecting" : "API connected"}
+              <i />{apiError === "BUYER_AUTH_REQUIRED" ? "Buyer access needed" : apiError ? "Core unavailable" : loading ? "Connecting" : "API connected"}
             </span>
             <button className="btn btn-ghost btn-sm" onClick={() => void refresh()} disabled={pending === "refresh"}>Refresh</button>
             <Link className="btn btn-ghost btn-sm" to="/jobs">Protocol jobs</Link>
@@ -170,7 +170,7 @@ export function CoreConsole() {
         <section className="core-access" aria-label="Buyer operator access">
           <div>
             <h2>Buyer controls</h2>
-            <p>Enter the buyer API token from the buyer host’s private `.env`. It stays in this tab’s memory.</p>
+            <p>Enter the buyer API token from the buyer host’s private `.env` to view worker/job state and use controls. It stays in this tab’s memory.</p>
           </div>
           <label className="core-token-field">
             <span>Buyer API token</span>
@@ -188,9 +188,9 @@ export function CoreConsole() {
 
         {apiError && (
           <div className="core-alert" role="alert">
-            <b>Live core API is unavailable.</b>
+            <b>{apiError === "BUYER_AUTH_REQUIRED" ? "Buyer access is required." : "Live core API is unavailable."}</b>
             <span>{apiError}</span>
-            <p>Enable `BATON_CORE_ENABLED=true`, configure the buyer core values, then restart the API. The browser simulation is available separately.</p>
+            <p>{apiError === "BUYER_AUTH_REQUIRED" ? "Enter the buyer API token to load private worker and job state." : "Enable `BATON_CORE_ENABLED=true`, configure the buyer core values, then restart the API. The browser simulation is available separately."}</p>
           </div>
         )}
         {actionError && <div className="core-alert core-alert-action" role="alert">{actionError}</div>}
@@ -203,7 +203,7 @@ export function CoreConsole() {
                 <div><p className="eyebrow">Connected runtime</p><h2>Workers <span>{workers.length}</span></h2></div>
               </div>
               {workers.length === 0 ? (
-                <p className="core-empty">No registered workers yet. Register a worker wallet, then connect its Codex runtime here.</p>
+                <p className="core-empty">No registered workers yet. Start a worker runtime on its configured host; it will register here after proving wallet ownership.</p>
               ) : (
                 <ul className="core-worker-list">
                   {workers.map((worker) => (
@@ -329,7 +329,12 @@ function WorkerRow({ worker, tokenReady, pending, onConnect, onStop }: {
       {worker.loginUrl && worker.connection === "login_required" && <a className="core-login-link" href={worker.loginUrl} target="_blank" rel="noreferrer">Continue Codex sign-in ↗</a>}
       {worker.lastError && <p className="core-worker-error">{worker.lastError}</p>}
       <div className="core-worker-actions">
-        {worker.alive ? (
+        {worker.managed === false ? (
+          <div className="core-worker-external">
+            <span>{worker.alive ? "External runtime · manage on host" : "External runtime · start on host"}</span>
+            {!worker.alive && <code>BATON_WORKER_ID={worker.workerId} node --env-file=.env.worker-{worker.workerId} --import tsx server/apps/worker/src/codexWorker.ts</code>}
+          </div>
+        ) : worker.alive ? (
           <button className="btn btn-ghost btn-sm" disabled={!tokenReady || Boolean(pending)} onClick={onStop}>{pending === `stop-${worker.workerId}` ? "Stopping…" : "Stop runtime"}</button>
         ) : (
           <button className="btn btn-ghost btn-sm" disabled={!tokenReady || Boolean(pending)} onClick={onConnect}>{pending === `connect-${worker.workerId}` ? "Starting…" : "Connect runtime"}</button>

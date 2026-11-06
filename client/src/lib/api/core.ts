@@ -5,6 +5,7 @@ export type CoreWorker = {
   address: string;
   runtime: { kind: string; account?: Record<string, unknown> | null };
   capabilities: string[];
+  managed?: boolean;
   pid?: number;
   connection: "starting" | "login_required" | "authenticated" | "available" | "busy" | "stopped" | "error";
   loginUrl?: string;
@@ -78,33 +79,35 @@ export type CoreReconciliation = {
   workers: Array<{ workerId: string; address: string; epoch: number; credited: string; withdrawn: string }>;
 };
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(API_URL + path, init);
+async function request<T>(path: string, init?: RequestInit, buyerToken?: string): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (buyerToken) headers.set("x-baton-buyer-token", buyerToken);
+  const response = await fetch(API_URL + path, { ...init, headers });
   const body = await response.json().catch(() => ({})) as { error?: string };
   if (!response.ok) throw new Error(body.error ?? `API returned ${response.status}`);
   return body as T;
 }
 
-export async function getCoreOverview(signal?: AbortSignal) {
+export async function getCoreOverview(buyerToken: string, signal?: AbortSignal) {
   const [workerResult, jobResult] = await Promise.all([
-    request<{ workers: CoreWorker[] }>("/api/core/workers", { signal }),
-    request<{ jobs: CoreJobSummary[] }>("/api/core/jobs", { signal }),
+    request<{ workers: CoreWorker[] }>("/api/core/workers", { signal }, buyerToken),
+    request<{ jobs: CoreJobSummary[] }>("/api/core/jobs", { signal }, buyerToken),
   ]);
   return { workers: workerResult.workers, jobs: jobResult.jobs };
 }
 
-export function getCoreJob(jobId: string, signal?: AbortSignal) {
-  return request<CoreJob>(`/api/core/jobs/${encodeURIComponent(jobId)}`, { signal });
+export function getCoreJob(jobId: string, buyerToken: string, signal?: AbortSignal) {
+  return request<CoreJob>(`/api/core/jobs/${encodeURIComponent(jobId)}`, { signal }, buyerToken);
 }
 
-export function getCoreReconciliation(jobId: string, signal?: AbortSignal) {
-  return request<CoreReconciliation>(`/api/core/jobs/${encodeURIComponent(jobId)}/reconcile`, { signal });
+export function getCoreReconciliation(jobId: string, buyerToken: string) {
+  return request<CoreReconciliation>(`/api/core/jobs/${encodeURIComponent(jobId)}/reconcile`, undefined, buyerToken);
 }
 
 export function postCoreAction<T>(path: string, token: string, body?: unknown) {
   return request<T>(`/api${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-baton-buyer-token": token },
+    headers: { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  }, token);
 }

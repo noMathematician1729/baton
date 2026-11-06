@@ -24,7 +24,7 @@ const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
 async function call(method, path, body) {
   const response = await fetch(api + path, {
     method,
-    headers: { "content-type": "application/json", ...(method === "POST" ? { "x-baton-buyer-token": token } : {}) },
+    headers: { "content-type": "application/json", "x-baton-buyer-token": token },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const json = await response.json().catch(() => ({}));

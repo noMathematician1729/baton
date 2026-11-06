@@ -24,6 +24,8 @@ export type WorkerRecord = {
   walletVerifiedAt: string;
   runtime: { kind: string; account?: Record<string, unknown> | null };
   capabilities: string[];
+  /** False when the process runs on a separate worker host and is managed there. */
+  managed?: boolean;
   pid?: number;
   connection: "starting" | "login_required" | "authenticated" | "available" | "busy" | "stopped" | "error";
   loginUrl?: string;

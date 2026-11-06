@@ -1,9 +1,9 @@
-import { execFile } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
-import { dirname, join, normalize, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative as relativePath, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createPublicClient,
@@ -27,8 +27,8 @@ import type { TaskSpec } from "../../../src/services/orchestrator/taskTemplate.j
 import { validateRecoveredManifest } from "../../../src/services/orchestrator/recoveryValidation.js";
 
 /**
- * Long-running BATON worker: one Codex app-server runtime, one worker wallet, one
- * isolated CODEX_HOME and workspace. Started by the BATON API supervisor (or by hand)
+ * Long-running BATON worker: one Codex or ADK/Ollama runtime, one worker wallet,
+ * and one private workspace. Started by the BATON API supervisor (or by hand)
  * with `node --env-file=.env.worker-<id> --import tsx apps/worker/src/codexWorker.ts`.
  */
 const here = dirname(fileURLToPath(import.meta.url));
@@ -77,6 +77,17 @@ function asPrivateKey(value: string): Hex {
 }
 
 const workerId = required("BATON_WORKER_ID");
+const configuredRuntime = process.env.BATON_WORKER_RUNTIME?.trim() || "codex";
+if (configuredRuntime !== "codex" && configuredRuntime !== "adk") {
+  throw new Error("BATON_WORKER_RUNTIME must be 'codex' or 'adk'");
+}
+const workerRuntime = configuredRuntime;
+const workerManagedToken = process.env.BATON_WORKER_MANAGED_TOKEN;
+const workerManaged = Boolean(workerManagedToken);
+const adkModel = process.env.BATON_ADK_MODEL?.trim() || "ollama_chat/gemma4:e4b";
+if (workerRuntime === "adk" && !adkModel.startsWith("ollama_chat/")) {
+  throw new Error("BATON_ADK_MODEL must use Ollama's ollama_chat/ provider");
+}
 const account = privateKeyToAccount(asPrivateKey(required("WORKER_EVM_PRIVATE_KEY")));
 if (getAddress(required("WORKER_ADDRESS")) !== account.address) throw new Error("WORKER_ADDRESS does not match WORKER_EVM_PRIVATE_KEY");
 const apiUrl = (process.env.BATON_API_URL ?? "http://127.0.0.1:4000").replace(/\/$/, "");
@@ -84,6 +95,10 @@ const home = resolve(repoRoot, process.env.BATON_WORKER_HOME ?? join(".baton-dat
 const codexHome = join(home, "codex-home");
 const runDir = join(home, "run");
 const socketPath = join(runDir, "tools.sock");
+const adkHome = join(home, "adk-home");
+const adkTmp = join(home, "adk-tmp");
+const adkEntry = join(serverRoot, "apps", "worker-adk", "run_turn.py");
+const adkDefaultPython = join(serverRoot, "apps", "worker-adk", ".venv", "bin", "python");
 const sepoliaRpc = required("SEPOLIA_RPC_URL");
 const publicClient = createPublicClient({ chain: sepolia, transport: http(sepoliaRpc) });
 const walletClient = createWalletClient({ account, chain: sepolia, transport: http(sepoliaRpc) });
@@ -103,6 +118,8 @@ let codex: CodexAppServerClient | undefined;
 let codexRuntime: { bin: string; config: Record<string, string>; env: NodeJS.ProcessEnv } | undefined;
 let codexAccount: CodexAccount | null = null;
 let smokeNonce: string | undefined;
+let smokeWorkspace: string | undefined;
+let activeAdkChild: ChildProcessWithoutNullStreams | undefined;
 let activeJob: { ctx: WorkerContext; workspace: string; recoveredFiles: Record<string, ArtifactReference>; recoveredText: Record<string, string>; submissions: number[]; recoveredFrom?: { head: Hex; sequence: number; epoch: number; writer: string; completed: string[]; unfinished: string[] } } | undefined;
 let busy = false;
 let nextRunAfter = 0;
@@ -199,6 +216,134 @@ async function ensureLogin(): Promise<CodexAccount> {
   return after.account;
 }
 
+type WorkerTurnResult = {
+  status: string;
+  turnId: string;
+  finalMessage: string;
+  toolCalls: Array<{ tool: string; status: string }>;
+  commandCount: number;
+  fileChangeCount: number;
+  error?: string;
+};
+
+function adkPython(): string {
+  const configured = process.env.BATON_ADK_PYTHON?.trim();
+  if (!configured) return adkDefaultPython;
+  return isAbsolute(configured) ? configured : resolve(repoRoot, configured);
+}
+
+async function startAdk() {
+  await mkdir(adkHome, { recursive: true, mode: 0o700 });
+  await mkdir(adkTmp, { recursive: true, mode: 0o700 });
+  await chmod(home, 0o700);
+  await chmod(adkHome, 0o700);
+  await chmod(adkTmp, 0o700);
+  if (!existsSync(adkPython())) throw new Error(`ADK Python not found at ${adkPython()}; install server/apps/worker-adk/requirements.txt or set BATON_ADK_PYTHON`);
+  if (!existsSync(adkEntry)) throw new Error(`ADK worker entrypoint is missing: ${adkEntry}`);
+}
+
+function runAdkTurn(prompt: string, timeoutMs: number): Promise<WorkerTurnResult> {
+  return new Promise((resolveResult, rejectResult) => {
+    const child = spawn(adkPython(), [adkEntry], {
+      cwd: dirname(adkEntry),
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: adkHome,
+        LANG: process.env.LANG ?? "en_US.UTF-8",
+        TMPDIR: adkTmp,
+        PYTHONUNBUFFERED: "1",
+        PYTHONDONTWRITEBYTECODE: "1",
+        BATON_WORKER_ID: workerId,
+        BATON_WORKER_SOCKET: socketPath,
+        BATON_ADK_MODEL: adkModel,
+        OLLAMA_API_BASE: process.env.OLLAMA_API_BASE?.trim() || "http://127.0.0.1:11434",
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    activeAdkChild = child;
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let outputTooLarge = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      setTimeout(() => child.kill("SIGKILL"), 5_000).unref();
+    }, timeoutMs);
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+      if (Buffer.byteLength(stdout) > 4_000_000) {
+        outputTooLarge = true;
+        child.kill("SIGTERM");
+      }
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString("utf8")).slice(-16_000);
+    });
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      if (activeAdkChild === child) activeAdkChild = undefined;
+      rejectResult(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      if (activeAdkChild === child) activeAdkChild = undefined;
+      if (timedOut) return rejectResult(new Error(`ADK turn timed out after ${timeoutMs}ms`));
+      if (outputTooLarge) return rejectResult(new Error("ADK worker returned more than 4 MB"));
+      let result: Record<string, unknown>;
+      try {
+        result = JSON.parse(stdout.trim()) as Record<string, unknown>;
+      } catch {
+        return rejectResult(new Error(`ADK worker returned invalid output (exit ${code}): ${stderr.slice(-2_000)}`));
+      }
+      if (code !== 0 || typeof result.error === "string") {
+        return rejectResult(new Error(String(result.error ?? stderr.slice(-2_000) ?? `ADK worker exited ${code}`)));
+      }
+      const calls: Array<{ tool: string; status: string }> = Array.isArray(result.toolCalls)
+        ? result.toolCalls.flatMap((value) => {
+          if (!value || typeof value !== "object") return [];
+          const call = value as Record<string, unknown>;
+          return typeof call.tool === "string" && typeof call.status === "string" ? [{ tool: call.tool, status: call.status }] : [];
+        })
+        : [];
+      resolveResult({
+        status: typeof result.status === "string" ? result.status : "completed",
+        turnId: typeof result.turnId === "string" ? result.turnId : randomUUID(),
+        finalMessage: typeof result.finalMessage === "string" ? result.finalMessage : "",
+        toolCalls: calls,
+        commandCount: 0,
+        fileChangeCount: calls.filter((call) => call.tool === "workspace_write_file" && call.status === "completed").length,
+      });
+    });
+    child.stdin.end(JSON.stringify({ prompt }));
+  });
+}
+
+async function runWorkerTurn(
+  threadId: string,
+  prompt: string,
+  timeoutMs: number,
+  onEvent?: (event: string, detail: unknown) => void,
+): Promise<WorkerTurnResult> {
+  if (workerRuntime === "adk") {
+    const result = await runAdkTurn(prompt, timeoutMs);
+    for (const call of result.toolCalls) onEvent?.("toolCall", call);
+    if (result.finalMessage) onEvent?.("agentMessage", { text: result.finalMessage });
+    return result;
+  }
+  const result = await codex!.runTurn(threadId, prompt, timeoutMs, onEvent);
+  return {
+    status: result.status,
+    turnId: result.turnId,
+    finalMessage: result.finalMessage,
+    toolCalls: result.mcpToolCalls.map((call) => ({ tool: call.tool, status: call.status })),
+    commandCount: result.commandCount,
+    fileChangeCount: result.fileChangeCount,
+    error: result.error,
+  };
+}
+
 function accountSummary(value: CodexAccount | null) {
   if (!value) return null;
   if (value.type === "chatgpt") return { type: "chatgpt", email: (value as { email: string | null }).email, planType: (value as { planType: string }).planType };
@@ -215,9 +360,12 @@ async function register() {
       address: account.address,
       nonce,
       signature,
-      pid: process.pid,
-      runtime: { kind: "codex-app-server", codexHome: "isolated", account: accountSummary(codexAccount) },
-      capabilities: ["llm.codex", "task:incident-triage.v1", "checkpoint:arkiv-encrypted.v1"],
+      managed: workerManaged,
+      ...(workerManagedToken ? { managedToken: workerManagedToken } : {}),
+      runtime: workerRuntime === "adk"
+        ? { kind: "google-adk-ollama", model: adkModel, toolAccess: "workspace-scoped" }
+        : { kind: "codex-app-server", codexHome: "isolated", account: accountSummary(codexAccount) },
+      capabilities: [workerRuntime === "adk" ? "llm.gemma" : "llm.codex", "task:incident-triage.v1", "checkpoint:arkiv-encrypted.v1"],
     }),
   });
   if (!response.ok) throw new Error(`registration failed: ${response.status} ${await response.text()}`);
@@ -315,20 +463,123 @@ async function smokeTest() {
   log("smoke-passed", result);
 }
 
+/** Exercise local Ollama inference and the ADK function tools before advertising availability. */
+async function smokeTestAdk() {
+  const workspace = join(home, "smoke");
+  await rm(workspace, { recursive: true, force: true });
+  await mkdir(workspace, { recursive: true, mode: 0o700 });
+  smokeWorkspace = workspace;
+  smokeNonce = randomBytes(8).toString("hex");
+  const threadId = `adk-${randomUUID()}`;
+  try {
+    const outcome = await runAdkTurn(
+      "BATON ADK connection self-test. Call baton_smoke_nonce, write smoke.txt using workspace_write_file with that nonce reversed character-by-character, then read smoke.txt using workspace_read_file. Reply with exactly NONCE=<nonce> REVERSED=<reversed>.",
+      5 * 60_000,
+    );
+    const expected = smokeNonce.split("").reverse().join("");
+    const fileContent = existsSync(join(workspace, "smoke.txt")) ? (await readFile(join(workspace, "smoke.txt"), "utf8")).trim() : "";
+    const completedTools = new Set(outcome.toolCalls.filter((call) => call.status === "completed").map((call) => call.tool));
+    const toolUsed = completedTools.has("baton_smoke_nonce") && completedTools.has("workspace_write_file") && completedTools.has("workspace_read_file");
+    const passed = outcome.status === "completed" && toolUsed && fileContent === expected && outcome.finalMessage.includes(smokeNonce);
+    const result = {
+      passed,
+      runtime: "google-adk-ollama",
+      model: adkModel,
+      turnStatus: outcome.status,
+      toolUsed,
+      fileMatches: fileContent === expected,
+      replyContainsNonce: outcome.finalMessage.includes(smokeNonce),
+      toolAccess: "workspace-scoped function tools; no MCP or shell tool",
+      threadId,
+      turnId: outcome.turnId,
+      error: outcome.error,
+    };
+    await api("POST", `/api/workers/${workerId}/smoke`, result);
+    if (!passed) throw new Error(`ADK smoke test failed: ${JSON.stringify(result)}`);
+    log("smoke-passed", result);
+  } finally {
+    smokeWorkspace = undefined;
+    smokeNonce = undefined;
+  }
+}
+
 // ---------------------------------------------------------------------------
-// BATON tool bridge (Unix socket, served only to this worker's MCP child)
+// Worker-scoped tool bridge (Unix socket; Codex uses an MCP child, ADK uses functions)
 // ---------------------------------------------------------------------------
 
 function safeWorkspacePath(workspace: string, relative: string): string {
+  if (typeof relative !== "string" || !relative.trim() || relative.includes("\0") || isAbsolute(relative)) {
+    throw new Error("Workspace paths must be non-empty relative paths");
+  }
   const target = resolve(workspace, normalize(relative));
   if (!target.startsWith(workspace + sep)) throw new Error(`Path escapes workspace: ${relative}`);
   return target;
+}
+
+async function assertNoSymlinkComponents(workspace: string, target: string) {
+  let current = workspace;
+  for (const part of relativePath(workspace, target).split(sep).filter(Boolean)) {
+    current = join(current, part);
+    try {
+      if ((await lstat(current)).isSymbolicLink()) throw new Error("Workspace tools do not follow symlinks");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+}
+
+async function listWorkspaceFiles(workspace: string) {
+  const files: string[] = [];
+  async function walk(directory: string) {
+    if (files.length >= 200) return;
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (files.length >= 200) break;
+      if (entry.isSymbolicLink()) continue;
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) await walk(path);
+      else if (entry.isFile()) files.push(relativePath(workspace, path).split(sep).join("/"));
+    }
+  }
+  await walk(workspace);
+  return { files, truncated: files.length === 200 };
+}
+
+async function readWorkspaceFile(workspace: string, relative: string) {
+  const path = safeWorkspacePath(workspace, relative);
+  await assertNoSymlinkComponents(workspace, path);
+  const metadata = await lstat(path);
+  if (!metadata.isFile()) throw new Error("Workspace tool can read regular files only");
+  if (metadata.size > 1_000_000) throw new Error("Workspace file exceeds the 1 MB read limit");
+  return { path: relative, content: await readFile(path, "utf8") };
+}
+
+async function writeWorkspaceFile(workspace: string, relative: string, content: string) {
+  if (typeof content !== "string" || Buffer.byteLength(content, "utf8") > 1_000_000) {
+    throw new Error("Workspace file content must be UTF-8 text under 1 MB");
+  }
+  const path = safeWorkspacePath(workspace, relative);
+  await assertNoSymlinkComponents(workspace, path);
+  await mkdir(dirname(path), { recursive: true });
+  await assertNoSymlinkComponents(workspace, path);
+  await writeFile(path, content, { encoding: "utf8", flag: "w" });
+  return { path: relative, bytes: Buffer.byteLength(content, "utf8"), status: "written" };
 }
 
 async function handleTool(tool: string, args: any): Promise<unknown> {
   if (tool === "baton_smoke_nonce") {
     if (!smokeNonce) return { error: "No smoke test is running" };
     return { nonce: smokeNonce };
+  }
+  if (tool === "workspace_list_files" || tool === "workspace_read_file" || tool === "workspace_write_file") {
+    const workspace = activeJob?.workspace ?? smokeWorkspace;
+    if (!workspace) return { error: "No workspace is active on this worker" };
+    try {
+      if (tool === "workspace_list_files") return await listWorkspaceFiles(workspace);
+      if (tool === "workspace_read_file") return await readWorkspaceFile(workspace, args.path);
+      return await writeWorkspaceFile(workspace, args.path, args.content);
+    } catch (error) {
+      return { error: (error as Error).message };
+    }
   }
   if (!activeJob) return { error: "No BATON job is active on this worker" };
   const { ctx } = activeJob;
@@ -449,7 +700,9 @@ async function submitMilestone(args: { milestone: number; summary: string; compl
     sequence,
     previousAcceptedHead: chain.head === "0x0000000000000000000000000000000000000000000000000000000000000000" ? null : chain.head,
     createdAt: new Date().toISOString(),
-    adapter: { id: "codex-app-server", version: "codex-cli", stateSchemaVersion: "baton.codex-worker.v1" },
+    adapter: workerRuntime === "adk"
+      ? { id: "baton.gemma-ollama-worker", version: "1", stateSchemaVersion: "baton.worker-output.v1" }
+      : { id: "codex-app-server", version: "codex-cli", stateSchemaVersion: "baton.codex-worker.v1" },
     work: {
       objective: ctx.spec.objective,
       constraints: ctx.spec.constraints,
@@ -560,7 +813,9 @@ function milestonePrompt(ctx: WorkerContext, index: number, recovered: boolean):
       ? "You are continuing a job that another worker started. Its accepted outputs were recovered from an encrypted BATON checkpoint and restored into this workspace. Build on them; do not redo accepted milestones."
       : "",
     `Current milestone ${index}/${ctx.spec.milestones.length}: ${milestone.title}.`,
-    "Steps: (1) call baton_get_task and read the objective, input log, acceptance instructions and recovered outputs; (2) inspect the workspace files; (3) do the analysis and write the required files with your file tools; (4) validate the JSON you wrote (for example with a short shell command); (5) call baton_submit_milestone with milestone, a summary, completedSteps, unfinishedSteps (what remains for later milestones) and files.",
+    workerRuntime === "adk"
+      ? "Steps: (1) call baton_get_task and read the objective, input log, acceptance instructions and recovered outputs; (2) inspect the workspace files; (3) do the analysis and write the required files with your file tools; (4) re-read and validate the written JSON with workspace_read_file; (5) call baton_submit_milestone with milestone, a summary, completedSteps, unfinishedSteps (what remains for later milestones) and files."
+      : "Steps: (1) call baton_get_task and read the objective, input log, acceptance instructions and recovered outputs; (2) inspect the workspace files; (3) do the analysis and write the required files with your file tools; (4) validate the JSON you wrote (for example with a short shell command); (5) call baton_submit_milestone with milestone, a summary, completedSteps, unfinishedSteps (what remains for later milestones) and files.",
     `Required files for this milestone: ${milestone.requiredFiles.join(", ")}.`,
     "Only submit once. If baton_submit_milestone returns an error, fix the problem and submit again. Reply with a one-paragraph summary when done.",
   ].filter(Boolean).join("\n\n");
@@ -589,24 +844,30 @@ async function runJob(assignment: Assignment) {
     const recovered = await recoverAccepted(ctx, workspace);
     ctx.nextMilestone = recovered.chain.nextMilestone;
     activeJob = { ctx, workspace, recoveredFiles: recovered.recoveredFiles, recoveredText: recovered.recoveredText, submissions: [], recoveredFrom: recovered.recoveredFrom };
-    const threadId = await codex!.startThread({
-      cwd: workspace,
-      model: process.env.BATON_CODEX_MODEL || undefined,
-      developerInstructions:
-        "You are a BATON job worker. Work only inside the current workspace. Use the baton_* tools for task context and for saving checkpoints; never print, request or store credentials or private keys.",
-    });
+    const threadId = workerRuntime === "adk"
+      ? `adk-${randomUUID()}`
+      : await codex!.startThread({
+        cwd: workspace,
+        model: process.env.BATON_CODEX_MODEL || undefined,
+        developerInstructions:
+          "You are a BATON job worker. Work only inside the current workspace. Use the baton_* tools for task context and for saving checkpoints; never print, request or store credentials or private keys.",
+      });
     await report("thread_started", { jobId: ctx.jobId, threadId });
     while (ctx.nextMilestone < ctx.spec.milestones.length) {
       const index = ctx.nextMilestone + 1;
       let submitted = false;
       for (let attempt = 1; attempt <= 2 && !submitted; attempt++) {
         await report("milestone_working", { jobId: ctx.jobId, milestone: index, attempt });
-        const outcome = await codex!.runTurn(threadId, attempt === 1 ? milestonePrompt(ctx, index, Boolean(recovered.recoveredFrom)) : `Milestone ${index} has not been submitted yet. Finish the required files and call baton_submit_milestone.`, 20 * 60_000, (event, detail) => {
+        const initialPrompt = milestonePrompt(ctx, index, Boolean(recovered.recoveredFrom));
+        const retryPrompt = workerRuntime === "adk"
+          ? `${initialPrompt}\n\nThe previous attempt did not submit this milestone. Re-read the task and workspace, fix anything still missing, and submit the milestone now.`
+          : `Milestone ${index} has not been submitted yet. Finish the required files and call baton_submit_milestone.`;
+        const outcome = await runWorkerTurn(threadId, attempt === 1 ? initialPrompt : retryPrompt, 20 * 60_000, (event, detail) => {
           if (event !== "agentMessage") log(`turn:${event}`, detail as Record<string, unknown>);
           void api("POST", `/api/workers/${workerId}/events`, { state: "activity", detail: { jobId: ctx.jobId, milestone: index, event, ...(detail as object) } }).catch(() => undefined);
         });
         submitted = activeJob.submissions.includes(index);
-        await report("turn_completed", { jobId: ctx.jobId, milestone: index, status: outcome.status, submitted, toolCalls: outcome.mcpToolCalls.map((c) => `${c.tool}:${c.status}`), commands: outcome.commandCount, fileChanges: outcome.fileChangeCount, error: outcome.error, summary: outcome.finalMessage.slice(0, 600) });
+        await report("turn_completed", { jobId: ctx.jobId, milestone: index, status: outcome.status, submitted, toolCalls: outcome.toolCalls.map((c) => `${c.tool}:${c.status}`), commands: outcome.commandCount, fileChanges: outcome.fileChangeCount, error: outcome.error, summary: outcome.finalMessage.slice(0, 600) });
       }
       if (!submitted) throw new Error(`Milestone ${index} was not submitted by the model`);
       const result = await waitForAcceptance(ctx, index);
@@ -695,27 +956,45 @@ async function heartbeatLoop() {
 }
 
 async function main() {
-  log("starting", { address: account.address, pid: process.pid });
+  log("starting", { address: account.address, pid: process.pid, runtime: workerRuntime, ...(workerRuntime === "adk" ? { model: adkModel } : {}) });
   await startToolSocket();
-  // Wallet ownership is proven first so the API can relay the sign-in link to the user.
+  // Prove worker wallet ownership before advertising this runtime to the API.
   await register();
-  await startCodex();
-  await report("connecting", { pid: process.pid });
-  codexAccount = await ensureLogin();
-  await report("authenticated", { account: accountSummary(codexAccount) });
-  if (process.env.BATON_SKIP_SMOKE !== "1") await smokeTest();
-  await report("available", {});
+  const startupHeartbeat = setInterval(() => {
+    void api("POST", `/api/workers/${workerId}/heartbeat`, { busy: false, activeJob: null }).catch((error) => {
+      log("startup-heartbeat-failed", { message: (error as Error).message });
+    });
+  }, 10_000);
+  startupHeartbeat.unref();
+  try {
+    if (workerRuntime === "adk") {
+      await startAdk();
+      await report("connecting", { pid: process.pid, runtime: "google-adk-ollama", model: adkModel });
+      if (process.env.BATON_SKIP_SMOKE !== "1") await smokeTestAdk();
+    } else {
+      await startCodex();
+      await report("connecting", { pid: process.pid });
+      codexAccount = await ensureLogin();
+      await report("authenticated", { account: accountSummary(codexAccount) });
+      if (process.env.BATON_SKIP_SMOKE !== "1") await smokeTest();
+    }
+    await report("available", {});
+  } finally {
+    clearInterval(startupHeartbeat);
+  }
   await heartbeatLoop();
 }
 
 process.on("SIGTERM", async () => {
   log("sigterm");
+  activeAdkChild?.kill("SIGTERM");
   await codex?.stop();
   process.exit(0);
 });
 
 main().catch(async (error) => {
   await report("error", { message: (error as Error).message });
+  activeAdkChild?.kill("SIGTERM");
   await codex?.stop();
   process.exit(1);
 });

@@ -44,6 +44,8 @@
 .core-login-link { display: inline-block; margin: 1px 0 8px; color: var(--navy-2); font-size: 11px; }
 .core-worker-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .core-worker-actions > span { color: var(--muted); font: 10px var(--font-mono); }
+.core-worker-external { display: grid; gap: 5px; min-width: 0; color: var(--muted); font: 10px var(--font-mono); }
+.core-worker-external code { overflow-wrap: anywhere; color: var(--ink-soft); font-size: 9px; }
 .core-status { display: inline-flex; align-items: center; gap: 6px; padding: 4px 7px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); background: var(--surface-2); font: 500 9px var(--font-mono); line-height: 1; text-transform: capitalize; white-space: nowrap; }
 .core-status i { width: 5px; height: 5px; }
 .status-available, .status-running, .status-accepted, .status-confirmed, .status-completed, .status-conserved { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 28%, var(--line)); }

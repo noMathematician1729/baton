@@ -45,12 +45,17 @@ export type JobTerms = {
 };
 
 export type CheckpointHead = {
+  /** SHA-256 of the exact versioned serialized encrypted manifest envelope. */
   manifestDigest: Hex;
+  /** Exact durable entity locator for the encrypted envelope. */
   manifestRef: string;
+  /** Digest of the artifact manifest; distinct from the acceptance-rule commitment. */
   artifactManifestDigest: Hex;
   schemaVersion: string;
   sequence: number;
 };
+
+export const CHECKPOINT_SCHEMA_VERSION = "checkpoint.v1" as const;
 
 export type TaskState = {
   taskId: string;
@@ -103,6 +108,8 @@ export type GatewayOperation = {
 export type JobSnapshot = {
   /** Optional bytes32 JobEscrow ID bound to this local job for live gateway checks. */
   chainJobId?: Hex;
+  /** On-chain bytes32 task ID corresponding to this local task. */
+  chainTaskId?: Hex;
   terms: JobTerms;
   task: TaskState;
   credits: RewardCredit[];

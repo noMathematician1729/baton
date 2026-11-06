@@ -47,8 +47,11 @@ const offerTypes = {
     { name: "producer", type: "address" },
     { name: "epoch", type: "uint64" },
     { name: "milestone", type: "uint32" },
+    { name: "acceptanceSpecHash", type: "bytes32" },
     { name: "expectedHead", type: "bytes32" },
     { name: "newHead", type: "bytes32" },
+    { name: "manifestRef", type: "string" },
+    { name: "sequence", type: "uint64" },
     { name: "nonce", type: "uint256" },
     { name: "expiry", type: "uint64" },
   ],
@@ -133,6 +136,10 @@ try {
   if (resolvedNameResolver !== ensResolverAddress) throw new DemoError("ENS_RESOLVER_ADDRESS no longer matches the live resolver for ENS_JOB_NAME");
 
   await requireCode(publicClient, escrowAddress, "configured BATON escrow");
+  const protocolVersion = await publicClient.readContract({ address: escrowAddress, abi: escrowAbi, functionName: "PROTOCOL_VERSION" });
+  if (protocolVersion !== keccak256(stringToHex("BATON_JOB_ESCROW_V2"))) {
+    throw new DemoError("Configured escrow uses an older protocol; the G1 ABI requires a reviewed replacement deployment");
+  }
   await requireCode(publicClient, adapterAddress, "configured BATON authority adapter");
   await requireCode(publicClient, ensResolverAddress, "configured ENS resolver");
   const adapterResolver = await publicClient.readContract({ address: adapterAddress, abi: adapterAbi, functionName: "ensResolver" });
@@ -175,16 +182,18 @@ try {
   }
 
   const taskId = hashText(`${jobId}:task`);
-  const termsHash = hashText(JSON.stringify({ protocol: "baton.protocol.v1", jobId, taskId, workerA: workerAAddress, workerB: workerBAddress, rewards: ["3", "3", "4"], rewardTokenDecimals: 18 }));
+  const acceptanceSpecHashes = [1, 2, 3].map((milestone) => hashText(JSON.stringify({ protocol: "baton.acceptance.v1", jobId, taskId, milestone, rule: "output digest must match reference batch" })));
+  const manifestRefs = [1, 2, 3].map((sequence) => `urn:baton:synthetic-checkpoint:${jobId}:${sequence}`);
+  const termsHash = hashText(JSON.stringify({ protocol: "baton.protocol.v1", jobId, taskId, workerA: workerAAddress, workerB: workerBAddress, rewards: ["3", "3", "4"], acceptanceSpecHashes, rewardTokenDecimals: 18 }));
   const heads = [1, 2, 3].map((index) => hashText(`${jobId}:accepted-head:${index}`));
   const now = BigInt(Math.floor(Date.now() / 1000));
   const expiry = now + 4n * 60n * 60n;
   const cutoff = now + 6n * 60n * 60n;
   const domain = { name: "BATON Job Escrow", version: "1", chainId, verifyingContract: escrowAddress };
-  const offerA = makeOffer({ jobId, taskId, termsHash, producer: workerAAddress, epoch: 1n, milestone: 0, expectedHead: emptyHead, newHead: heads[0], expiry });
-  const staleOfferA = makeOffer({ jobId, taskId, termsHash, producer: workerAAddress, epoch: 1n, milestone: 1, expectedHead: heads[0], newHead: heads[1], expiry });
-  const offerB1 = makeOffer({ jobId, taskId, termsHash, producer: workerBAddress, epoch: 2n, milestone: 1, expectedHead: heads[0], newHead: heads[1], expiry });
-  const offerB2 = makeOffer({ jobId, taskId, termsHash, producer: workerBAddress, epoch: 2n, milestone: 2, expectedHead: heads[1], newHead: heads[2], expiry });
+  const offerA = makeOffer({ jobId, taskId, termsHash, producer: workerAAddress, epoch: 1n, milestone: 0, acceptanceSpecHash: acceptanceSpecHashes[0], expectedHead: emptyHead, newHead: heads[0], manifestRef: manifestRefs[0], sequence: 1n, expiry });
+  const staleOfferA = makeOffer({ jobId, taskId, termsHash, producer: workerAAddress, epoch: 1n, milestone: 1, acceptanceSpecHash: acceptanceSpecHashes[1], expectedHead: heads[0], newHead: heads[1], manifestRef: manifestRefs[1], sequence: 2n, expiry });
+  const offerB1 = makeOffer({ jobId, taskId, termsHash, producer: workerBAddress, epoch: 2n, milestone: 1, acceptanceSpecHash: acceptanceSpecHashes[1], expectedHead: heads[0], newHead: heads[1], manifestRef: manifestRefs[1], sequence: 2n, expiry });
+  const offerB2 = makeOffer({ jobId, taskId, termsHash, producer: workerBAddress, epoch: 2n, milestone: 2, acceptanceSpecHash: acceptanceSpecHashes[2], expectedHead: heads[1], newHead: heads[2], manifestRef: manifestRefs[2], sequence: 3n, expiry });
   const [signatureA, staleSignatureA, signatureB1, signatureB2] = await Promise.all([
     workerA.signTypedData({ domain, types: offerTypes, primaryType: "MilestoneOffer", message: offerA }),
     workerA.signTypedData({ domain, types: offerTypes, primaryType: "MilestoneOffer", message: staleOfferA }),
@@ -213,7 +222,7 @@ try {
     createdAt: new Date().toISOString(),
     status: "RUNNING",
     addresses: { escrow: escrowAddress, authorityAdapter: adapterAddress, ensResolver: ensResolverAddress, buyer: buyer.address, workerA: workerAAddress, workerB: workerBAddress },
-    job: { jobId, taskId, termsHash, jobKey, rewardToken: env.BATON_REWARD_TOKEN_ADDRESS || null, rewards: rewards.map(String), total: totalReward.toString(), decimals: 18, heads, cutoff: cutoff.toString() },
+    job: { jobId, taskId, termsHash, jobKey, rewardToken: env.BATON_REWARD_TOKEN_ADDRESS || null, rewards: rewards.map(String), total: totalReward.toString(), decimals: 18, acceptanceSpecHashes, heads, manifestRefs, cutoff: cutoff.toString() },
     transactions: {},
     assertions: [],
     result: null,
@@ -278,7 +287,7 @@ try {
     address: escrowAddress,
     abi: escrowAbi,
     functionName: "fundJob",
-    args: [jobId, termsHash, taskId, tokenAddress, adapterAddress, buyer.address, cutoff, rewards, heads],
+    args: [jobId, termsHash, taskId, tokenAddress, adapterAddress, buyer.address, cutoff, rewards, acceptanceSpecHashes],
   }));
   const escrowFundedBalance = await publicClient.readContract({ address: tokenAddress, abi: tokenAbi, functionName: "balanceOf", args: [escrowAddress] });
   if (escrowFundedBalance !== totalReward) throw new DemoError("Escrow reward-token balance does not equal the 10-token funding amount");
@@ -290,6 +299,10 @@ try {
   await sendAndConfirm("accept-a-milestone-1", () => buyerWallet.writeContract({ address: escrowAddress, abi: escrowAbi, functionName: "acceptMilestone", args: [jobId, offerA, signatureA] }));
   const creditAAfterFirst = await publicClient.readContract({ address: escrowAddress, abi: escrowAbi, functionName: "credits", args: [jobId, workerAAddress] });
   if (creditAAfterFirst !== rewards[0]) throw new DemoError("Worker A did not receive the first milestone credit of 3 tokens");
+  const checkpointAfterA = await publicClient.readContract({ address: escrowAddress, abi: escrowAbi, functionName: "acceptedCheckpoint", args: [jobId] });
+  if (checkpointAfterA[0] !== heads[0] || checkpointAfterA[1] !== 1n || checkpointAfterA[2] !== manifestRefs[0]) {
+    throw new DemoError("Accepted head, sequence, and exact manifest locator do not match Worker A's signed offer");
+  }
   evidence.assertions.push("A milestone 1 accepted and credited 3 tokens");
   persistEvidence();
 
@@ -323,6 +336,10 @@ try {
 
   await sendAndConfirm("accept-b-milestone-2", () => buyerWallet.writeContract({ address: escrowAddress, abi: escrowAbi, functionName: "acceptMilestone", args: [jobId, offerB1, signatureB1] }));
   await sendAndConfirm("accept-b-milestone-3", () => buyerWallet.writeContract({ address: escrowAddress, abi: escrowAbi, functionName: "acceptMilestone", args: [jobId, offerB2, signatureB2] }));
+  const checkpointAfterB = await publicClient.readContract({ address: escrowAddress, abi: escrowAbi, functionName: "acceptedCheckpoint", args: [jobId] });
+  if (checkpointAfterB[0] !== heads[2] || checkpointAfterB[1] !== 3n || checkpointAfterB[2] !== manifestRefs[2]) {
+    throw new DemoError("Final accepted head, sequence, and exact manifest locator do not match Worker B's signed offer");
+  }
   const creditA = await publicClient.readContract({ address: escrowAddress, abi: escrowAbi, functionName: "credits", args: [jobId, workerAAddress] });
   const creditB = await publicClient.readContract({ address: escrowAddress, abi: escrowAbi, functionName: "credits", args: [jobId, workerBAddress] });
   if (creditA !== 3n * tokenUnit || creditB !== 7n * tokenUnit) throw new DemoError("Final escrow credits did not equal A=3 and B=7 tokens");
@@ -344,18 +361,18 @@ try {
   await sendAndConfirm("claim-worker-b-7-tokens", () => workerBWallet.writeContract({ address: escrowAddress, abi: escrowAbi, functionName: "claim", args: [jobId] }));
   const workerABalanceAfter = await publicClient.readContract({ address: tokenAddress, abi: tokenAbi, functionName: "balanceOf", args: [workerAAddress] });
   const workerBBalanceAfter = await publicClient.readContract({ address: tokenAddress, abi: tokenAbi, functionName: "balanceOf", args: [workerBAddress] });
-  const workerAClaimed = await publicClient.readContract({ address: escrowAddress, abi: escrowAbi, functionName: "claimed", args: [jobId, workerAAddress] });
-  const workerBClaimed = await publicClient.readContract({ address: escrowAddress, abi: escrowAbi, functionName: "claimed", args: [jobId, workerBAddress] });
-  if (workerABalanceAfter - workerABalanceBefore !== 3n * tokenUnit || !workerAClaimed) throw new DemoError("Worker A withdrawal did not increase its token balance by exactly 3 tokens");
-  if (workerBBalanceAfter - workerBBalanceBefore !== 7n * tokenUnit || !workerBClaimed) throw new DemoError("Worker B withdrawal did not increase its token balance by exactly 7 tokens");
+  const workerAWithdrawn = await publicClient.readContract({ address: escrowAddress, abi: escrowAbi, functionName: "withdrawnCredits", args: [jobId, workerAAddress] });
+  const workerBWithdrawn = await publicClient.readContract({ address: escrowAddress, abi: escrowAbi, functionName: "withdrawnCredits", args: [jobId, workerBAddress] });
+  if (workerABalanceAfter - workerABalanceBefore !== 3n * tokenUnit || workerAWithdrawn !== 3n * tokenUnit) throw new DemoError("Worker A withdrawal did not increase its token balance by exactly 3 tokens");
+  if (workerBBalanceAfter - workerBBalanceBefore !== 7n * tokenUnit || workerBWithdrawn !== 7n * tokenUnit) throw new DemoError("Worker B withdrawal did not increase its token balance by exactly 7 tokens");
   const escrowTokenBalance = await publicClient.readContract({ address: tokenAddress, abi: tokenAbi, functionName: "balanceOf", args: [escrowAddress] });
   if (escrowTokenBalance !== 0n) throw new DemoError("Escrow retained reward tokens after both worker withdrawals");
 
   evidence.assertions.push("Worker A claimed exactly 3 tokens; Worker B claimed exactly 7 tokens");
   evidence.status = "LIVE_PASS";
   evidence.result = {
-    workerAWithdrawal: { amount: (3n * tokenUnit).toString(), balanceBefore: workerABalanceBefore.toString(), balanceAfter: workerABalanceAfter.toString(), claimed: workerAClaimed },
-    workerBWithdrawal: { amount: (7n * tokenUnit).toString(), balanceBefore: workerBBalanceBefore.toString(), balanceAfter: workerBBalanceAfter.toString(), claimed: workerBClaimed },
+    workerAWithdrawal: { amount: (3n * tokenUnit).toString(), balanceBefore: workerABalanceBefore.toString(), balanceAfter: workerABalanceAfter.toString(), withdrawnTotal: workerAWithdrawn.toString() },
+    workerBWithdrawal: { amount: (7n * tokenUnit).toString(), balanceBefore: workerBBalanceBefore.toString(), balanceAfter: workerBBalanceAfter.toString(), withdrawnTotal: workerBWithdrawn.toString() },
     escrowRewardBalanceAfterClaims: escrowTokenBalance.toString(),
   };
   persistEvidence();
@@ -398,8 +415,8 @@ function checksumSetting(name) {
   }
 }
 
-function makeOffer({ jobId, taskId, termsHash, producer, epoch, milestone, expectedHead, newHead, expiry }) {
-  return { jobId, taskId, termsHash, producer, epoch, milestone, expectedHead, newHead, nonce: randomNonce(), expiry };
+function makeOffer({ jobId, taskId, termsHash, producer, epoch, milestone, acceptanceSpecHash, expectedHead, newHead, manifestRef, sequence, expiry }) {
+  return { jobId, taskId, termsHash, producer, epoch, milestone, acceptanceSpecHash, expectedHead, newHead, manifestRef, sequence, nonce: randomNonce(), expiry };
 }
 
 function randomNonce() {

@@ -8,6 +8,7 @@ import { test } from "node:test";
 import type { Express } from "express";
 
 process.env.NODE_ENV = "test";
+process.env.GATEWAY_AUTHORITY_MODE = "local";
 
 test("HTTP API uses and recovers the SQLite payment ledger across app restart", async () => {
   const root = await mkdtemp(join(tmpdir(), "baton-api-"));

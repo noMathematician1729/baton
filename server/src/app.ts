@@ -2,12 +2,14 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import { isAbsolute, resolve } from "node:path";
+import { getAddress } from "viem";
 import { env, SERVER_ROOT } from "./config/env.js";
 import { JobStore } from "./domain/jobs/jobStore.js";
 import { OperationLedger } from "./services/ledger/operationLedger.js";
 import { Gateway, LocalPaymentProvider } from "./services/gateway/gateway.js";
 import { SepoliaAuthorityReader } from "./chain/sepoliaAuthority.js";
-import { serialise, type CheckpointHead, type Hex } from "./protocol/v1.js";
+import { gatewayActionMessage, recoverGatewayActionActor } from "./chain/gatewayAction.js";
+import { serialise, type CheckpointHead, type Hex, type JobSnapshot } from "./protocol/v1.js";
 
 export function createServices() {
   const dataDirectory = isAbsolute(env.BATON_DATA_DIR)
@@ -28,6 +30,7 @@ export function createServices() {
       rpcUrl: env.SEPOLIA_RPC_URL,
       escrowAddress: env.BATON_ESCROW_ADDRESS,
       adapterAddress: env.BATON_AUTHORITY_ADAPTER_ADDRESS,
+      confirmationBlocks: env.CONFIRMATION_BLOCKS,
     })
     : undefined;
   const gateway = new Gateway(jobs, ledger, new LocalPaymentProvider(), authority);
@@ -63,6 +66,13 @@ export function createApp(services = createServices()) {
       },
       paymentLedger: { backend: "sqlite", implementation: "node:sqlite" },
       paymentProvider: "local-fixture",
+      confirmedChainRead: gateway.lastConfirmedRead
+        ? {
+          blockNumber: gateway.lastConfirmedRead.blockNumber.toString(),
+          blockHash: gateway.lastConfirmedRead.blockHash,
+          confirmationBlocks: gateway.lastConfirmedRead.confirmationBlocks,
+        }
+        : null,
     });
   });
 
@@ -108,10 +118,15 @@ export function createApp(services = createServices()) {
 
   app.post("/api/jobs", async (request, response) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
+    if (gateway.requiresChainAuthority) throw new Error("CHAIN_JOB_IMPORT_NOT_IMPLEMENTED");
     const chainJobId = optionalChainJobId(body.chainJobId);
-    if (gateway.requiresChainAuthority && !chainJobId) throw new Error("CHAIN_JOB_ID_REQUIRED");
+    const chainTaskId = optionalChainJobId(body.chainTaskId);
+    const termsHash = optionalChainJobId(body.termsHash);
+    if (gateway.requiresChainAuthority && (!chainJobId || !chainTaskId || !termsHash)) throw new Error("CHAIN_JOB_BINDING_REQUIRED");
     const job = await jobs.create({
       chainJobId,
+      chainTaskId,
+      termsHash,
       buyer: address(body.buyer, fallbackAddress("1")),
       rewardToken: address(body.rewardToken, fallbackAddress("2")),
       verifier: address(body.verifier, fallbackAddress("3")),
@@ -127,12 +142,26 @@ export function createApp(services = createServices()) {
   });
 
   app.post("/api/jobs/:jobId/assign", async (request, response) => {
+    const job = await jobs.get(request.params.jobId);
+    if (!job) throw new Error("JOB_NOT_FOUND");
     const worker = requiredAddress(request.body?.worker, "WORKER");
+    await authorizeGatewayAction({
+      gateway,
+      ledger,
+      body: request.body ?? {},
+      job,
+      actor: job.terms.buyer,
+      epoch: job.task.epoch,
+      action: "ASSIGN_WORKER",
+      payload: { worker },
+    });
     response.json(serialise(await gateway.assign(request.params.jobId, worker)));
   });
 
   app.post("/api/jobs/:jobId/checkpoints", async (request, response) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
+    const job = await jobs.get(request.params.jobId);
+    if (!job) throw new Error("JOB_NOT_FOUND");
     const newHead: CheckpointHead = {
       manifestDigest: digestValue(body.manifestDigest, "manifestDigest"),
       manifestRef: stringValue(body.manifestRef, "local://checkpoint/" + request.params.jobId + "/" + Date.now()),
@@ -140,40 +169,80 @@ export function createApp(services = createServices()) {
       schemaVersion: stringValue(body.schemaVersion, "checkpoint.v1"),
       sequence: Number(body.sequence ?? 1),
     };
+    const taskId = stringValue(body.taskId, "taskId");
+    const worker = requiredAddress(body.worker, "WORKER");
+    const epoch = epochValue(body.epoch);
+    const acceptanceSpecHash = digestValue(body.acceptanceSpecHash, "acceptanceSpecHash");
+    const expectedHead = digestValue(body.expectedHead, "expectedHead");
+    const candidatePayload = { taskId, worker, epoch, acceptanceSpecHash, expectedHead, newHead };
+    await authorizeGatewayAction({ gateway, ledger, body, job, actor: worker, epoch, action: "CHECKPOINT_CANDIDATE", payload: candidatePayload, prefix: "workerAuth" });
+    await authorizeGatewayAction({ gateway, ledger, body, job, actor: job.terms.buyer, epoch, action: "MILESTONE_ACCEPT", payload: candidatePayload, prefix: "buyerAuth" });
     response.json(serialise(await gateway.acceptMilestone({
       jobId: request.params.jobId,
-      worker: requiredAddress(body.worker, "WORKER"),
-      epoch: epochValue(body.epoch),
-      expectedHead: digestValue(body.expectedHead, "expectedHead"),
+      taskId,
+      worker,
+      epoch,
+      acceptanceSpecHash,
+      expectedHead,
       newHead,
     })));
   });
 
   app.post("/api/jobs/:jobId/drain", async (request, response) => {
+    const job = await jobs.get(request.params.jobId);
+    if (!job) throw new Error("JOB_NOT_FOUND");
+    await authorizeGatewayAction({ gateway, ledger, body: request.body ?? {}, job, actor: job.terms.buyer, epoch: job.task.epoch, action: "DRAIN_TASK", payload: {} });
     response.json(serialise(await gateway.drain(request.params.jobId)));
   });
 
   app.post("/api/jobs/:jobId/takeover", async (request, response) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
+    const job = await jobs.get(request.params.jobId);
+    if (!job) throw new Error("JOB_NOT_FOUND");
+    const successor = requiredAddress(body.successor, "SUCCESSOR");
+    const expectedHead = digestValue(body.expectedHead, "expectedHead");
+    const expectedEpoch = epochValue(body.expectedEpoch);
+    const compatibilityReport = digestValue(body.compatibilityReport, "compatibilityReport");
+    await authorizeGatewayAction({
+      gateway,
+      ledger,
+      body,
+      job,
+      actor: job.terms.buyer,
+      epoch: expectedEpoch,
+      action: "TAKEOVER_TASK",
+      payload: { successor, expectedHead, expectedEpoch, compatibilityReport },
+    });
     response.json(serialise(await gateway.takeover({
       jobId: request.params.jobId,
-      successor: requiredAddress(body.successor, "SUCCESSOR"),
-      expectedHead: digestValue(body.expectedHead, "expectedHead"),
-      expectedEpoch: epochValue(body.expectedEpoch),
-      compatibilityReport: digestValue(body.compatibilityReport, "compatibilityReport"),
+      successor,
+      expectedHead,
+      expectedEpoch,
+      compatibilityReport,
     })));
   });
 
   app.post("/api/jobs/:jobId/pause", async (request, response) => {
+    const job = await jobs.get(request.params.jobId);
+    if (!job) throw new Error("JOB_NOT_FOUND");
+    await authorizeGatewayAction({ gateway, ledger, body: request.body ?? {}, job, actor: job.terms.buyer, epoch: job.task.epoch, action: "PAUSE_JOB", payload: {} });
     response.json(serialise(await jobs.pause(request.params.jobId)));
   });
 
   app.post("/api/jobs/:jobId/resume", async (request, response) => {
+    const job = await jobs.get(request.params.jobId);
+    if (!job) throw new Error("JOB_NOT_FOUND");
+    await authorizeGatewayAction({ gateway, ledger, body: request.body ?? {}, job, actor: job.terms.buyer, epoch: job.task.epoch, action: "RESUME_JOB", payload: {} });
     response.json(serialise(await gateway.resume(request.params.jobId)));
   });
 
   app.post("/api/jobs/:jobId/claim", async (request, response) => {
-    const worker = address(request.body?.worker, fallbackAddress("a"));
+    const job = await jobs.get(request.params.jobId);
+    if (!job) throw new Error("JOB_NOT_FOUND");
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const worker = address(body.worker, fallbackAddress("a"));
+    const epoch = body.epoch === undefined ? job.task.epoch : epochValue(body.epoch);
+    await authorizeGatewayAction({ gateway, ledger, body, job, actor: worker, epoch, action: "CLAIM_REWARD", payload: { worker } });
     response.json(serialise(await jobs.claim(request.params.jobId, worker)));
   });
 
@@ -189,27 +258,44 @@ export function createApp(services = createServices()) {
   app.post("/api/jobs/:jobId/services/execute", async (request, response) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const job = await jobs.get(request.params.jobId);
-    const operation = await gateway.execute({
+    if (!job) throw new Error("JOB_NOT_FOUND");
+    const paymentRequest = {
       operationId: stringValue(body.operationId, "op_" + request.params.jobId + "_" + String(body.inputDigest ?? Date.now())),
       jobId: request.params.jobId,
-      taskId: stringValue(body.taskId, job?.task.taskId ?? ""),
+      taskId: stringValue(body.taskId, job.task.taskId),
       worker: requiredAddress(body.worker, "WORKER"),
       epoch: epochValue(body.epoch),
       service: stringValue(body.service, "batch-data-v1"),
       inputDigest: digestValue(body.inputDigest, "inputDigest"),
       amount: bigintValue(body.amount, 1n),
       asset: stringValue(body.asset, "HBAR"),
+    };
+    await authorizeGatewayAction({
+      gateway,
+      ledger,
+      body,
+      job,
+      actor: paymentRequest.worker,
+      epoch: paymentRequest.epoch,
+      action: "SERVICE_EXECUTE",
+      payload: { ...paymentRequest, amount: paymentRequest.amount.toString() },
+    });
+    const operation = await gateway.execute({
+      ...paymentRequest,
     });
     response.json(serialise(operation));
   });
 
   app.post("/api/services/operations/:operationId/reconcile", async (request, response) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
-    response.json(serialise(await gateway.reconcile(
-      request.params.operationId,
-      requiredAddress(body.worker, "WORKER"),
-      epochValue(body.epoch),
-    )));
+    const operation = await ledger.getOperation(request.params.operationId);
+    if (!operation) throw new Error("OPERATION_NOT_FOUND");
+    const job = await jobs.get(operation.jobId);
+    if (!job) throw new Error("JOB_NOT_FOUND");
+    const worker = requiredAddress(body.worker, "WORKER");
+    const epoch = epochValue(body.epoch);
+    await authorizeGatewayAction({ gateway, ledger, body, job, actor: worker, epoch, action: "SERVICE_RECONCILE", payload: { operationId: operation.operationId, requestFingerprint: operation.requestFingerprint, worker, epoch } });
+    response.json(serialise(await gateway.reconcile(request.params.operationId, worker, epoch)));
   });
 
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
@@ -271,6 +357,63 @@ function optionalChainJobId(value: unknown): Hex | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value !== "string" || !/^0x[0-9a-f]{64}$/i.test(value)) throw new Error("INVALID_CHAIN_JOB_ID");
   return value.toLowerCase() as Hex;
+}
+
+async function authorizeGatewayAction(input: {
+  gateway: Gateway;
+  ledger: OperationLedger;
+  body: unknown;
+  job: JobSnapshot;
+  actor: Hex;
+  epoch: number;
+  action: string;
+  payload: unknown;
+  prefix?: string;
+}): Promise<void> {
+  if (!input.gateway.requiresChainAuthority) return;
+  const body = input.body && typeof input.body === "object" ? input.body as Record<string, unknown> : {};
+  const prefix = input.prefix ?? "auth";
+  const nonce = digestValue(body[`${prefix}Nonce`], `${prefix}Nonce`);
+  const expiry = timestampValue(body[`${prefix}Expiry`], `${prefix}Expiry`);
+  const now = Math.floor(Date.now() / 1000);
+  if (expiry <= now) throw new Error("ACTION_SIGNATURE_EXPIRED");
+  if (expiry > now + 300) throw new Error("ACTION_SIGNATURE_LIFETIME_TOO_LONG");
+  const signature = signatureValue(body[`${prefix}Signature`], `${prefix}Signature`);
+  const message = gatewayActionMessage({
+    action: input.action,
+    job: input.job,
+    actor: getAddress(input.actor),
+    epoch: input.epoch,
+    payload: input.payload,
+    nonce,
+    expiry,
+  });
+  let recovered: Hex;
+  try {
+    recovered = await recoverGatewayActionActor({
+      chainId: env.SEPOLIA_CHAIN_ID,
+      verifyingContract: getAddress(env.BATON_ESCROW_ADDRESS),
+      message,
+      signature,
+    });
+  } catch {
+    throw new Error("ACTION_SIGNATURE_INVALID");
+  }
+  if (recovered.toLowerCase() !== input.actor.toLowerCase()) throw new Error("ACTION_ACTOR_MISMATCH");
+  const jobScope = input.job.chainJobId ?? input.job.terms.jobId;
+  const scope = `${env.SEPOLIA_CHAIN_ID}:${env.BATON_ESCROW_ADDRESS.toLowerCase()}:${jobScope}:${input.actor.toLowerCase()}`;
+  await input.ledger.consumeAuthNonce(scope, nonce, expiry);
+}
+
+function signatureValue(value: unknown, label: string): Hex {
+  if (typeof value !== "string" || !/^0x[\da-f]{130}$/i.test(value)) throw new Error(`INVALID_${label.toUpperCase()}`);
+  return value as Hex;
+}
+
+function timestampValue(value: unknown, label: string): number {
+  const timestamp = Number(value);
+  if (!Number.isSafeInteger(timestamp) || timestamp <= 0) throw new Error(`INVALID_${label.toUpperCase()}`);
+  return timestamp;
 }
 
 function fallbackAddress(hexCharacter: string): Hex {

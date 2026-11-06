@@ -1,7 +1,7 @@
 import type { CheckpointManifest } from "./schema.js";
 
 export const batchOneCheckpoint: CheckpointManifest = {
-  schemaVersion: 1,
+  schemaVersion: "checkpoint.v1",
   jobId: "demo-job-001",
   taskId: "batch-1",
   epoch: 1,

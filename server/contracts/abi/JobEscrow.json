@@ -232,6 +232,18 @@
       },
       {
         "indexed": false,
+        "internalType": "uint64",
+        "name": "sequence",
+        "type": "uint64"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "manifestRef",
+        "type": "string"
+      },
+      {
+        "indexed": false,
         "internalType": "uint256",
         "name": "reward",
         "type": "uint256"
@@ -335,6 +347,19 @@
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "PROTOCOL_VERSION",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "bytes32",
@@ -375,6 +400,11 @@
           },
           {
             "internalType": "bytes32",
+            "name": "acceptanceSpecHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
             "name": "expectedHead",
             "type": "bytes32"
           },
@@ -382,6 +412,16 @@
             "internalType": "bytes32",
             "name": "newHead",
             "type": "bytes32"
+          },
+          {
+            "internalType": "string",
+            "name": "manifestRef",
+            "type": "string"
+          },
+          {
+            "internalType": "uint64",
+            "name": "sequence",
+            "type": "uint64"
           },
           {
             "internalType": "uint256",
@@ -415,6 +455,112 @@
         "internalType": "bytes32",
         "name": "jobId",
         "type": "bytes32"
+      }
+    ],
+    "name": "acceptedCheckpoint",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "head",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint64",
+        "name": "sequence",
+        "type": "uint64"
+      },
+      {
+        "internalType": "string",
+        "name": "manifestRef",
+        "type": "string"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "name": "acceptedManifestRefs",
+    "outputs": [
+      {
+        "internalType": "string",
+        "name": "",
+        "type": "string"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "name": "acceptedSequences",
+    "outputs": [
+      {
+        "internalType": "uint64",
+        "name": "",
+        "type": "uint64"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "jobId",
+        "type": "bytes32"
+      }
+    ],
+    "name": "accounting",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "funded",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "unallocated",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "workerCreditsOutstanding",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "totalRefunded",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "totalWithdrawn",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "jobId",
+        "type": "bytes32"
       },
       {
         "internalType": "address",
@@ -438,30 +584,6 @@
     "name": "claim",
     "outputs": [],
     "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "bytes32",
-        "name": "",
-        "type": "bytes32"
-      },
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      }
-    ],
-    "name": "claimed",
-    "outputs": [
-      {
-        "internalType": "bool",
-        "name": "",
-        "type": "bool"
-      }
-    ],
-    "stateMutability": "view",
     "type": "function"
   },
   {
@@ -699,6 +821,21 @@
         "internalType": "bool",
         "name": "closed",
         "type": "bool"
+      },
+      {
+        "internalType": "uint256",
+        "name": "totalCredited",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "totalWithdrawn",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "totalRefunded",
+        "type": "uint256"
       }
     ],
     "stateMutability": "view",
@@ -843,6 +980,30 @@
         "internalType": "bool",
         "name": "",
         "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "name": "withdrawnCredits",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
       }
     ],
     "stateMutability": "view",

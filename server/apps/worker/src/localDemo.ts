@@ -18,7 +18,7 @@ export function runLocalDemo() {
   const stateA = runNextBatch(createBatchState(jobId, taskId), "batch-1");
   const quantitativeA = addObservation(createBetaBernoulliState(), "observation-1", true);
   const manifest: CheckpointManifest = {
-    schemaVersion: 1,
+    schemaVersion: "checkpoint.v1",
     jobId,
     taskId,
     epoch: 1,

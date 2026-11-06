@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   deserialise,
+  CHECKPOINT_SCHEMA_VERSION,
   digest,
   EMPTY_HEAD,
   newId,
@@ -17,8 +18,12 @@ import {
 
 type StoreFile = { version: 1; jobs: Record<string, JobSnapshot> };
 
+export type JobStorePersist = (filePath: string, contents: string) => Promise<void>;
+
 export type CreateJobInput = {
   chainJobId?: Hex;
+  chainTaskId?: Hex;
+  termsHash?: Hex;
   buyer: Hex;
   rewardToken: Hex;
   verifier: Hex;
@@ -35,7 +40,10 @@ export class JobStore {
   private state: StoreFile | undefined;
   private queue: Promise<unknown> = Promise.resolve();
 
-  public constructor(filePath: string) {
+  public constructor(
+    filePath: string,
+    private readonly persistFile: JobStorePersist = persistAtomicJson,
+  ) {
     this.filePath = filePath;
   }
 
@@ -45,8 +53,9 @@ export class JobStore {
       this.state = deserialise<StoreFile>(await JSON.parse(await readFile(this.filePath, "utf8")));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      this.state = { version: 1, jobs: {} };
-      await this.persist();
+      const initial: StoreFile = { version: 1, jobs: {} };
+      await this.persist(initial);
+      this.state = initial;
     }
   }
 
@@ -79,7 +88,7 @@ export class JobStore {
         jobId,
         buyer: input.buyer,
         rewardToken: input.rewardToken,
-        termsHash: digest({ buyer: input.buyer, rewardToken: input.rewardToken, task, serviceBudget: input.serviceBudget }),
+        termsHash: input.termsHash ?? digest({ buyer: input.buyer, rewardToken: input.rewardToken, task, serviceBudget: input.serviceBudget }),
         taskGraphHash: digest({ taskId, dependencies: [] }),
         cutoff: input.cutoff ?? nowSeconds() + 86_400,
         verifier: input.verifier,
@@ -89,6 +98,7 @@ export class JobStore {
       };
       const snapshot: JobSnapshot = {
         chainJobId: input.chainJobId,
+        chainTaskId: input.chainTaskId,
         terms,
         task: {
           taskId,
@@ -139,20 +149,30 @@ export class JobStore {
 
   public async acceptMilestone(input: {
     jobId: string;
+    taskId: string;
     worker: Hex;
     epoch: number;
+    acceptanceSpecHash: Hex;
     expectedHead: Hex;
     newHead: CheckpointHead;
   }): Promise<JobSnapshot> {
     return this.mutate((state) => {
       const job = requireJob(state, input.jobId);
+      if (job.terms.task.taskId !== input.taskId) throw new Error("TASK_ID_MISMATCH");
       assertWorker(job, input.worker, input.epoch);
       if (job.task.drained || job.task.status !== "FUNDED") throw new Error("TASK_NOT_OPEN");
       if (job.task.acceptedHead.manifestDigest !== input.expectedHead) throw new Error("STALE_HEAD");
       const milestone = job.terms.task.milestones[job.task.nextMilestone];
       if (!milestone) throw new Error("NO_MILESTONE_REMAINING");
-      if (milestone.acceptanceSpecHash !== input.newHead.artifactManifestDigest) {
+      if (milestone.acceptanceSpecHash !== input.acceptanceSpecHash) {
         throw new Error("ACCEPTANCE_SPEC_MISMATCH");
+      }
+      if (!isDigest(input.expectedHead) || !isDigest(input.newHead.manifestDigest)
+        || !isDigest(input.newHead.artifactManifestDigest)) throw new Error("CHECKPOINT_DIGEST_INVALID");
+      if (input.newHead.manifestDigest === EMPTY_HEAD || !input.newHead.manifestRef.trim()) throw new Error("CHECKPOINT_LOCATOR_REQUIRED");
+      if (input.newHead.schemaVersion !== "checkpoint.v1") throw new Error("CHECKPOINT_SCHEMA_UNSUPPORTED");
+      if (!Number.isSafeInteger(input.newHead.sequence) || input.newHead.sequence !== job.task.acceptedHead.sequence + 1) {
+        throw new Error("CHECKPOINT_SEQUENCE_INVALID");
       }
       const credit: RewardCredit = {
         id: newId("credit"),
@@ -241,8 +261,10 @@ export class JobStore {
   private async mutate<T>(fn: (state: StoreFile) => T): Promise<T> {
     const task = this.queue.then(async () => {
       await this.ready();
-      const result = fn(this.state as StoreFile);
-      await this.persist();
+      const candidate = structuredClone(this.state as StoreFile);
+      const result = fn(candidate);
+      await this.persist(candidate);
+      this.state = candidate;
       return structuredClone(result);
     });
     this.queue = task.catch(() => undefined);
@@ -253,11 +275,15 @@ export class JobStore {
     if (!this.state) await this.init();
   }
 
-  private async persist(): Promise<void> {
-    const temporary = `${this.filePath}.tmp`;
-    await writeFile(temporary, JSON.stringify(serialise(this.state), null, 2), "utf8");
-    await rename(temporary, this.filePath);
+  private async persist(state: StoreFile): Promise<void> {
+    await this.persistFile(this.filePath, JSON.stringify(serialise(state), null, 2));
   }
+}
+
+async function persistAtomicJson(filePath: string, contents: string): Promise<void> {
+  const temporary = `${filePath}.tmp`;
+  await writeFile(temporary, contents, "utf8");
+  await rename(temporary, filePath);
 }
 
 function requireJob(state: StoreFile, jobId: string): JobSnapshot {
@@ -280,9 +306,13 @@ function emptyHead(): CheckpointHead {
     manifestDigest: EMPTY_HEAD as Hex,
     manifestRef: "",
     artifactManifestDigest: EMPTY_HEAD as Hex,
-    schemaVersion: "checkpoint.v1",
+    schemaVersion: CHECKPOINT_SCHEMA_VERSION,
     sequence: 0,
   };
+}
+
+function isDigest(value: string): boolean {
+  return /^0x[\da-f]{64}$/i.test(value);
 }
 
 export function statusIsOpen(status: JobStatus): boolean {

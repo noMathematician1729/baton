@@ -16,8 +16,11 @@ export const OFFER_TYPES = {
     { name: "producer", type: "address" },
     { name: "epoch", type: "uint64" },
     { name: "milestone", type: "uint32" },
+    { name: "acceptanceSpecHash", type: "bytes32" },
     { name: "expectedHead", type: "bytes32" },
     { name: "newHead", type: "bytes32" },
+    { name: "manifestRef", type: "string" },
+    { name: "sequence", type: "uint64" },
     { name: "nonce", type: "uint256" },
     { name: "expiry", type: "uint64" },
   ],
@@ -45,8 +48,11 @@ export type MilestoneOffer = {
   producer: Address;
   epoch: bigint;
   milestone: number;
+  acceptanceSpecHash: Hex;
   expectedHead: Hex;
   newHead: Hex;
+  manifestRef: string;
+  sequence: bigint;
   nonce: bigint;
   expiry: bigint;
 };

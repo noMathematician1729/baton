@@ -20,6 +20,21 @@ export function canonicalJson(value: unknown): Buffer {
   return Buffer.from(json, "utf8");
 }
 
+/** Exact UTF-8 bytes committed by the on-chain checkpoint head. */
+export function serializeEncryptedEnvelope(input: EncryptedEnvelope): Buffer {
+  return canonicalJson(EncryptedEnvelopeSchema.parse(input));
+}
+
+/** SHA-256 of the serialized outer envelope; distinct from envelope.ciphertextDigest. */
+export function encryptedEnvelopeDigest(input: EncryptedEnvelope): string {
+  return "0x" + createHash("sha256").update(serializeEncryptedEnvelope(input)).digest("hex");
+}
+
+/** SHA-256 commitment to the canonical artifact list embedded inside the encrypted manifest. */
+export function artifactManifestDigest(input: Pick<CheckpointManifest, "artifacts">): string {
+  return "0x" + createHash("sha256").update(canonicalJson(input.artifacts)).digest("hex");
+}
+
 export const MAX_PLAINTEXT_CHUNK_BYTES = 96 * 1024 - 29;
 
 export function encryptChunk(plaintext: Uint8Array, keyHex: string, associatedData: string): {

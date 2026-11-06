@@ -22,36 +22,37 @@ Updated 2026-11-06. Refresh with `npm run status:refresh` after either owner cha
 
 | Owner | Updated | Next gate | Current work | Blockers |
 |---|---|---|---|---|
-| D1 | 2026-11-06 | Arkiv write/readback, then live Hedera x402 settlement with D2. | **Sepolia lifecycle: LIVE_PASS; full integration: pending.** ENS scoped grant/revoke and funded A-to-B escrow lifecycle passed. | Arkiv access/ownership and B-host recovery are pending; the API payment provider is still a local fixture. |
-| D2 | 2026-11-06 | Join D1 for Arkiv/B-host recovery and the x402 payment-crash run. | Runtime, checkpoint, storage, tool, admission, and SQLite ledger modules are integrated. | Live Arkiv write/readback, separate B-host recovery, and real x402 settlement remain unverified. |
+| D1 | 2026-11-06 | Finish chain-backed checkpoint import/verifier, then run buyer-owned Arkiv recovery and real x402 with D2. | **Sepolia lifecycle: LIVE_PASS; full integration: pending.** G1 contract regressions, G2 auth/confirmed reads, G3 cold-recovery boundary/key service, and G4 SQLite settlement safeguards have local implementation slices. | No repaired escrow deployment, live Arkiv read/write, grant to a live accepted head, real x402 settlement, or separate-host recovery has been verified. |
+| D2 | 2026-11-06 | Review the shared checkpoint/recovery and provider boundaries, then join the live A-to-B run. | Last recorded status reports runtime, checkpoint, storage, tool, admission, and SQLite ledger integration; no new D2 G0–G4 status is recorded on this branch. | Live Arkiv read/write, separate B-host recovery, and real x402 settlement remain unverified. |
 
-Feature code and local checks are not evidence of a live integration. See [gate evidence](docs/gates.md) for tested modes and results. The SQLite payment ledger and payment-crash recovery pass local checks recorded by the incoming branch; the current merge resolution has not been rerun. Checkpoints, artifacts, and paid output payloads are intended for Arkiv; no live write/readback is claimed.
+Feature code and local checks are not evidence of a live integration. See [gate evidence](docs/gates.md) for tested modes and results. The candidate on `build/audit-g0-g4` is based on `1e21837e5ed83c2b96c42a000d8b765cdd2e7460`. The payment-crash scenario is a local fixture; no live Arkiv or x402 write is claimed.
 <!-- BATON-STATUS:END -->
 
 ### Work completed on this branch
 
-The current `build/runtime-recovery` branch contains the integrated D1 authority/payments and D2 runtime/recovery implementation.
+The integrated D1 authority/payments and D2 runtime/recovery implementation is the baseline for the current `build/audit-g0-g4` remediation branch.
 
 - **Client and API:** React + TypeScript buyer console, Node.js + TypeScript API, protocol/status endpoints, and local job lifecycle.
 - **Authority and rewards:** versioned protocol, EIP-712 signing helpers, Solidity escrow and job-authority sources, worker epoch fencing, and a local three-milestone acceptance flow.
-- **Payment ledger:** SQLite operation ledger with durable reservations, settlement/reconciliation states, idempotency, budget conservation, concurrency control, and restart recovery. The API still uses a local payment-provider fixture; live x402 settlement is not enabled.
-- **Recovery:** encrypted checkpoint and artifact manifests, Arkiv chunk adapter with local integrity and delta-reuse tests, deterministic and Beta-Bernoulli state import/export, and a local A-to-B worker handoff.
+- **Payment ledger:** SQLite operation ledger with stable logical fingerprints, durable reservations, explicit settled/not-settled/unknown reconciliation, per-operation budget checks, concurrency control, and restart recovery. The API still uses a local payment-provider fixture; live x402 settlement is not enabled.
+- **Recovery:** encrypted checkpoint and artifact manifests, bounded Arkiv chunk reads, exact accepted-head recovery validation, a buyer-host key service with per-worker tokens and encrypted key transport, a TLS key-grant client, deterministic and Beta-Bernoulli state adapters, and a local A-to-B worker handoff. The key service passes a local fixture check; a live accepted-checkpoint grant and B-host topology remain pending. D2 will decide whether a temporary tunnel is needed.
 - **Tools and admission:** MCP discovery/invocation fixtures, candidate capability schema, and hard eligibility filtering.
 
 ### Verification
 
-Merged-tree checks passed for client/server typecheck and builds, Solidity compilation, the signing vector, D1 local acceptance, and all 15 non-HTTP tests. Acceptance confirms B recovers A's simulated settled purchase after restart with one provider submission. The API restart test is still unverified in this sandbox because loopback `listen` returns `EPERM`; the `tsx` test launcher also cannot create its temporary IPC socket, so the `npm run verify` command could not complete as written. These checks used local fixtures and made no Sepolia, Arkiv, or x402 calls; testnet spend was zero. D1's Sepolia lifecycle remains the live regression baseline.
+Current local checks pass: client/server typecheck and production build; 26 non-HTTP tests; `npm run key-service:smoke` with B-only decryption and A/identity-spoof denial; `npm run test:local` including one simulated provider purchase reused by B; the signing vector; Solidity compilation; and nine Foundry regressions. The API SQLite restart integration test passed 1/1 on the user's Mac via `node --import tsx --test server/src/app.integration.test.ts`. Foundry used solc 0.8.38, while `foundry.toml` and `package-lock.json` specify 0.8.28, so compiler parity remains open. No Sepolia transaction, Arkiv write, or x402 payment was made in this pass. The key-service fixture is local only; no real accepted checkpoint has been granted.
 
 ### Sepolia progress
 
-D1 reports that Sepolia ENS scoped grant, wrong-job denial, and revoke assertions passed. The funded lifecycle for job `cef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3` completed 17 successful transactions: A withdrew 3 test tokens, B withdrew 7, takeover reached epoch 2, escrow ended at zero, and stale A rejection was confirmed by simulation. Public receipts are in [the Sepolia job evidence file](evidence/sepolia-jobs/cef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3.json). The live scripts and evidence are included in this merged checkout. ENS resolver and BATON adapter remain separate addresses.
+D1 reports that Sepolia ENS scoped grant, wrong-job denial, and revoke assertions passed. The historical funded lifecycle for job `cef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3` completed 17 successful transactions: A withdrew 3 test tokens, B withdrew 7, takeover reached epoch 2, escrow ended at zero, and stale A rejection was confirmed by simulation. Public receipts are in [the Sepolia job evidence file](evidence/sepolia-jobs/cef05316864dba8ad054580dfe6ca880341c6420ea5ac46c067aa5e2fb8f0de3.json). This is the live baseline; the revised V2 escrow ABI has not been deployed or tested live. ENS resolver and BATON adapter remain separate addresses.
 
 ### Remaining work
 
-- Define Arkiv entity ownership and renewal authority, then perform a live encrypted write/readback.
-- Validate recovery on Worker B's separate host using B's own local credentials.
-- Integrate and validate a real Hedera x402 settlement; the API currently uses a local fixture.
-- Review the one high and one low npm audit findings in the contract compiler dependency chain.
+- Start the key service on the buyer host, grant B the exact live accepted checkpoint, and perform buyer-owned Arkiv write/readback and clean-host recovery. Add a temporary HTTPS tunnel only if D2 confirms B runs on another machine.
+- Configure `ARKIV_RPC_URL` and `ARKIV_SIGNER_PRIVATE_KEY` privately; choose and verify buyer-controlled Arkiv ownership/renewal.
+- Connect the exact confirmed on-chain accepted-head reader and candidate verifier to the recovery helper; validate recovery on Worker B's separate host with B's credentials.
+- Integrate a provider that can look up settlement and output by stable operation ID, persist paid bytes in Arkiv, and verify actual debit. The API currently uses a local fixture.
+- Restore lockfile/node_modules parity and resolve the `solc`/`tmp` advisories. Registry DNS prevented fetching the patched `tmp` release; the lockfile was left unchanged.
 
 ## Verify locally
 

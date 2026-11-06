@@ -36,6 +36,8 @@ const schema = z.object({
   CHECKPOINT_ENCRYPTION_KEY: z.string().default(""),
   CHECKPOINT_KEY_ID: z.string().default("local-dev"),
   CHECKPOINT_KEY_SERVICE_URL: z.string().default(""),
+  CHECKPOINT_KEY_SERVICE_TOKEN: z.string().default(""),
+  CHECKPOINT_KEY_SERVICE_DECRYPTION_PRIVATE_KEY: z.string().default(""),
   HEDERA_NETWORK: z.string().default("testnet"),
   HEDERA_ACCOUNT_ID: z.string().default(""),
   HEDERA_PRIVATE_KEY: z.string().default(""),

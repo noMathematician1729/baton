@@ -42,7 +42,10 @@ test("SQLite ledger persists UNKNOWN reservations and conserves the budget on fa
     await ledger.reserve(reserveRequest("op-2", "nonce-2", 3n));
     await ledger.transition("op-2", "SUBMITTED");
     await ledger.transition("op-2", "SETTLED", { providerReceipt: "receipt-2" });
-    await ledger.transition("op-2", "OUTPUT_AVAILABLE", { outputDigest: "0x" + "1".repeat(64) });
+    await ledger.transition("op-2", "OUTPUT_AVAILABLE", {
+      outputDigest: "0x" + "1".repeat(64),
+      outputRef: "arkiv://paid-output/op-2",
+    });
     assert.deepEqual(await ledger.getBalance("job-1"), {
       deposits: 10n,
       available: 7n,
@@ -51,6 +54,55 @@ test("SQLite ledger persists UNKNOWN reservations and conserves the budget on fa
       returnedFunds: 0n,
     });
     assert.equal((await ledger.listOperations("job-1")).length, 2);
+  } finally {
+    ledger.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("settlement is an immutable one-time fact and output cannot bypass it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "baton-ledger-settlement-"));
+  const ledger = new OperationLedger(join(root, "payment-ledger.sqlite"));
+  try {
+    await ledger.configureBudget("job-1", { ...policy, budget: 10n, perRequestCap: 10n });
+    await ledger.reserve(reserveRequest("op-paid", "nonce-paid", 3n));
+    await ledger.reserve(reserveRequest("op-uncertain", "nonce-uncertain", 4n));
+    await ledger.transition("op-paid", "SUBMITTED");
+    await ledger.transition("op-paid", "SETTLED", { providerReceipt: "receipt-paid" });
+
+    await assert.rejects(ledger.transition("op-paid", "UNKNOWN"), /INVALID_OPERATION_TRANSITION/);
+    await assert.rejects(ledger.transition("op-paid", "SETTLED", { providerReceipt: "receipt-again" }), /INVALID_OPERATION_TRANSITION/);
+    await assert.rejects(ledger.transition("op-paid", "FAILED", { failureCode: "contradiction" }), /INVALID_OPERATION_TRANSITION/);
+
+    await ledger.transition("op-uncertain", "SUBMITTED");
+    await ledger.transition("op-uncertain", "UNKNOWN");
+    await assert.rejects(ledger.transition("op-uncertain", "SUBMITTED"), /INVALID_OPERATION_TRANSITION/);
+    await assert.rejects(
+      ledger.transition("op-uncertain", "OUTPUT_AVAILABLE", {
+        outputDigest: "0x" + "2".repeat(64),
+        outputRef: "arkiv://forged-output",
+      }),
+      /INVALID_OPERATION_TRANSITION/,
+    );
+    assert.deepEqual(await ledger.getBalance("job-1"), {
+      deposits: 10n,
+      available: 3n,
+      reserved: 4n,
+      settledSpend: 3n,
+      returnedFunds: 0n,
+    });
+
+    await ledger.transition("op-paid", "OUTPUT_AVAILABLE", {
+      outputDigest: "0x" + "1".repeat(64),
+      outputRef: "arkiv://paid-output/op-paid",
+    });
+    assert.deepEqual(await ledger.getBalance("job-1"), {
+      deposits: 10n,
+      available: 3n,
+      reserved: 4n,
+      settledSpend: 3n,
+      returnedFunds: 0n,
+    });
   } finally {
     ledger.close();
     await rm(root, { recursive: true, force: true });
@@ -82,6 +134,25 @@ test("SQLite transaction prevents concurrent reservations from exceeding the bud
   } finally {
     first.close();
     second.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("signed-action nonces remain consumed across SQLite restart", async () => {
+  const root = await mkdtemp(join(tmpdir(), "baton-ledger-auth-"));
+  const filePath = join(root, "payment-ledger.sqlite");
+  const nonce = ("0x" + "a".repeat(64)) as `0x${string}`;
+  let ledger = new OperationLedger(filePath);
+  try {
+    await ledger.consumeAuthNonce("sepolia:job-1:worker-a", nonce, Math.floor(Date.now() / 1000) + 60);
+    ledger.close();
+    ledger = new OperationLedger(filePath);
+    await assert.rejects(
+      ledger.consumeAuthNonce("sepolia:job-1:worker-a", nonce, Math.floor(Date.now() / 1000) + 60),
+      /ACTION_NONCE_REPLAYED/,
+    );
+  } finally {
+    ledger.close();
     await rm(root, { recursive: true, force: true });
   }
 });

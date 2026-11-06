@@ -62,7 +62,20 @@ export class OperationLedger {
 
   public async reset(): Promise<void> {
     this.transaction((db) => {
-      db.exec("DELETE FROM operations; DELETE FROM budgets;");
+      db.exec("DELETE FROM operations; DELETE FROM budgets; DELETE FROM auth_nonces;");
+    });
+  }
+
+  public async consumeAuthNonce(scope: string, nonce: Hex, expiresAt: number): Promise<void> {
+    const now = Math.floor(Date.now() / 1000);
+    if (!Number.isSafeInteger(expiresAt) || expiresAt <= now) throw new Error("ACTION_SIGNATURE_EXPIRED");
+    this.transaction((db) => {
+      db.prepare("DELETE FROM auth_nonces WHERE expires_at <= ?").run(now);
+      const result = db.prepare(`
+        INSERT OR IGNORE INTO auth_nonces (scope, nonce, expires_at, created_at)
+        VALUES (?, ?, ?, ?)
+      `).run(scope, nonce, expiresAt, new Date().toISOString());
+      if (result.changes !== 1) throw new Error("ACTION_NONCE_REPLAYED");
     });
   }
 
@@ -154,6 +167,7 @@ export class OperationLedger {
         operation.updatedAt,
       );
       this.recordEvent(db, operation.operationId, null, operation.state, {});
+      this.assertJobAccounting(db, operation.jobId);
       return operation;
     });
   }
@@ -172,18 +186,34 @@ export class OperationLedger {
       const previousState = operation.state;
       assertTransition(previousState, next);
 
+      if (next === "SETTLED") {
+        if (operation.providerReceipt) throw new Error("SETTLEMENT_ALREADY_RECORDED");
+        if (!patch.providerReceipt?.trim()) throw new Error("PROVIDER_RECEIPT_REQUIRED");
+      }
+      if (next === "FAILED" && operation.providerReceipt) {
+        throw new Error("SETTLED_OPERATION_CANNOT_FAIL");
+      }
+      if (next === "OUTPUT_AVAILABLE") {
+        const outputDigest = patch.outputDigest ?? operation.outputDigest;
+        const outputRef = patch.outputRef ?? operation.outputRef;
+        if (!operation.providerReceipt) throw new Error("SETTLEMENT_REQUIRED_FOR_OUTPUT");
+        if (!outputDigest || !/^0x[\da-f]{64}$/i.test(outputDigest)) throw new Error("OUTPUT_DIGEST_REQUIRED");
+        if (!outputRef?.trim()) throw new Error("OUTPUT_REFERENCE_REQUIRED");
+      }
+      if (next !== "SETTLED" && patch.providerReceipt !== undefined) {
+        throw new Error("PROVIDER_RECEIPT_STATE_MISMATCH");
+      }
+      if (next !== "OUTPUT_AVAILABLE" && (patch.outputDigest !== undefined || patch.outputRef !== undefined)) {
+        throw new Error("OUTPUT_STATE_MISMATCH");
+      }
+
       if (next === "SETTLED" || next === "FAILED") {
         const balance = balanceFromRow(this.budgetRow(db, operation.jobId));
-        const alreadySettled = previousState === "SETTLED"
-          || previousState === "OUTPUT_AVAILABLE"
-          || Boolean(operation.providerReceipt);
-        if (!alreadySettled) {
-          if (balance.reserved < operation.amount) throw new Error("LEDGER_INVARIANT_BROKEN");
-          balance.reserved -= operation.amount;
-          if (next === "SETTLED") balance.settledSpend += operation.amount;
-          else balance.available += operation.amount;
-          this.writeBalance(db, operation.jobId, balance);
-        }
+        if (balance.reserved < operation.amount) throw new Error("LEDGER_INVARIANT_BROKEN");
+        balance.reserved -= operation.amount;
+        if (next === "SETTLED") balance.settledSpend += operation.amount;
+        else balance.available += operation.amount;
+        this.writeBalance(db, operation.jobId, balance);
       }
 
       Object.assign(operation, patch);
@@ -193,6 +223,7 @@ export class OperationLedger {
         UPDATE operations SET state = ?, operation_json = ?, updated_at = ? WHERE operation_id = ?
       `).run(next, json(operation), operation.updatedAt, operationId);
       this.recordEvent(db, operationId, previousState, next, patch);
+      this.assertJobAccounting(db, operation.jobId);
       return operation;
     });
   }
@@ -287,6 +318,13 @@ export class OperationLedger {
           created_at TEXT NOT NULL,
           patch_json TEXT NOT NULL
         ) STRICT;
+        CREATE TABLE IF NOT EXISTS auth_nonces (
+          scope TEXT NOT NULL,
+          nonce TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (scope, nonce)
+        ) STRICT, WITHOUT ROWID;
       `);
       this.db = db;
       return db;
@@ -328,6 +366,27 @@ export class OperationLedger {
       balance.returnedFunds.toString(),
       jobId,
     );
+  }
+
+  private assertJobAccounting(db: DatabaseSync, jobId: string): void {
+    const balance = balanceFromRow(this.budgetRow(db, jobId));
+    const rows = db.prepare("SELECT operation_json FROM operations WHERE job_id = ?").all(jobId) as OperationRow[];
+    let reserved = 0n;
+    let settled = 0n;
+    for (const row of rows) {
+      const operation = parseJson<GatewayOperation>(row.operation_json);
+      if (operation.state === "RESERVED" || operation.state === "SUBMITTED" || operation.state === "UNKNOWN") {
+        reserved += operation.amount;
+      } else if (operation.state === "SETTLED" || operation.state === "OUTPUT_AVAILABLE") {
+        settled += operation.amount;
+      }
+    }
+    if (balance.reserved !== reserved || balance.settledSpend !== settled) {
+      throw new Error("LEDGER_OPERATION_ACCOUNTING_MISMATCH");
+    }
+    if (balance.deposits !== balance.available + balance.reserved + balance.settledSpend + balance.returnedFunds) {
+      throw new Error("LEDGER_BALANCE_CONSERVATION_BROKEN");
+    }
   }
 
   private recordEvent(
@@ -382,10 +441,10 @@ const transitions: Record<OperationState, OperationState[]> = {
   INTENT: ["RESERVED", "FAILED", "UNKNOWN"],
   RESERVED: ["SUBMITTED", "FAILED", "UNKNOWN"],
   SUBMITTED: ["SETTLED", "FAILED", "UNKNOWN"],
-  SETTLED: ["OUTPUT_AVAILABLE", "UNKNOWN"],
+  SETTLED: ["OUTPUT_AVAILABLE"],
   OUTPUT_AVAILABLE: [],
   FAILED: [],
-  UNKNOWN: ["SUBMITTED", "SETTLED", "FAILED", "OUTPUT_AVAILABLE"],
+  UNKNOWN: ["SETTLED", "FAILED"],
 };
 
 function assertTransition(current: OperationState, next: OperationState): void {

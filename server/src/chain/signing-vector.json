@@ -10,15 +10,18 @@
     "jobId": "0x1111111111111111111111111111111111111111111111111111111111111111",
     "taskId": "0x2222222222222222222222222222222222222222222222222222222222222222",
     "termsHash": "0x3333333333333333333333333333333333333333333333333333333333333333",
-    "producer": "0xE372031093dDa83f2c29C87851b5122F17f9B49D",
+    "producer": "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
     "epoch": "1",
     "milestone": 0,
+    "acceptanceSpecHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "expectedHead": "0x0000000000000000000000000000000000000000000000000000000000000000",
     "newHead": "0x4444444444444444444444444444444444444444444444444444444444444444",
+    "manifestRef": "arkiv://fixture/envelope-1",
+    "sequence": "1",
     "nonce": "7",
     "expiry": "2000000000"
   },
-  "typedDataHash": "0xf01cc9f1ea15d49d3ca9270df135c1f709933d5bfdec336f78d505d41b911439",
-  "signature": "0x3eec675106b1fa37b597749c651d8ce936d45e9063c8a36a67da43c7f8c40d6f7ee0f563ccbc9a9e8d303588e0130b82c9c1879787ea1476d2ae8fa092d9da431c",
-  "note": "Fixture key is not stored; signature recovery is verified locally with viem."
+  "typedDataHash": "0x8b9d3ab239f4e9a5f4b2b9bfb5b780a0460b33a9f594026f6c768e778cf0a014",
+  "signature": "0xa0a4f8870cce43a20df7b6dca1cf3dcc2ffc943c5253e7351639ae514f27e27c0ca74afbe63b45770cac9f2ec523f60ccc1719ef84b10e9d6e66d9b62cc01d871b",
+  "note": "Deterministic test-only fixture; signature recovery is verified locally with viem."
 }

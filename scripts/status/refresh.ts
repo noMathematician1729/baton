@@ -55,7 +55,7 @@ const block = [
   renderOwner(d1, "D1", Date.now()),
   renderOwner(d2, "D2", Date.now()),
   "",
-  "Feature code and local checks are not evidence of a live integration. See [gate evidence](docs/gates.md) for tested modes and results. The SQLite payment ledger passes local transaction and restart checks; the provider remains a fixture. Checkpoints, artifacts, and paid output payloads are intended for Arkiv; no live write/readback or independent content mirror is claimed.",
+  "Feature code and local checks are not evidence of a live integration. See [gate evidence](docs/gates.md) for tested modes and results. The local payment-crash scenario uses a fixture provider; no live Arkiv write/read or x402 payment is claimed. Sepolia lifecycle: LIVE_PASS; full integration: pending.",
   endMarker,
 ].join("\n");
 

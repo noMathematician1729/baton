@@ -16,12 +16,13 @@ contract JobEscrow is EIP712, ReentrancyGuard {
     using ECDSA for bytes32;
 
     bytes32 private constant OFFER_TYPEHASH = keccak256(
-        "MilestoneOffer(bytes32 jobId,bytes32 taskId,bytes32 termsHash,address producer,uint64 epoch,uint32 milestone,bytes32 expectedHead,bytes32 newHead,uint256 nonce,uint64 expiry)"
+        "MilestoneOffer(bytes32 jobId,bytes32 taskId,bytes32 termsHash,address producer,uint64 epoch,uint32 milestone,bytes32 acceptanceSpecHash,bytes32 expectedHead,bytes32 newHead,string manifestRef,uint64 sequence,uint256 nonce,uint64 expiry)"
     );
     bytes32 private constant TAKEOVER_TYPEHASH = keccak256(
         "TakeoverAck(bytes32 jobId,bytes32 taskId,bytes32 termsHash,address successor,uint64 epoch,bytes32 expectedHead,bytes32 compatibilityReport,bytes32 servicePolicy,uint256 nonce,uint64 expiry)"
     );
     bytes32 public constant EMPTY_HEAD = bytes32(0);
+    bytes32 public constant PROTOCOL_VERSION = keccak256("BATON_JOB_ESCROW_V2");
 
     error Unauthorized();
     error InvalidTerms();
@@ -56,6 +57,9 @@ contract JobEscrow is EIP712, ReentrancyGuard {
         bool paused;
         bool drained;
         bool closed;
+        uint256 totalCredited;
+        uint256 totalWithdrawn;
+        uint256 totalRefunded;
     }
 
     struct Milestone {
@@ -70,8 +74,11 @@ contract JobEscrow is EIP712, ReentrancyGuard {
         address producer;
         uint64 epoch;
         uint32 milestone;
+        bytes32 acceptanceSpecHash;
         bytes32 expectedHead;
         bytes32 newHead;
+        string manifestRef;
+        uint64 sequence;
         uint256 nonce;
         uint64 expiry;
     }
@@ -92,12 +99,14 @@ contract JobEscrow is EIP712, ReentrancyGuard {
     mapping(bytes32 => Job) public jobs;
     mapping(bytes32 => Milestone[]) private milestones;
     mapping(bytes32 => mapping(address => uint256)) public credits;
-    mapping(bytes32 => mapping(address => bool)) public claimed;
+    mapping(bytes32 => mapping(address => uint256)) public withdrawnCredits;
+    mapping(bytes32 => uint64) public acceptedSequences;
+    mapping(bytes32 => string) public acceptedManifestRefs;
     mapping(bytes32 => mapping(uint256 => bool)) public usedNonces;
 
     event JobFunded(bytes32 indexed jobId, address indexed buyer, uint256 amount);
     event TaskAssigned(bytes32 indexed jobId, address indexed worker, uint64 epoch);
-    event MilestoneAccepted(bytes32 indexed jobId, uint32 indexed milestone, address indexed producer, bytes32 newHead, uint256 reward);
+    event MilestoneAccepted(bytes32 indexed jobId, uint32 indexed milestone, address indexed producer, bytes32 newHead, uint64 sequence, string manifestRef, uint256 reward);
     event TaskTakenOver(bytes32 indexed jobId, address indexed previousWorker, address indexed successor, uint64 epoch);
     event JobPaused(bytes32 indexed jobId);
     event JobResumed(bytes32 indexed jobId);
@@ -143,7 +152,10 @@ contract JobEscrow is EIP712, ReentrancyGuard {
             unallocated: total,
             paused: false,
             drained: false,
-            closed: false
+            closed: false,
+            totalCredited: 0,
+            totalWithdrawn: 0,
+            totalRefunded: 0
         });
         emit JobFunded(jobId, msg.sender, total);
     }
@@ -165,18 +177,22 @@ contract JobEscrow is EIP712, ReentrancyGuard {
         if (offer.jobId != jobId || offer.taskId != job.taskId || offer.termsHash != job.termsHash) revert InvalidTerms();
         if (offer.producer != job.assignedWorker || offer.epoch != job.epoch) revert StaleEpoch();
         if (offer.expectedHead != job.acceptedHead || offer.milestone != job.nextMilestone) revert StaleHead();
-        if (offer.expiry < block.timestamp) revert SignatureExpired();
+        if (offer.sequence != acceptedSequences[jobId] + 1 || offer.newHead == EMPTY_HEAD || bytes(offer.manifestRef).length == 0) revert InvalidMilestone();
+        if (offer.expiry <= block.timestamp) revert SignatureExpired();
         if (usedNonces[jobId][offer.nonce]) revert Replay();
         if (!_granted(job, jobId, offer.producer)) revert InvalidWorkerGrant();
         if (_hashOffer(offer).recover(signature) != offer.producer) revert InvalidSignature();
         Milestone memory milestone = milestones[jobId][offer.milestone];
-        if (milestone.reward == 0 || milestone.acceptanceSpecHash != offer.newHead) revert InvalidMilestone();
+        if (milestone.reward == 0 || milestone.acceptanceSpecHash != offer.acceptanceSpecHash) revert InvalidMilestone();
         usedNonces[jobId][offer.nonce] = true;
         job.acceptedHead = offer.newHead;
+        acceptedSequences[jobId] = offer.sequence;
+        acceptedManifestRefs[jobId] = offer.manifestRef;
         job.nextMilestone += 1;
         job.unallocated -= milestone.reward;
         credits[jobId][offer.producer] += milestone.reward;
-        emit MilestoneAccepted(jobId, offer.milestone, offer.producer, offer.newHead, milestone.reward);
+        job.totalCredited += milestone.reward;
+        emit MilestoneAccepted(jobId, offer.milestone, offer.producer, offer.newHead, offer.sequence, offer.manifestRef, milestone.reward);
     }
 
     function drainTask(bytes32 jobId) external {
@@ -191,7 +207,8 @@ contract JobEscrow is EIP712, ReentrancyGuard {
         if (job.paused || job.nextMilestone >= milestones[jobId].length || block.timestamp >= job.cutoff) revert NotOpen();
         if (ack.jobId != jobId || ack.taskId != job.taskId || ack.termsHash != job.termsHash) revert InvalidTerms();
         if (ack.epoch != job.epoch || ack.expectedHead != job.acceptedHead) revert StaleHead();
-        if (ack.expiry < block.timestamp) revert SignatureExpired();
+        if (ack.successor == job.assignedWorker) revert InvalidTerms();
+        if (ack.expiry <= block.timestamp) revert SignatureExpired();
         if (usedNonces[jobId][ack.nonce]) revert Replay();
         if (!_granted(job, jobId, ack.successor)) revert InvalidWorkerGrant();
         if (ack.compatibilityReport == EMPTY_HEAD || _hashTakeover(ack).recover(signature) != ack.successor) revert InvalidSignature();
@@ -223,17 +240,39 @@ contract JobEscrow is EIP712, ReentrancyGuard {
         job.closed = true;
         uint256 refund = job.unallocated;
         job.unallocated = 0;
+        job.totalRefunded += refund;
         if (refund > 0 && !job.rewardToken.transfer(job.buyer, refund)) revert TransferFailed();
         emit JobClosed(jobId, refund);
     }
 
     function claim(bytes32 jobId) external nonReentrant {
         Job storage job = _job(jobId);
-        uint256 amount = credits[jobId][msg.sender] - (claimed[jobId][msg.sender] ? credits[jobId][msg.sender] : 0);
+        uint256 amount = credits[jobId][msg.sender] - withdrawnCredits[jobId][msg.sender];
         if (amount == 0) revert NothingToClaim();
-        claimed[jobId][msg.sender] = true;
+        withdrawnCredits[jobId][msg.sender] += amount;
+        job.totalWithdrawn += amount;
         if (!job.rewardToken.transfer(msg.sender, amount)) revert TransferFailed();
         emit RewardClaimed(jobId, msg.sender, amount);
+    }
+
+    function accounting(bytes32 jobId) external view returns (
+        uint256 funded,
+        uint256 unallocated,
+        uint256 workerCreditsOutstanding,
+        uint256 totalRefunded,
+        uint256 totalWithdrawn
+    ) {
+        Job storage job = _job(jobId);
+        funded = job.rewardPool;
+        unallocated = job.unallocated;
+        workerCreditsOutstanding = job.totalCredited - job.totalWithdrawn;
+        totalRefunded = job.totalRefunded;
+        totalWithdrawn = job.totalWithdrawn;
+    }
+
+    function acceptedCheckpoint(bytes32 jobId) external view returns (bytes32 head, uint64 sequence, string memory manifestRef) {
+        Job storage job = _job(jobId);
+        return (job.acceptedHead, acceptedSequences[jobId], acceptedManifestRefs[jobId]);
     }
 
     function milestoneCount(bytes32 jobId) external view returns (uint256) { return milestones[jobId].length; }
@@ -251,7 +290,8 @@ contract JobEscrow is EIP712, ReentrancyGuard {
     function _hashOffer(MilestoneOffer calldata offer) private view returns (bytes32) {
         return _hashTypedDataV4(keccak256(abi.encode(
             OFFER_TYPEHASH, offer.jobId, offer.taskId, offer.termsHash, offer.producer, offer.epoch,
-            offer.milestone, offer.expectedHead, offer.newHead, offer.nonce, offer.expiry
+            offer.milestone, offer.acceptanceSpecHash, offer.expectedHead, offer.newHead,
+            keccak256(bytes(offer.manifestRef)), offer.sequence, offer.nonce, offer.expiry
         )));
     }
 

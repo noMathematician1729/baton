@@ -11,6 +11,7 @@ const EMPTY = "0x" + "0".repeat(64);
 const HEAD_1 = "0x" + "1".repeat(64);
 const HEAD_2 = "0x" + "2".repeat(64);
 const HEAD_3 = "0x" + "3".repeat(64);
+const WRONG_SPEC = "0x" + "f".repeat(64);
 const INPUT_1 = "0x" + "4".repeat(64);
 const INPUT_2 = "0x" + "5".repeat(64);
 const INPUT_3 = "0x" + "6".repeat(64);
@@ -40,10 +41,14 @@ try {
   const spec = job.terms.task.acceptanceSpecHash;
 
   await gateway.assign(job.terms.jobId, A);
+  await expectError(() => gateway.acceptMilestone({ jobId: job.terms.jobId, taskId, worker: A, epoch: 1, acceptanceSpecHash: WRONG_SPEC, expectedHead: EMPTY, newHead: { manifestDigest: HEAD_1, manifestRef: "arkiv://wrong-spec", artifactManifestDigest: INPUT_1, schemaVersion: "checkpoint.v1", sequence: 1 } }), "ACCEPTANCE_SPEC_MISMATCH");
+  await expectError(() => gateway.acceptMilestone({ jobId: job.terms.jobId, taskId, worker: A, epoch: 1, acceptanceSpecHash: spec, expectedHead: EMPTY, newHead: { manifestDigest: HEAD_1, manifestRef: "arkiv://wrong-sequence", artifactManifestDigest: INPUT_1, schemaVersion: "checkpoint.v1", sequence: 2 } }), "CHECKPOINT_SEQUENCE_INVALID");
+  await expectError(() => gateway.execute({ operationId: "op-wrong-task", jobId: job.terms.jobId, taskId: "another-task", worker: A, epoch: 1, service: "batch-data-v1", inputDigest: INPUT_1, amount: 1n, asset: "HBAR" }), "TASK_ID_MISMATCH");
+  assert(!(await ledger.getOperation("op-wrong-task")), "wrong-task request must fail before reserving or purchasing");
   const firstPayment = await gateway.execute({ operationId: "op-1", jobId: job.terms.jobId, taskId, worker: A, epoch: 1, service: "batch-data-v1", inputDigest: INPUT_1, amount: 2n, asset: "HBAR" });
   const duplicatePayment = await gateway.execute({ operationId: "op-1", jobId: job.terms.jobId, taskId, worker: A, epoch: 1, service: "batch-data-v1", inputDigest: INPUT_1, amount: 2n, asset: "HBAR" });
   assert(firstPayment.providerReceipt === duplicatePayment.providerReceipt, "stable operation ID returned a new receipt");
-  await gateway.acceptMilestone({ jobId: job.terms.jobId, worker: A, epoch: 1, expectedHead: EMPTY, newHead: { manifestDigest: HEAD_1, manifestRef: "arkiv://1", artifactManifestDigest: spec, schemaVersion: "checkpoint.v1", sequence: 1 } });
+  await gateway.acceptMilestone({ jobId: job.terms.jobId, taskId, worker: A, epoch: 1, acceptanceSpecHash: spec, expectedHead: EMPTY, newHead: { manifestDigest: HEAD_1, manifestRef: "arkiv://1", artifactManifestDigest: INPUT_1, schemaVersion: "checkpoint.v1", sequence: 1 } });
 
   await gateway.drain(job.terms.jobId);
   await expectError(() => gateway.execute({ operationId: "op-stale", jobId: job.terms.jobId, taskId, worker: A, epoch: 1, service: "batch-data-v1", inputDigest: INPUT_2, amount: 1n, asset: "HBAR" }), "GATEWAY_DRAINED");
@@ -51,9 +56,9 @@ try {
   await expectError(() => gateway.execute({ operationId: "op-old", jobId: job.terms.jobId, taskId, worker: A, epoch: 1, service: "batch-data-v1", inputDigest: INPUT_2, amount: 1n, asset: "HBAR" }), "WORKER_NOT_ASSIGNED");
 
   await gateway.execute({ operationId: "op-2", jobId: job.terms.jobId, taskId, worker: B, epoch: 2, service: "batch-data-v1", inputDigest: INPUT_2, amount: 2n, asset: "HBAR" });
-  await gateway.acceptMilestone({ jobId: job.terms.jobId, worker: B, epoch: 2, expectedHead: HEAD_1, newHead: { manifestDigest: HEAD_2, manifestRef: "arkiv://2", artifactManifestDigest: spec, schemaVersion: "checkpoint.v1", sequence: 2 } });
+  await gateway.acceptMilestone({ jobId: job.terms.jobId, taskId, worker: B, epoch: 2, acceptanceSpecHash: spec, expectedHead: HEAD_1, newHead: { manifestDigest: HEAD_2, manifestRef: "arkiv://2", artifactManifestDigest: INPUT_2, schemaVersion: "checkpoint.v1", sequence: 2 } });
   await gateway.execute({ operationId: "op-3", jobId: job.terms.jobId, taskId, worker: B, epoch: 2, service: "batch-data-v1", inputDigest: INPUT_3, amount: 2n, asset: "HBAR" });
-  const completed = await gateway.acceptMilestone({ jobId: job.terms.jobId, worker: B, epoch: 2, expectedHead: HEAD_2, newHead: { manifestDigest: HEAD_3, manifestRef: "arkiv://3", artifactManifestDigest: spec, schemaVersion: "checkpoint.v1", sequence: 3 } });
+  const completed = await gateway.acceptMilestone({ jobId: job.terms.jobId, taskId, worker: B, epoch: 2, acceptanceSpecHash: spec, expectedHead: HEAD_2, newHead: { manifestDigest: HEAD_3, manifestRef: "arkiv://3", artifactManifestDigest: INPUT_3, schemaVersion: "checkpoint.v1", sequence: 3 } });
   const claimA = await jobs.claim(job.terms.jobId, A);
   const claimB = await jobs.claim(job.terms.jobId, B);
   assert(claimA.amount === 3n && claimB.amount === 7n, "worker credits were not conserved");
@@ -70,9 +75,11 @@ try {
   await unknownLedger.configureBudget(unknownJob.terms.jobId, unknownJob.servicePolicy);
   await unknownJobs.assign(unknownJob.terms.jobId, A);
   let unknownSubmissions = 0;
+  let unknownProviderOutcome = "unknown";
+  const reconcileUnknown = async () => ({ status: unknownProviderOutcome });
   const unknownGateway = new Gateway(unknownJobs, unknownLedger, {
     submit: async () => { unknownSubmissions += 1; throw new Error("facilitator timeout"); },
-    reconcile: async () => ({ settled: false }),
+    reconcile: reconcileUnknown,
   });
   await expectError(() => unknownGateway.execute({ operationId: "op-unknown", jobId: unknownJob.terms.jobId, taskId: unknownJob.task.taskId, worker: A, epoch: 1, service: "batch-data-v1", inputDigest: INPUT_1, amount: 1n, asset: "HBAR" }), "PAYMENT_UNKNOWN");
   await expectError(() => unknownGateway.execute({ operationId: "op-unknown", jobId: unknownJob.terms.jobId, taskId: unknownJob.task.taskId, worker: A, epoch: 1, service: "batch-data-v1", inputDigest: INPUT_1, amount: 1n, asset: "HBAR" }), "PAYMENT_UNKNOWN");
@@ -83,11 +90,16 @@ try {
   unknownLedger = new OperationLedger(join(root, "unknown-payment-ledger.sqlite"));
   const restartedUnknownGateway = new Gateway(new JobStore(unknownJobsPath), unknownLedger, {
     submit: async () => { unknownSubmissions += 1; throw new Error("must not resubmit"); },
-    reconcile: async () => ({ settled: false }),
+    reconcile: reconcileUnknown,
   });
   await expectError(() => restartedUnknownGateway.execute({ operationId: "op-unknown", jobId: unknownJob.terms.jobId, taskId: unknownJob.task.taskId, worker: A, epoch: 1, service: "batch-data-v1", inputDigest: INPUT_1, amount: 1n, asset: "HBAR" }), "PAYMENT_UNKNOWN");
   const restartedUnknownBalance = await unknownLedger.getBalance(unknownJob.terms.jobId);
   assert(unknownSubmissions === 1 && restartedUnknownBalance?.reserved === 1n && restartedUnknownBalance.available === 4n, "UNKNOWN reservation or no-resubmit guarantee changed across SQLite restart");
+  unknownProviderOutcome = "not-settled";
+  await expectError(() => restartedUnknownGateway.execute({ operationId: "op-unknown", jobId: unknownJob.terms.jobId, taskId: unknownJob.task.taskId, worker: A, epoch: 1, service: "batch-data-v1", inputDigest: INPUT_1, amount: 1n, asset: "HBAR" }), "PAYMENT_FAILED");
+  const definitelyFailed = await unknownLedger.getOperation("op-unknown");
+  const releasedUnknownBalance = await unknownLedger.getBalance(unknownJob.terms.jobId);
+  assert(definitelyFailed?.state === "FAILED" && releasedUnknownBalance?.reserved === 0n && releasedUnknownBalance.available === 5n && unknownSubmissions === 1, "definitive non-settlement did not release exactly once without resubmitting");
 
   const crashJobsPath = join(root, "crash-jobs.json");
   const crashLedgerPath = join(root, "crash-operations.sqlite");
@@ -110,7 +122,8 @@ try {
       throw new Error("SIMULATED_WORKER_CRASH_AFTER_SETTLEMENT");
     },
     async reconcile(operation) {
-      return durableProviderPurchases.get(operation.operationId) ?? { settled: false };
+      const result = durableProviderPurchases.get(operation.operationId);
+      return result ? { status: "settled", result } : { status: "not-settled" };
     },
   };
   const crashGateway = new Gateway(crashJobs, crashLedger, crashProvider);
@@ -137,7 +150,7 @@ try {
 
   const guardedJobs = new JobStore(join(root, "guarded-jobs.json"));
   guardedLedger = new OperationLedger(join(root, "guarded-operations.sqlite"));
-  const guardedJob = await guardedJobs.create({ chainJobId: "0x" + "c".repeat(64), buyer: "0x" + "1".repeat(40), rewardToken: "0x" + "2".repeat(40), verifier: "0x" + "3".repeat(40), rewards: [1n], serviceBudget: 10n, serviceAsset: "HBAR", approvedServices: ["batch-data-v1"], perRequestCap: 3n });
+  const guardedJob = await guardedJobs.create({ chainJobId: "0x" + "c".repeat(64), chainTaskId: "0x" + "d".repeat(64), buyer: "0x" + "1".repeat(40), rewardToken: "0x" + "2".repeat(40), verifier: "0x" + "3".repeat(40), rewards: [1n], serviceBudget: 10n, serviceAsset: "HBAR", approvedServices: ["batch-data-v1"], perRequestCap: 3n });
   await guardedLedger.configureBudget(guardedJob.terms.jobId, guardedJob.servicePolicy);
   const chainState = { worker: A, epoch: 1, grants: new Set([A, B]) };
   const checkedAuthority = {
@@ -160,14 +173,14 @@ try {
       guardedPurchases += 1;
       return { providerReceipt: "provider-receipt:" + request.operationId, outputDigest: request.inputDigest, outputRef: "arkiv://" + request.operationId };
     },
-    async reconcile() { return { settled: false }; },
+    async reconcile() { return { status: "unknown" }; },
   };
   const guardedGateway = new Gateway(guardedJobs, guardedLedger, countedProvider, checkedAuthority);
   assert(guardedGateway.requiresChainAuthority, "chain authority mode was not enabled");
   await guardedGateway.assign(guardedJob.terms.jobId, A);
   chainState.worker = B;
   chainState.epoch = 2;
-  await expectError(() => guardedGateway.acceptMilestone({ jobId: guardedJob.terms.jobId, worker: A, epoch: 1, expectedHead: EMPTY, newHead: { manifestDigest: HEAD_1, manifestRef: "arkiv://stale", artifactManifestDigest: guardedJob.terms.task.acceptanceSpecHash, schemaVersion: "checkpoint.v1", sequence: 1 } }), "WORKER_NOT_ASSIGNED");
+  await expectError(() => guardedGateway.acceptMilestone({ jobId: guardedJob.terms.jobId, taskId: guardedJob.task.taskId, worker: A, epoch: 1, acceptanceSpecHash: guardedJob.terms.task.acceptanceSpecHash, expectedHead: EMPTY, newHead: { manifestDigest: HEAD_1, manifestRef: "arkiv://stale", artifactManifestDigest: INPUT_1, schemaVersion: "checkpoint.v1", sequence: 1 } }), "WORKER_NOT_ASSIGNED");
   assert((await guardedJobs.get(guardedJob.terms.jobId))?.task.nextMilestone === 0, "stale on-chain worker accepted a local checkpoint");
   chainState.worker = A;
   chainState.epoch = 1;

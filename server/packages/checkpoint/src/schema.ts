@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const CHECKPOINT_SCHEMA_VERSION = 1 as const;
+export const CHECKPOINT_SCHEMA_VERSION = "checkpoint.v1" as const;
 export const MAX_CIPHERTEXT_CHUNK_BYTES = 96 * 1024;
 
 const digest = z.string().regex(/^0x[\da-f]{64}$/i);
@@ -16,6 +16,9 @@ export const ArtifactChunkSchema = z.object({
   entityKey: z.string().min(1),
   ciphertextDigest: digest,
   ciphertextBytes: z.number().int().positive().max(MAX_CIPHERTEXT_CHUNK_BYTES),
+  /** Arkiv block height at expiry; optional only for legacy checkpoint.v1 references. */
+  expiresAt: z.string().regex(/^\d+$/).optional(),
+  owner: z.string().min(1).optional(),
 });
 
 export const ArtifactReferenceSchema = z.object({

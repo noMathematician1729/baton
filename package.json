@@ -29,6 +29,12 @@
     "test:sepolia:authority": "npm run contracts:compile && node scripts/test-ens-authority-sepolia.mjs",
     "test:sepolia:worker-grants": "npm run contracts:compile && node scripts/test-worker-ens-grants-sepolia.mjs",
     "demo:sepolia:job-lifecycle": "npm run contracts:compile && node scripts/demo-sepolia-job-lifecycle.mjs",
+    "key-service:provision": "node --import tsx scripts/key-service/provision.mjs",
+    "key-service:grant": "node --import tsx scripts/key-service/grant.mjs",
+    "key-service:smoke": "node --import tsx scripts/key-service/smoke.mjs",
+    "key-service:start": "npm run build --workspace=server && node --env-file=.env.key-service server/dist/src/services/key-service/index.js",
+    "key-service:tunnel": "cloudflared tunnel --no-autoupdate --url http://127.0.0.1:4411",
+    "key-service:set-url": "node scripts/key-service/set-url.mjs",
     "verify": "npm run typecheck && npm run build && npm test && npm run contracts:compile && npm run test:signing && npm run test:local"
   },
   "devDependencies": {

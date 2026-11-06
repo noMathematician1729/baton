@@ -30,6 +30,31 @@ test("candidate verifier fetches and validates the exact encrypted package befor
   await verifier.verifyCandidate(fixture.input);
   assert.equal(fixture.reads.envelope, 1);
   assert.equal(fixture.reads.metadata, 1);
+  assert.equal(fixture.reads.retention, 1);
+});
+
+test("candidate verifier recovers the confirmed checkpoint for a drained snapshot refresh", async () => {
+  const fixture = createCandidate();
+  const verifier = new ArkivCheckpointCandidateVerifier({
+    store: fixture.store,
+    checkpointKey: key,
+    keyId,
+    expectedStorageOwner: storageOwner,
+  });
+
+  const recovered = await verifier.recoverAcceptedCheckpoint!({
+    job: fixture.input.job,
+    producer: worker,
+    producerEpoch: 1,
+    acceptedHead: fixture.input.newHead.manifestDigest,
+    acceptedSequence: fixture.input.newHead.sequence,
+    acceptedManifestRef: fixture.input.newHead.manifestRef,
+  });
+
+  assert.deepEqual(recovered, fixture.input.newHead);
+  assert.equal(fixture.reads.envelope, 1);
+  assert.equal(fixture.reads.metadata, 1);
+  assert.equal(fixture.reads.retention, 1);
 });
 
 test("candidate verifier rejects stale rules or unbound content before job acceptance", async () => {
@@ -76,7 +101,7 @@ test("candidate verifier rejects bytes not owned by the buyer's configured Arkiv
 function createCandidate(actualOwner: Hex = storageOwner): {
   input: { job: JobSnapshot; acceptanceSpecHash: Hex; expectedHead: Hex; newHead: CheckpointHead };
   store: Pick<ArkivContentStore, "readEnvelope" | "readArtifact" | "getEntityMetadata">;
-  reads: { envelope: number; metadata: number };
+  reads: { envelope: number; metadata: number; retention: number };
 } {
   const snapshot = new JobStore("unused.json").prepareCreate({
     buyer,
@@ -124,8 +149,9 @@ function createCandidate(actualOwner: Hex = storageOwner): {
     sequence: 1,
     previousAcceptedHead: null,
   };
-  const reads = { envelope: 0, metadata: 0 };
-  const store: Pick<ArkivContentStore, "readEnvelope" | "readArtifact" | "getEntityMetadata"> = {
+  const reads = { envelope: 0, metadata: 0, retention: 0 };
+  const store: Pick<ArkivContentStore,
+    "readEnvelope" | "readArtifact" | "getEntityMetadata" | "getCurrentBlockNumber" | "ensureRetention"> = {
     async readEnvelope(reference, digestValue) {
       reads.envelope += 1;
       assert.equal(reference, entityKey);
@@ -139,6 +165,18 @@ function createCandidate(actualOwner: Hex = storageOwner): {
       reads.metadata += 1;
       assert.equal(reference, entityKey);
       return { owner: actualOwner, expiresAt: 1000n };
+    },
+    async getCurrentBlockNumber() { return 100n; },
+    async ensureRetention({ entityKeys }) {
+      reads.retention += 1;
+      assert(entityKeys.includes(entityKey));
+      return entityKeys.map((key) => ({
+        entityKey: key,
+        expiresAt: 1000n,
+        renewed: false,
+        covered: true,
+        renewAtBlock: 900n,
+      }));
     },
   };
   return {

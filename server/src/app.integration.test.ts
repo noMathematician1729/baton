@@ -87,9 +87,12 @@ test("HTTP API uses and recovers the SQLite payment ledger across app restart", 
 
       const detailResponse = await fetch(`${baseUrl}/api/jobs/${job.terms.jobId}`);
       const details = await detailResponse.json();
-      assert.equal(details.operations[0].state, "OUTPUT_AVAILABLE");
+      assert.equal("operations" in details, false, "job summary must not expose the durable payment ledger");
       assert.equal(details.balance.available, "8n");
       assert.equal(details.balance.settledSpend, "2n");
+      const operationsResponse = await fetch(`${baseUrl}/api/jobs/${job.terms.jobId}/services/operations`);
+      const operations = await operationsResponse.json();
+      assert.equal(operations[0].state, "OUTPUT_AVAILABLE");
     });
   } finally {
     services.ledger.close();

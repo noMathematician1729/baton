@@ -80,7 +80,8 @@ export type RewardCredit = {
 export type ServicePolicy = {
   providerId: string;
   network: string;
-  payee: Hex;
+  /** Provider-native recipient identifier (EVM address or Hedera 0.0.x account ID). */
+  payee: string;
   asset: string;
   budget: bigint;
   perRequestCap: bigint;
@@ -111,12 +112,14 @@ export type GatewayOperation = {
   taskId: string;
   worker: Hex;
   epoch: number;
+  /** Durable gateway admission generation captured when this operation was reserved. */
+  admissionGeneration?: number;
   service: string;
   inputDigest: Hex;
   requestFingerprint: Hex;
   providerId: string;
   network: string;
-  payee: Hex;
+  payee: string;
   policyVersion: string;
   approvedPolicyHash: Hex;
   amount: bigint;
@@ -126,10 +129,18 @@ export type GatewayOperation = {
   createdAt: string;
   updatedAt: string;
   providerReceipt?: string;
+  /** Actual provider debit; `amount` remains the immutable maximum reserved for the intent. */
+  settledAmount?: bigint;
   outputDigest?: Hex;
   outputRef?: string;
   reusedBy?: Array<{ worker: Hex; epoch: number; at: string }>;
   failureCode?: string;
+};
+
+export type OperationPageCursor = { createdAt: string; operationId: string };
+export type ReusableOperationPage = {
+  operations: GatewayOperation[];
+  nextCursor: OperationPageCursor | null;
 };
 
 export type JobSnapshot = {
@@ -170,7 +181,7 @@ export type PaymentIntentFingerprintInput = {
   inputDigest: Hex;
   amount: bigint;
   asset: string;
-  payee: Hex;
+  payee: string;
   policyVersion: string;
   approvedPolicyHash: Hex;
 };

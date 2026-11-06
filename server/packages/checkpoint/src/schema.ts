@@ -1,7 +1,14 @@
 import { z } from "zod";
+import {
+  MAX_ARTIFACT_BYTES,
+  MAX_ARTIFACT_CHUNKS,
+  MAX_CHECKPOINT_ARTIFACTS,
+  MAX_CIPHERTEXT_CHUNK_BYTES,
+  MAX_ENCRYPTED_MANIFEST_CIPHERTEXT_CHARS,
+} from "./limits.js";
 
 export const CHECKPOINT_SCHEMA_VERSION = "checkpoint.v1" as const;
-export const MAX_CIPHERTEXT_CHUNK_BYTES = 96 * 1024;
+export { MAX_CIPHERTEXT_CHUNK_BYTES };
 
 const digest = z.string().regex(/^0x[\da-f]{64}$/i);
 
@@ -24,11 +31,16 @@ export const ArtifactChunkSchema = z.object({
 export const ArtifactReferenceSchema = z.object({
   artifactId: z.string().min(1),
   mediaType: z.string().min(1),
-  byteLength: z.number().int().nonnegative(),
+  byteLength: z.number().int().nonnegative().max(MAX_ARTIFACT_BYTES),
   contentDigest: digest,
   encrypted: z.literal(true),
-  chunks: z.array(ArtifactChunkSchema).min(1),
+  chunks: z.array(ArtifactChunkSchema).min(1).max(MAX_ARTIFACT_CHUNKS),
   baseDigest: digest.optional(),
+}).superRefine((reference, context) => {
+  const expectedChunks = Math.max(1, Math.ceil(reference.byteLength / (MAX_CIPHERTEXT_CHUNK_BYTES - 29)));
+  if (reference.chunks.length !== expectedChunks) {
+    context.addIssue({ code: "custom", path: ["chunks"], message: "Artifact chunk count does not match its byte length" });
+  }
 });
 
 export const ToolRequirementSchema = z.object({
@@ -68,9 +80,9 @@ export const CheckpointManifestSchema = z.object({
     unresolved: z.array(z.string()),
     nextActions: z.array(z.string()),
   }),
-  artifacts: z.array(ArtifactReferenceSchema),
-  tools: z.array(ToolRequirementSchema),
-  externalOperations: z.array(ExternalOperationReferenceSchema),
+  artifacts: z.array(ArtifactReferenceSchema).max(MAX_CHECKPOINT_ARTIFACTS),
+  tools: z.array(ToolRequirementSchema).max(128),
+  externalOperations: z.array(ExternalOperationReferenceSchema).max(128),
   runtimeState: z.record(z.string(), z.unknown()).optional(),
   quantitativeState: z.record(z.string(), z.unknown()).optional(),
 });
@@ -82,10 +94,12 @@ export const EncryptedEnvelopeSchema = z.object({
   schemaVersion: z.literal(CHECKPOINT_SCHEMA_VERSION),
   keyId: z.string().min(1),
   algorithm: z.literal("AES-256-GCM"),
-  nonce: z.string().min(1),
+  nonce: z.string().length(16),
   ciphertext: z.string(),
-  tag: z.string().min(1),
+  tag: z.string().length(22),
   ciphertextDigest: digest,
+}).extend({
+  ciphertext: z.string().max(MAX_ENCRYPTED_MANIFEST_CIPHERTEXT_CHARS),
 });
 
 export type CheckpointManifest = z.infer<typeof CheckpointManifestSchema>;

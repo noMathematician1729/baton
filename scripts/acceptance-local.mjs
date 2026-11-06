@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -110,20 +111,28 @@ try {
   await crashJobs.assign(crashJob.terms.jobId, A);
   let settledPurchases = 0;
   const durableProviderPurchases = new Map();
+  const durableProviderOutputs = new Map();
+  const paidOutputBytes = Buffer.from("simulated paid provider output");
   const crashProvider = {
     async submit(request) {
       settledPurchases += 1;
       const result = {
         providerReceipt: "simulated-hedera-receipt:" + request.operationId,
-        outputDigest: "0x" + "7".repeat(64),
+        outputDigest: sha256Bytes(paidOutputBytes),
         outputRef: "arkiv://paid-output/" + request.operationId,
       };
       durableProviderPurchases.set(request.operationId, result);
+      durableProviderOutputs.set(request.operationId, paidOutputBytes);
       throw new Error("SIMULATED_WORKER_CRASH_AFTER_SETTLEMENT");
     },
     async reconcile(operation) {
       const result = durableProviderPurchases.get(operation.operationId);
       return result ? { status: "settled", result } : { status: "not-settled" };
+    },
+    async retrieveOutput(operation) {
+      const output = durableProviderOutputs.get(operation.operationId);
+      if (!output) throw new Error("PAID_OUTPUT_NOT_AVAILABLE");
+      return output;
     },
   };
   const crashGateway = new Gateway(crashJobs, crashLedger, crashProvider);
@@ -136,24 +145,51 @@ try {
   crashLedger.close();
   const restartedJobs = new JobStore(crashJobsPath);
   restartedLedger = new OperationLedger(crashLedgerPath);
-  await restartedJobs.drain(crashJob.terms.jobId);
-  await restartedJobs.takeover({ jobId: crashJob.terms.jobId, successor: B, expectedHead: EMPTY, expectedEpoch: 1, compatibilityReport: "0x" + "8".repeat(64) });
   const restartedGateway = new Gateway(restartedJobs, restartedLedger, crashProvider);
+  await restartedGateway.drain(crashJob.terms.jobId);
+  await expectError(() => restartedGateway.takeover({ jobId: crashJob.terms.jobId, successor: B, expectedHead: EMPTY, expectedEpoch: 1, compatibilityReport: "0x" + "8".repeat(64) }), "UNRESOLVED_OPERATIONS");
+  await restartedGateway.reconcile(paidRequestA.operationId, A, 1);
+  await restartedGateway.takeover({ jobId: crashJob.terms.jobId, successor: B, expectedHead: EMPTY, expectedEpoch: 1, compatibilityReport: "0x" + "8".repeat(64) });
   const recovered = await restartedGateway.execute({ ...paidRequestA, worker: B, epoch: 2 });
   const replayed = await restartedGateway.execute({ ...paidRequestA, worker: B, epoch: 2 });
+  const retrievedOutput = await restartedGateway.retrievePaidOutput({
+    jobId: crashJob.terms.jobId,
+    operationId: paidRequestA.operationId,
+    worker: B,
+    epoch: 2,
+  });
   const recoveredBalance = await restartedLedger.getBalance(crashJob.terms.jobId);
   assert(recovered.state === "OUTPUT_AVAILABLE" && recovered.providerReceipt === "simulated-hedera-receipt:op-payment-crash", "B did not recover A's settled provider result");
   assert(recovered.outputRef === "arkiv://paid-output/op-payment-crash", "recovered paid output reference changed");
   assert(recovered.reusedBy?.some((reuse) => reuse.worker === B && reuse.epoch === 2), "B's authorized reuse was not recorded");
   assert(replayed.providerReceipt === recovered.providerReceipt && settledPurchases === 1, "B retry caused a duplicate provider purchase");
+  assert(Buffer.from(retrievedOutput.bytes).equals(paidOutputBytes), "B did not recover the original paid output bytes");
+  assert(retrievedOutput.outputDigest === sha256Bytes(paidOutputBytes), "recovered paid output digest changed");
   assert(recoveredBalance?.available === 3n && recoveredBalance.reserved === 0n && recoveredBalance.settledSpend === 2n, "payment-crash recovery changed service budget accounting");
 
   const guardedJobs = new JobStore(join(root, "guarded-jobs.json"));
   guardedLedger = new OperationLedger(join(root, "guarded-operations.sqlite"));
   const guardedJob = await guardedJobs.create({ chainJobId: "0x" + "c".repeat(64), chainTaskId: "0x" + "d".repeat(64), buyer: "0x" + "1".repeat(40), rewardToken: "0x" + "2".repeat(40), verifier: "0x" + "3".repeat(40), rewards: [1n], serviceBudget: 10n, serviceAsset: "HBAR", approvedServices: ["batch-data-v1"], perRequestCap: 3n });
   await guardedLedger.configureBudget(guardedJob.terms.jobId, guardedJob.servicePolicy);
-  const chainState = { worker: A, epoch: 1, grants: new Set([A, B]) };
+  const chainState = { worker: "0x" + "0".repeat(40), epoch: 0, grants: new Set([A, B]) };
   const checkedAuthority = {
+    async assertAssignmentTransition(job, worker) {
+      assert(job.chainJobId === guardedJob.chainJobId, "assignment check used the wrong on-chain job");
+      if (chainState.epoch === 0 && chainState.worker === "0x" + "0".repeat(40)) return false;
+      if (chainState.epoch === 1 && chainState.worker.toLowerCase() === worker.toLowerCase()) return true;
+      throw new Error("ONCHAIN_ASSIGNMENT_STATE_MISMATCH");
+    },
+    async assertAssignmentConfirmed(job, worker) {
+      if (chainState.worker.toLowerCase() !== worker.toLowerCase() || chainState.epoch !== 1) {
+        throw new Error("ONCHAIN_ASSIGNMENT_NOT_CONFIRMED");
+      }
+    },
+    async assertMilestoneTransition(_job, input) {
+      if (chainState.worker.toLowerCase() !== input.worker.toLowerCase()) throw new Error("WORKER_NOT_ASSIGNED");
+      if (chainState.epoch !== input.epoch) throw new Error("STALE_EPOCH");
+      return false;
+    },
+    async assertMilestoneAccepted() {},
     async assertCurrentWorker(input) {
       assert(input.chainJobId === guardedJob.chainJobId && input.buyer === guardedJob.terms.buyer, "gateway sent a mismatched chain binding");
       if (chainState.worker.toLowerCase() !== input.worker.toLowerCase()) throw new Error("WORKER_NOT_ASSIGNED");
@@ -166,6 +202,12 @@ try {
       if (chainState.epoch !== input.epoch) throw new Error("ONCHAIN_EPOCH_NOT_CONFIRMED");
       if (!chainState.grants.has(input.worker)) throw new Error("WORKER_AUTHORITY_REVOKED");
     },
+    async assertReconciliationWorker(input) {
+      assert(input.chainJobId === guardedJob.chainJobId, "reconciliation check used the wrong on-chain job");
+      if (chainState.worker.toLowerCase() !== input.worker.toLowerCase()) throw new Error("WORKER_NOT_ASSIGNED");
+      if (chainState.epoch !== input.epoch) throw new Error("STALE_EPOCH");
+      if (!chainState.grants.has(input.worker)) throw new Error("WORKER_AUTHORITY_REVOKED");
+    },
   };
   let guardedPurchases = 0;
   const countedProvider = {
@@ -175,12 +217,43 @@ try {
     },
     async reconcile() { return { status: "unknown" }; },
   };
-  const guardedGateway = new Gateway(guardedJobs, guardedLedger, countedProvider, checkedAuthority);
+  const guardedWriter = {
+    async assignTask(_job, worker) { chainState.worker = worker; chainState.epoch = 1; return "0x" + "a".repeat(64); },
+    async acceptMilestone() { return "0x" + "b".repeat(64); },
+    async pause() { return "0x" + "c".repeat(64); },
+    async resume() { return "0x" + "d".repeat(64); },
+  };
+  const guardedGateway = new Gateway(guardedJobs, guardedLedger, countedProvider, checkedAuthority, undefined, guardedWriter);
   assert(guardedGateway.requiresChainAuthority, "chain authority mode was not enabled");
   await guardedGateway.assign(guardedJob.terms.jobId, A);
   chainState.worker = B;
   chainState.epoch = 2;
-  await expectError(() => guardedGateway.acceptMilestone({ jobId: guardedJob.terms.jobId, taskId: guardedJob.task.taskId, worker: A, epoch: 1, acceptanceSpecHash: guardedJob.terms.task.acceptanceSpecHash, expectedHead: EMPTY, newHead: { manifestDigest: HEAD_1, manifestRef: "arkiv://stale", artifactManifestDigest: INPUT_1, schemaVersion: "checkpoint.v1", sequence: 1, previousAcceptedHead: null } }), "WORKER_NOT_ASSIGNED");
+  const staleHead = { manifestDigest: HEAD_1, manifestRef: "arkiv://stale", artifactManifestDigest: INPUT_1, schemaVersion: "checkpoint.v1", sequence: 1, previousAcceptedHead: null };
+  await expectError(() => guardedGateway.acceptMilestone({
+    jobId: guardedJob.terms.jobId,
+    taskId: guardedJob.task.taskId,
+    worker: A,
+    epoch: 1,
+    acceptanceSpecHash: guardedJob.terms.task.milestones[0].acceptanceSpecHash,
+    expectedHead: EMPTY,
+    newHead: staleHead,
+    offer: {
+      jobId: guardedJob.chainJobId,
+      taskId: guardedJob.chainTaskId,
+      termsHash: guardedJob.terms.termsHash,
+      producer: A,
+      epoch: 1n,
+      milestone: 0,
+      acceptanceSpecHash: guardedJob.terms.task.milestones[0].acceptanceSpecHash,
+      expectedHead: EMPTY,
+      newHead: HEAD_1,
+      manifestRef: staleHead.manifestRef,
+      sequence: 1n,
+      nonce: 1n,
+      expiry: BigInt(Math.floor(Date.now() / 1000) + 60),
+    },
+    offerSignature: "0x" + "0".repeat(130),
+  }), "WORKER_NOT_ASSIGNED");
   assert((await guardedJobs.get(guardedJob.terms.jobId))?.task.nextMilestone === 0, "stale on-chain worker accepted a local checkpoint");
   chainState.worker = A;
   chainState.epoch = 1;
@@ -192,14 +265,23 @@ try {
   await expectError(() => guardedGateway.execute({ ...reusableIntent, operationId: "op-stale-chain", inputDigest: INPUT_3 }), "WORKER_NOT_ASSIGNED");
   assert(!(await guardedLedger.getOperation("op-stale-chain")) && guardedPurchases === 1, "stale chain worker or over-cap request reached the provider");
   await guardedGateway.drain(guardedJob.terms.jobId);
-  await guardedGateway.takeover({ jobId: guardedJob.terms.jobId, successor: B, expectedHead: EMPTY, expectedEpoch: 1, compatibilityReport: "0x" + "6".repeat(64) });
+  chainState.worker = A;
+  chainState.epoch = 1;
+  const takeoverRequest = { jobId: guardedJob.terms.jobId, successor: B, expectedHead: EMPTY, expectedEpoch: 1, compatibilityReport: "0x" + "6".repeat(64) };
+  await expectError(() => guardedGateway.takeover(takeoverRequest), "ONCHAIN_ASSIGNMENT_NOT_CONFIRMED");
+  assert((await guardedLedger.getTaskControl(guardedJob.terms.jobId, guardedJob.task.taskId))?.state === "TAKEOVER_PENDING", "failed takeover reopened the task");
+  await expectError(() => guardedGateway.execute({ ...reusableIntent, operationId: "op-takeover-pending", inputDigest: INPUT_3 }), "TAKEOVER_PENDING");
+  assert(guardedPurchases === 1, "payment reached the provider while takeover confirmation was pending");
+  chainState.worker = B;
+  chainState.epoch = 2;
+  await guardedGateway.takeover(takeoverRequest);
   const reusedByB = await guardedGateway.execute({ ...reusableIntent, worker: B, epoch: 2 });
   assert(reusedByB.reusedBy?.some((reuse) => reuse.worker === B && reuse.epoch === 2) && guardedPurchases === 1, "B did not reuse A's approved, capped purchase");
   chainState.grants.delete(B);
   await expectError(() => guardedGateway.execute({ ...reusableIntent, operationId: "op-revoked-b", worker: B, epoch: 2 }), "WORKER_AUTHORITY_REVOKED");
   assert(guardedPurchases === 1, "revoked worker request reached the provider");
 
-  console.log(JSON.stringify({ mode: "local", jobId: job.terms.jobId, taskId, acceptedHead: completed.task.acceptedHead.manifestDigest, status: completed.task.status, epoch: completed.task.epoch, claims: { A: claimA.amount.toString(), B: claimB.amount.toString() }, service: { deposits: balance?.deposits.toString(), available: balance?.available.toString(), settledSpend: balance?.settledSpend.toString() }, staleWorker: "rejected", payment: "idempotent", unknown: "reservation-held", paymentCrash: { settledPurchases, recoveredBy: "B", secondCharge: false, outputRef: recovered.outputRef }, liveAuthorityGate: { staleChainWorker: "rejected", revokedGrant: "rejected", overCap: "rejected", purchases: guardedPurchases, bReuse: "no second purchase" } }));
+  console.log(JSON.stringify({ mode: "local", jobId: job.terms.jobId, taskId, acceptedHead: completed.task.acceptedHead.manifestDigest, status: completed.task.status, epoch: completed.task.epoch, claims: { A: claimA.amount.toString(), B: claimB.amount.toString() }, service: { deposits: balance?.deposits.toString(), available: balance?.available.toString(), settledSpend: balance?.settledSpend.toString() }, staleWorker: "rejected", payment: "idempotent", unknown: "reservation-held", paymentCrash: { settledPurchases, recoveredBy: "B", secondCharge: false, outputRef: recovered.outputRef, outputDigest: retrievedOutput.outputDigest, outputBytes: retrievedOutput.bytes.byteLength }, liveAuthorityGate: { staleChainWorker: "rejected", revokedGrant: "rejected", overCap: "rejected", purchases: guardedPurchases, bReuse: "no second purchase" } }));
 } finally {
   ledger?.close();
   unknownLedger?.close();
@@ -221,4 +303,8 @@ async function expectError(action, expected) {
     throw new Error(`expected ${expected}, got ${error?.message}`);
   }
   throw new Error(`expected ${expected}, operation succeeded`);
+}
+
+function sha256Bytes(bytes) {
+  return "0x" + createHash("sha256").update(bytes).digest("hex");
 }

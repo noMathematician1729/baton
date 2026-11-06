@@ -1,9 +1,11 @@
 node_modules/
 dist/
 coverage/
+
 .env
 .env.*
 !.env.example
+!.env.*.example
 *.log
 
 # Private key material and local wallet exports

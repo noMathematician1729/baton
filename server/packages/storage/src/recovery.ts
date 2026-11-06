@@ -56,6 +56,7 @@ type RecoverAcceptedPackageInput = {
   expectedStorageOwner: Address;
   supportedAdapters: readonly RecoveryAdapter[];
   retentionUntilBlock?: bigint;
+  recoverArtifacts?: boolean;
 };
 
 /** Fetch, authenticate, decrypt, and validate only the checkpoint committed by confirmed chain state. */
@@ -123,13 +124,15 @@ export async function recoverAcceptedPackage(input: RecoverAcceptedPackageInput)
       if (!chunk.expiresAt || !chunk.owner) throw new Error("ARTIFACT_RETENTION_METADATA_MISSING");
       await assertEntityRetention(input, chunk.entityKey as Hex, chunk.owner, BigInt(chunk.expiresAt));
     }
-    const bytes = await input.store.readArtifact({
-      jobId: accepted.jobId,
-      taskId: accepted.taskId,
-      reference,
-      keyHex,
-    });
-    artifacts.push({ artifactId: reference.artifactId, contentDigest: reference.contentDigest as Hex, bytes });
+    if (input.recoverArtifacts !== false) {
+      const bytes = await input.store.readArtifact({
+        jobId: accepted.jobId,
+        taskId: accepted.taskId,
+        reference,
+        keyHex,
+      });
+      artifacts.push({ artifactId: reference.artifactId, contentDigest: reference.contentDigest as Hex, bytes });
+    }
   }
 
   return {
@@ -149,7 +152,7 @@ async function assertEntityRetention(
   const metadata = await recovery.store.getEntityMetadata(entityKey);
   if (metadata.owner.toLowerCase() !== recovery.expectedStorageOwner.toLowerCase()
     || (manifestOwner !== undefined && metadata.owner.toLowerCase() !== manifestOwner.toLowerCase())
-    || (manifestExpiry !== undefined && metadata.expiresAt !== manifestExpiry)) {
+    || (manifestExpiry !== undefined && metadata.expiresAt < manifestExpiry)) {
     throw new Error("ARKIV_ENTITY_OWNERSHIP_OR_EXPIRY_MISMATCH");
   }
   if (recovery.retentionUntilBlock !== undefined && metadata.expiresAt < recovery.retentionUntilBlock) {

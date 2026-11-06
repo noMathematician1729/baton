@@ -5,6 +5,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { createHash } from "node:crypto";
 import {
   ArtifactReferenceSchema,
+  MAX_ARTIFACT_BYTES,
   MAX_PLAINTEXT_CHUNK_BYTES,
   artifactManifestDigest,
   decryptChunk,
@@ -18,9 +19,10 @@ import {
   type CheckpointManifest,
   type EncryptedEnvelope,
 } from "../../checkpoint/src/index.js";
+import { ensureArkivEntityRetention, type EntityRetentionResult } from "./retention.js";
 
 export const MAX_ARKIV_ENTITY_BYTES = 128 * 1024;
-export const MAX_RECOVERED_ARTIFACT_BYTES = 32 * 1024 * 1024;
+export const MAX_RECOVERED_ARTIFACT_BYTES = MAX_ARTIFACT_BYTES;
 export const MAX_PARALLEL_ARTIFACT_READS = 4;
 export const DEFAULT_ARKIV_RETENTION_DAYS = 180;
 
@@ -47,7 +49,8 @@ export type StoredContentReference = {
 
 export type ArkivContentStoreConfig = {
   accessKey: string;
-  signerPrivateKey: string;
+  /** Omit on recovery-only workers; reads do not require the storage owner's signing key. */
+  signerPrivateKey?: string;
   rpcUrl?: string;
   retentionDays?: number;
   permissionlessExtension: boolean;
@@ -55,15 +58,12 @@ export type ArkivContentStoreConfig = {
 
 export class ArkivContentStore {
   private readonly publicClient;
-  private readonly walletClient;
+  private readonly walletClient: ReturnType<typeof createWalletClient> | undefined;
   private readonly retentionDays: number;
   private readonly permissionlessExtension: boolean;
-  private readonly ownerAddress: Address;
+  private readonly ownerAddress: Address | undefined;
 
   constructor(config: ArkivContentStoreConfig) {
-    if (!isHex(config.signerPrivateKey) || config.signerPrivateKey.length !== 66) {
-      throw new Error("Arkiv signer must be a 32-byte hex private key");
-    }
     this.retentionDays = config.retentionDays ?? DEFAULT_ARKIV_RETENTION_DAYS;
     if (!Number.isInteger(this.retentionDays) || this.retentionDays < 1 || this.retentionDays > 182) {
       throw new Error("Arkiv retention must be between 1 and 182 days");
@@ -71,10 +71,15 @@ export class ArkivContentStore {
     this.permissionlessExtension = config.permissionlessExtension;
     const chain = rabdi({ accessKey: config.accessKey });
     const transport = http(config.rpcUrl || undefined);
-    const account = privateKeyToAccount(config.signerPrivateKey as Hex);
-    this.ownerAddress = account.address;
     this.publicClient = createPublicClient({ chain, transport });
-    this.walletClient = createWalletClient({ account, chain, transport });
+    if (config.signerPrivateKey !== undefined) {
+      if (!isHex(config.signerPrivateKey) || config.signerPrivateKey.length !== 66) {
+        throw new Error("Arkiv signer must be a 32-byte hex private key");
+      }
+      const account = privateKeyToAccount(config.signerPrivateKey as Hex);
+      this.ownerAddress = account.address;
+      this.walletClient = createWalletClient({ account, chain, transport });
+    }
   }
 
   async writeEncrypted(input: {
@@ -85,6 +90,7 @@ export class ArkivContentStore {
     chunkIndex: number;
     payload: Uint8Array;
   }): Promise<StoredContentReference> {
+    const walletClient = this.requireWalletClient();
     if (input.payload.byteLength === 0 || input.payload.byteLength > MAX_ARKIV_ENTITY_BYTES) {
       throw new Error("Encrypted Arkiv payload must be 1 to 131072 bytes");
     }
@@ -92,7 +98,7 @@ export class ArkivContentStore {
       throw new Error("Chunk index must be a non-negative integer");
     }
     const payloadDigest = "0x" + createHash("sha256").update(input.payload).digest("hex");
-    const result = await this.walletClient.createEntity(
+    const result = await walletClient.createEntity(
       ContentEntity,
       {
         jobId: input.jobId,
@@ -111,7 +117,7 @@ export class ArkivContentStore {
     return {
       entityKey: result.entityKey,
       txHash: result.txHash,
-      owner: this.ownerAddress,
+      owner: this.requireOwnerAddress(),
       payloadDigest,
       ciphertextBytes: input.payload.byteLength,
       expiresAt: result.expiresAt,
@@ -159,6 +165,9 @@ export class ArkivContentStore {
     keyHex: string;
     previous?: ArtifactReference;
   }): Promise<ArtifactReference> {
+    if (input.plaintext.byteLength > MAX_RECOVERED_ARTIFACT_BYTES) {
+      throw new Error("ARTIFACT_SIZE_LIMIT_EXCEEDED");
+    }
     const chunks: ArtifactReference["chunks"] = [];
     const oldChunks = new Map<number, ArtifactReference["chunks"][number]>(
       (input.previous?.chunks ?? []).map((chunk) => [chunk.index, chunk]),
@@ -225,10 +234,10 @@ export class ArkivContentStore {
     reference: ArtifactReference;
     keyHex: string;
   }): Promise<Uint8Array> {
-    const reference = ArtifactReferenceSchema.parse(input.reference);
-    if (reference.byteLength > MAX_RECOVERED_ARTIFACT_BYTES) {
+    if (input.reference.byteLength > MAX_RECOVERED_ARTIFACT_BYTES) {
       throw new Error("Artifact exceeds the configured recovery size limit");
     }
+    const reference = ArtifactReferenceSchema.parse(input.reference);
     const ordered = [...reference.chunks].sort((left, right) => left.index - right.index);
     if (ordered.some((chunk, index) => chunk.index !== index)) throw new Error("Artifact chunk sequence is incomplete");
     const parts: Uint8Array[] = [];
@@ -272,15 +281,50 @@ export class ArkivContentStore {
     return { owner: entity.$owner, expiresAt: entity.$expiresAt };
   }
 
+  async getCurrentBlockNumber(): Promise<bigint> {
+    return this.publicClient.getBlockNumber();
+  }
+
+  async extendToMaximum(entityKey: Hex): Promise<bigint> {
+    const walletClient = this.requireWalletClient();
+    const ownerAddress = this.requireOwnerAddress();
+    const metadata = await this.getEntityMetadata(entityKey);
+    if (metadata.owner.toLowerCase() !== ownerAddress.toLowerCase()) {
+      throw new Error("ARKIV_STORAGE_SIGNER_NOT_ENTITY_OWNER");
+    }
+    const result = await walletClient.extendEntity({
+      entityKey,
+      expiration: ExpirationTime.max(),
+    });
+    return result.expiresAt;
+  }
+
+  async ensureRetention(input: {
+    entityKeys: readonly Hex[];
+    retentionUntilBlock: bigint;
+    renewalLeadDays?: number;
+  }): Promise<EntityRetentionResult[]> {
+    const ownerAddress = this.requireOwnerAddress();
+    return ensureArkivEntityRetention({
+      store: this,
+      entityKeys: input.entityKeys,
+      expectedOwner: ownerAddress,
+      retentionUntilBlock: input.retentionUntilBlock,
+      renewalLeadDays: input.renewalLeadDays,
+    });
+  }
+
   async extend(entityKey: Hex, retentionDays = this.retentionDays): Promise<bigint> {
+    const walletClient = this.requireWalletClient();
+    const ownerAddress = this.requireOwnerAddress();
     if (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 182) {
       throw new Error("Arkiv retention must be between 1 and 182 days");
     }
     const metadata = await this.getEntityMetadata(entityKey);
-    if (metadata.owner.toLowerCase() !== this.ownerAddress.toLowerCase()) {
+    if (metadata.owner.toLowerCase() !== ownerAddress.toLowerCase()) {
       throw new Error("ARKIV_STORAGE_SIGNER_NOT_ENTITY_OWNER");
     }
-    const result = await this.walletClient.extendEntity({
+    const result = await walletClient.extendEntity({
       entityKey,
       expiration: ExpirationTime.fromDays(retentionDays),
     });
@@ -289,6 +333,16 @@ export class ArkivContentStore {
 
   private artifactAad(jobId: string, taskId: string, artifactId: string, index: number) {
     return "baton:" + jobId + ":" + taskId + ":artifact:" + artifactId + ":" + index;
+  }
+
+  private requireWalletClient() {
+    if (!this.walletClient) throw new Error("ARKIV_SIGNER_REQUIRED_FOR_WRITE");
+    return this.walletClient;
+  }
+
+  private requireOwnerAddress(): Address {
+    if (!this.ownerAddress) throw new Error("ARKIV_SIGNER_REQUIRED_FOR_WRITE");
+    return this.ownerAddress;
   }
 
   private async storeArtifactChunk(

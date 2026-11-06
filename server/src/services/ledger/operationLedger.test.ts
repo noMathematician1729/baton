@@ -113,6 +113,40 @@ test("settlement is an immutable one-time fact and output cannot bypass it", asy
   }
 });
 
+test("settlement releases the unused maximum reservation exactly once", async () => {
+  const root = await mkdtemp(join(tmpdir(), "baton-ledger-settled-amount-"));
+  const ledger = new OperationLedger(join(root, "payment-ledger.sqlite"));
+  try {
+    const settlementPolicy = { ...policy, budget: 10n, perRequestCap: 10n };
+    await ledger.configureBudget("job-1", settlementPolicy);
+    await ledger.reserve(reserveRequest("op-partial", "nonce-partial", 5n, settlementPolicy));
+    await ledger.transition("op-partial", "SUBMITTED");
+    await ledger.transition("op-partial", "SETTLED", { providerReceipt: "receipt-partial", settledAmount: 3n });
+    assert.equal((await ledger.getOperation("op-partial"))?.settledAmount, 3n);
+    assert.deepEqual(await ledger.getBalance("job-1"), {
+      deposits: 10n,
+      available: 7n,
+      reserved: 0n,
+      settledSpend: 3n,
+      returnedFunds: 0n,
+    });
+    await assert.rejects(
+      ledger.transition("op-partial", "UNKNOWN", { settledAmount: 2n }),
+      /INVALID_OPERATION_TRANSITION/,
+    );
+    assert.deepEqual(await ledger.getBalance("job-1"), {
+      deposits: 10n,
+      available: 7n,
+      reserved: 0n,
+      settledSpend: 3n,
+      returnedFunds: 0n,
+    });
+  } finally {
+    ledger.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("SQLite transaction prevents concurrent reservations from exceeding the budget", async () => {
   const root = await mkdtemp(join(tmpdir(), "baton-ledger-race-"));
   const filePath = join(root, "payment-ledger.sqlite");
@@ -207,6 +241,44 @@ test("stable operation identity binds provider, network, payee, and the approved
   }
 });
 
+test("successor reuse discovery pages only durable output-ready operations and preserves A attribution", async () => {
+  const root = await mkdtemp(join(tmpdir(), "baton-ledger-reusable-page-"));
+  const ledger = new OperationLedger(join(root, "payment-ledger.sqlite"));
+  const workerA = ("0x" + "a".repeat(40)) as `0x${string}`;
+  try {
+    await ledger.configureBudget("job-1", policy);
+    for (const [operationId, nonce] of [["op-a", "nonce-a"], ["op-b", "nonce-b"]]) {
+      await ledger.reserve({ ...reserveRequest(operationId, nonce, 2n), worker: workerA });
+      await ledger.transition(operationId, "SUBMITTED");
+      await ledger.transition(operationId, "SETTLED", { providerReceipt: `receipt-${operationId}`, settledAmount: 1n });
+      await ledger.transition(operationId, "OUTPUT_AVAILABLE", {
+        outputDigest: digest(`output-${operationId}`),
+        outputRef: `arkiv://paid-output/${operationId}`,
+      });
+    }
+    await ledger.reserve(reserveRequest("op-unresolved", "nonce-unresolved", 1n));
+    await ledger.transition("op-unresolved", "SUBMITTED");
+
+    const first = await ledger.listReusableOperations({ jobId: "job-1", taskId: "task-1", limit: 1 });
+    assert.equal(first.operations.length, 1);
+    assert(first.nextCursor);
+    const second = await ledger.listReusableOperations({
+      jobId: "job-1",
+      taskId: "task-1",
+      limit: 1,
+      after: first.nextCursor,
+    });
+    assert.equal(second.operations.length, 1);
+    assert.equal(second.nextCursor, null);
+    assert.deepEqual(new Set([...first.operations, ...second.operations].map((operation) => operation.operationId)), new Set(["op-a", "op-b"]));
+    assert([...first.operations, ...second.operations].every((operation) => operation.worker === workerA && operation.epoch === 1));
+    await assert.rejects(ledger.listReusableOperations({ jobId: "job-1", taskId: "task-1", limit: 101 }), /OPERATION_PAGE_LIMIT_INVALID/);
+  } finally {
+    ledger.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("legacy worker-scoped fingerprints migrate to stable handoff fingerprints", async () => {
   const root = await mkdtemp(join(tmpdir(), "baton-ledger-migration-"));
   const ledger = new OperationLedger(join(root, "payment-ledger.sqlite"));
@@ -256,6 +328,74 @@ test("legacy worker-scoped fingerprints migrate to stable handoff fingerprints",
       settledSpend: 0n,
       returnedFunds: 0n,
     });
+  } finally {
+    ledger.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("drain generation and takeover barrier survive ledger restart until work is resolved", async () => {
+  const root = await mkdtemp(join(tmpdir(), "baton-ledger-drain-"));
+  const filePath = join(root, "payment-ledger.sqlite");
+  let ledger = new OperationLedger(filePath);
+  const workerA = ("0x" + "a".repeat(40)) as `0x${string}`;
+  const workerB = ("0x" + "b".repeat(40)) as `0x${string}`;
+  try {
+    await ledger.configureBudget("job-1", policy);
+    await ledger.ensureTaskControl({ jobId: "job-1", taskId: "task-1", worker: workerA, epoch: 1, state: "RUNNING" });
+    await ledger.reserve({ ...reserveRequest("op-drain", "nonce-drain", 2n), controlGeneration: 0 });
+    await ledger.transition("op-drain", "SUBMITTED");
+
+    const draining = await ledger.beginDrain({ jobId: "job-1", taskId: "task-1", worker: workerA, epoch: 1, generation: 0 });
+    assert.equal(draining.state, "DRAINING");
+    assert.equal(draining.generation, 1);
+    await assert.rejects(
+      ledger.beginTakeover({ jobId: "job-1", taskId: "task-1", worker: workerA, epoch: 1, successor: workerB, successorEpoch: 2, generation: 1 }),
+      /UNRESOLVED_OPERATIONS/,
+    );
+
+    ledger.close();
+    ledger = new OperationLedger(filePath);
+    assert.equal((await ledger.getTaskControl("job-1", "task-1"))?.state, "DRAINING");
+    await ledger.transition("op-drain", "UNKNOWN");
+    assert.equal((await ledger.getTaskControl("job-1", "task-1"))?.state, "DRAINING");
+    await ledger.transition("op-drain", "FAILED", { failureCode: "provider-confirmed-not-settled" });
+    assert.equal((await ledger.getTaskControl("job-1", "task-1"))?.state, "DRAINED");
+
+    const pending = await ledger.beginTakeover({
+      jobId: "job-1",
+      taskId: "task-1",
+      worker: workerA,
+      epoch: 1,
+      successor: workerB,
+      successorEpoch: 2,
+      generation: 1,
+    });
+    assert.equal(pending.state, "TAKEOVER_PENDING");
+    ledger.close();
+    ledger = new OperationLedger(filePath);
+    assert.equal((await ledger.getTaskControl("job-1", "task-1"))?.state, "TAKEOVER_PENDING");
+
+    const cancelled = await ledger.cancelTakeover({
+      jobId: "job-1",
+      taskId: "task-1",
+      worker: workerA,
+      epoch: 1,
+      generation: pending.generation,
+    });
+    const resumed = await ledger.resumeTask({
+      jobId: "job-1",
+      taskId: "task-1",
+      worker: workerA,
+      epoch: 1,
+      generation: cancelled.generation,
+      from: "DRAINED",
+    });
+    assert.equal(resumed.state, "RUNNING");
+    await assert.rejects(
+      ledger.reserve({ ...reserveRequest("op-stale-generation", "nonce-stale-generation", 1n), controlGeneration: 0 }),
+      /GATEWAY_GENERATION_CHANGED/,
+    );
   } finally {
     ledger.close();
     await rm(root, { recursive: true, force: true });

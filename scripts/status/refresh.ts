@@ -55,7 +55,7 @@ const block = [
   renderOwner(d1, "D1", Date.now()),
   renderOwner(d2, "D2", Date.now()),
   "",
-  "Feature code and local checks are not evidence of a live integration. See [gate evidence](docs/gates.md) for tested modes and results. The local payment-crash scenario uses a fixture provider; no live Arkiv write/read or x402 payment is claimed. Sepolia lifecycle: LIVE_PASS; full integration: pending.",
+  "Local implementation and historical Sepolia evidence do not establish the full integration. See [gate evidence](docs/gates.md). Worker B cold recovery and the G4 x402/Arkiv output boundary pass local fake-backed checks; the opt-in G5 policy runner is not live-verified. Gate 6 remains BLOCKED: the configured escrow is V1, buyer-owned Arkiv writes/renewal and a real accepted checkpoint are pending, no concrete paid-service API with authoritative idempotent status/output lookup is configured, and live separate-host B recovery is unverified. Historical Sepolia lifecycle: LIVE_PASS; current full integration: pending.",
   endMarker,
 ].join("\n");
 

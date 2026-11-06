@@ -10,6 +10,54 @@ import { OperationLedger } from "../ledger/operationLedger.js";
 
 const worker = ("0x" + "a".repeat(40)) as `0x${string}`;
 
+test("gateway rejects input bytes that do not match the immutable operation digest before reserving", async () => {
+  const root = await mkdtemp(join(tmpdir(), "baton-input-digest-"));
+  const jobs = new JobStore(join(root, "jobs.json"));
+  const ledger = new OperationLedger(join(root, "ledger.sqlite"));
+  try {
+    const job = await jobs.create({
+      buyer: ("0x" + "1".repeat(40)) as `0x${string}`,
+      rewardToken: ("0x" + "2".repeat(40)) as `0x${string}`,
+      verifier: ("0x" + "3".repeat(40)) as `0x${string}`,
+      rewards: [1n],
+      serviceBudget: 5n,
+      serviceAsset: "HBAR",
+      approvedServices: ["batch-data-v1"],
+      perRequestCap: 3n,
+    });
+    await ledger.configureBudget(job.terms.jobId, job.servicePolicy);
+    await jobs.assign(job.terms.jobId, worker);
+    const gateway = new Gateway(jobs, ledger, {
+      async submit(): Promise<PaymentResult> { throw new Error("must not submit"); },
+      async reconcile() { return { status: "not-settled" }; },
+    });
+
+    await assert.rejects(gateway.execute({
+      operationId: "input-digest-mismatch",
+      jobId: job.terms.jobId,
+      taskId: job.task.taskId,
+      worker,
+      epoch: 1,
+      service: "batch-data-v1",
+      inputDigest: digest("expected input"),
+      inputBytes: Buffer.from("different input"),
+      amount: 1n,
+      asset: "HBAR",
+    }), /INPUT_DIGEST_MISMATCH/);
+    assert.equal(await ledger.getOperation("input-digest-mismatch"), undefined);
+    assert.deepEqual(await ledger.getBalance(job.terms.jobId), {
+      deposits: 5n,
+      available: 5n,
+      reserved: 0n,
+      settledSpend: 0n,
+      returnedFunds: 0n,
+    });
+  } finally {
+    ledger.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("gateway rechecks chain authority at the provider boundary before spending", async () => {
   const root = await mkdtemp(join(tmpdir(), "baton-authority-boundary-"));
   const ledger = new OperationLedger(join(root, "ledger.sqlite"));
@@ -153,6 +201,10 @@ test("settlement survives output-state persistence failure and restart without r
       settledSpend: 2n,
       returnedFunds: 0n,
     });
+    await gateway.drain(job.terms.jobId);
+    assert.equal((await ledger.getTaskControl(job.terms.jobId, job.task.taskId))?.state, "DRAINING");
+    assert.equal(await gateway.reconcilePendingOperations(job.terms.jobId), true);
+    assert.equal((await ledger.getTaskControl(job.terms.jobId, job.task.taskId))?.state, "DRAINED");
     ledger.close();
 
     restartedLedger = new OperationLedger(ledgerPath);
@@ -174,6 +226,110 @@ test("settlement survives output-state persistence failure and restart without r
   } finally {
     ledger.close();
     restartedLedger?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cancel drain reconciles uncertain payments before reopening", async () => {
+  const root = await mkdtemp(join(tmpdir(), "baton-cancel-drain-"));
+  const ledger = new OperationLedger(join(root, "ledger.sqlite"));
+  try {
+    const jobs = new JobStore(join(root, "jobs.json"));
+    const job = await jobs.create({
+      buyer: ("0x" + "1".repeat(40)) as `0x${string}`,
+      rewardToken: ("0x" + "2".repeat(40)) as `0x${string}`,
+      verifier: ("0x" + "3".repeat(40)) as `0x${string}`,
+      rewards: [1n],
+      serviceBudget: 5n,
+      serviceAsset: "HBAR",
+      approvedServices: ["batch-data-v1"],
+      perRequestCap: 3n,
+    });
+    await ledger.configureBudget(job.terms.jobId, job.servicePolicy);
+    await jobs.assign(job.terms.jobId, worker);
+
+    let reconciliation: { status: "unknown" } | { status: "not-settled" } = { status: "unknown" };
+    const gateway = new Gateway(jobs, ledger, {
+      async submit() { throw new Error("provider response timed out"); },
+      async reconcile() { return reconciliation; },
+    });
+    const request = {
+      operationId: "cancel-drain-uncertain-payment",
+      jobId: job.terms.jobId,
+      taskId: job.task.taskId,
+      worker,
+      epoch: 1,
+      service: "batch-data-v1",
+      inputDigest: digest("cancel-drain-input"),
+      amount: 2n,
+      asset: "HBAR",
+    };
+
+    await assert.rejects(gateway.execute(request), /PAYMENT_UNKNOWN/);
+    await gateway.drain(job.terms.jobId);
+    await assert.rejects(gateway.resume(job.terms.jobId), /CANCEL_DRAIN_REQUIRED/);
+    await assert.rejects(gateway.cancelDrain(job.terms.jobId), /UNRESOLVED_OPERATIONS/);
+    assert.equal((await ledger.getTaskControl(job.terms.jobId, job.task.taskId))?.state, "DRAINING");
+    assert.equal((await jobs.get(job.terms.jobId))?.task.drained, true);
+
+    reconciliation = { status: "not-settled" };
+    const reopened = await gateway.cancelDrain(job.terms.jobId);
+    assert.equal(reopened.task.drained, false);
+    assert.equal(reopened.task.assignedWorker, worker);
+    assert.equal(reopened.task.epoch, 1);
+    assert.equal((await ledger.getOperation(request.operationId))?.state, "FAILED");
+    assert.equal((await ledger.getTaskControl(job.terms.jobId, job.task.taskId))?.state, "RUNNING");
+  } finally {
+    ledger.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cancel drain does not reconcile or mutate operations on a running task", async () => {
+  const root = await mkdtemp(join(tmpdir(), "baton-cancel-running-"));
+  const ledger = new OperationLedger(join(root, "ledger.sqlite"));
+  try {
+    const jobs = new JobStore(join(root, "jobs.json"));
+    const job = await jobs.create({
+      buyer: ("0x" + "1".repeat(40)) as `0x${string}`,
+      rewardToken: ("0x" + "2".repeat(40)) as `0x${string}`,
+      verifier: ("0x" + "3".repeat(40)) as `0x${string}`,
+      rewards: [1n],
+      serviceBudget: 5n,
+      serviceAsset: "HBAR",
+      approvedServices: ["batch-data-v1"],
+      perRequestCap: 3n,
+    });
+    await ledger.configureBudget(job.terms.jobId, job.servicePolicy);
+    await jobs.assign(job.terms.jobId, worker);
+
+    let reconciliations = 0;
+    const gateway = new Gateway(jobs, ledger, {
+      async submit() { throw new Error("provider response timed out"); },
+      async reconcile() {
+        reconciliations += 1;
+        return { status: "not-settled" as const };
+      },
+    });
+    const request = {
+      operationId: "cancel-drain-running-task",
+      jobId: job.terms.jobId,
+      taskId: job.task.taskId,
+      worker,
+      epoch: 1,
+      service: "batch-data-v1",
+      inputDigest: digest("cancel-drain-running-input"),
+      amount: 2n,
+      asset: "HBAR",
+    };
+
+    await assert.rejects(gateway.execute(request), /PAYMENT_UNKNOWN/);
+    await assert.rejects(gateway.cancelDrain(job.terms.jobId), /TASK_NOT_DRAINED/);
+    assert.equal(reconciliations, 0);
+    assert.equal((await ledger.getOperation(request.operationId))?.state, "UNKNOWN");
+    assert.equal((await jobs.get(job.terms.jobId))?.task.drained, false);
+  } finally {
+    ledger.close();
     await rm(root, { recursive: true, force: true });
   }
 });

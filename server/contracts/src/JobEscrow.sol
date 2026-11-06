@@ -108,6 +108,7 @@ contract JobEscrow is EIP712, ReentrancyGuard {
     event TaskAssigned(bytes32 indexed jobId, address indexed worker, uint64 epoch);
     event MilestoneAccepted(bytes32 indexed jobId, uint32 indexed milestone, address indexed producer, bytes32 newHead, uint64 sequence, string manifestRef, uint256 reward);
     event TaskTakenOver(bytes32 indexed jobId, address indexed previousWorker, address indexed successor, uint64 epoch);
+    event TaskDrainCancelled(bytes32 indexed jobId);
     event JobPaused(bytes32 indexed jobId);
     event JobResumed(bytes32 indexed jobId);
     event JobClosed(bytes32 indexed jobId, uint256 refund);
@@ -199,6 +200,17 @@ contract JobEscrow is EIP712, ReentrancyGuard {
         Job storage job = _job(jobId);
         if (msg.sender != job.buyer || job.closed) revert Unauthorized();
         job.drained = true;
+    }
+
+    function cancelDrain(bytes32 jobId) external {
+        Job storage job = _job(jobId);
+        if (msg.sender != job.buyer) revert Unauthorized();
+        if (job.closed || job.paused || job.nextMilestone >= milestones[jobId].length || block.timestamp >= job.cutoff) {
+            revert NotOpen();
+        }
+        if (!job.drained) revert NotDrained();
+        job.drained = false;
+        emit TaskDrainCancelled(jobId);
     }
 
     function takeover(bytes32 jobId, TakeoverAck calldata ack, bytes calldata signature) external {

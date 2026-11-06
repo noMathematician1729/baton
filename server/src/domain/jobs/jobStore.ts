@@ -23,6 +23,12 @@ import {
 type StoreFile = { version: 1; jobs: Record<string, JobSnapshot> };
 
 export type JobStorePersist = (filePath: string, contents: string) => Promise<void>;
+export type GatewayReopenProof = {
+  state: "RUNNING";
+  worker: Hex;
+  epoch: number;
+  generation: number;
+};
 
 export type CreateJobInput = {
   chainJobId?: Hex;
@@ -38,7 +44,7 @@ export type CreateJobInput = {
   perRequestCap: bigint;
   paymentProviderId?: string;
   paymentNetwork?: string;
-  paymentPayee?: Hex;
+  paymentPayee?: string;
   cutoff?: number;
 };
 
@@ -161,10 +167,12 @@ export class JobStore {
     return Object.values(this.state?.jobs ?? {}).map((job) => structuredClone(job));
   }
 
-  public async assign(jobId: string, worker: Hex): Promise<JobSnapshot> {
+  public async assign(jobId: string, worker: Hex, confirmedOnChain = false): Promise<JobSnapshot> {
     return this.mutate((state) => {
       const job = requireJob(state, jobId);
-      if (nowSeconds() >= job.terms.cutoff) throw new Error("JOB_DEADLINE_PASSED");
+      if (!confirmedOnChain && nowSeconds() >= job.terms.cutoff) throw new Error("JOB_DEADLINE_PASSED");
+      if (job.task.status === "FUNDED" && job.task.epoch === 1
+        && job.task.assignedWorker?.toLowerCase() === worker.toLowerCase()) return job;
       if (job.task.status !== "FUNDED" || job.task.assignedWorker) throw new Error("TASK_NOT_ASSIGNABLE");
       job.task.assignedWorker = worker;
       job.task.epoch = 1;
@@ -181,12 +189,15 @@ export class JobStore {
     acceptanceSpecHash: Hex;
     expectedHead: Hex;
     newHead: CheckpointHead;
+    confirmedOnChain?: boolean;
   }): Promise<JobSnapshot> {
     return this.mutate((state) => {
       const job = requireJob(state, input.jobId);
       if (job.terms.task.taskId !== input.taskId) throw new Error("TASK_ID_MISMATCH");
       assertWorker(job, input.worker, input.epoch);
-      if (nowSeconds() >= Math.min(job.terms.cutoff, job.terms.task.deadline)) throw new Error("JOB_DEADLINE_PASSED");
+      if (!input.confirmedOnChain && nowSeconds() >= Math.min(job.terms.cutoff, job.terms.task.deadline)) {
+        throw new Error("JOB_DEADLINE_PASSED");
+      }
       if (job.task.drained || job.task.status !== "FUNDED") throw new Error("TASK_NOT_OPEN");
       if (job.task.acceptedHead.manifestDigest !== input.expectedHead) throw new Error("STALE_HEAD");
       const milestone = job.terms.task.milestones[job.task.nextMilestone];
@@ -222,6 +233,55 @@ export class JobStore {
     });
   }
 
+  /** Reconcile one milestone accepted on-chain while the buyer gateway was draining. */
+  public async reconcileConfirmedMilestone(input: {
+    jobId: string;
+    producer: Hex;
+    producerEpoch: number;
+    newHead: CheckpointHead;
+    nextMilestone: number;
+    totalCredited: bigint;
+  }): Promise<JobSnapshot> {
+    return this.mutate((state) => {
+      const job = requireJob(state, input.jobId);
+      if (!job.task.drained || job.task.status !== "DRAINED") throw new Error("TASK_NOT_DRAINED");
+      if (job.task.assignedWorker?.toLowerCase() !== input.producer.toLowerCase()
+        || job.task.epoch !== input.producerEpoch) throw new Error("ONCHAIN_ASSIGNMENT_CHANGED");
+      if (input.nextMilestone !== job.task.nextMilestone + 1) throw new Error("ONCHAIN_ACCEPTED_MILESTONE_GAP");
+      if (!isDigest(input.newHead.manifestDigest) || input.newHead.manifestDigest.toLowerCase() === EMPTY_HEAD
+        || !isDigest(input.newHead.artifactManifestDigest) || !input.newHead.manifestRef.trim()) {
+        throw new Error("CHECKPOINT_BINDING_INVALID");
+      }
+      if (input.newHead.schemaVersion !== CHECKPOINT_SCHEMA_VERSION
+        || input.newHead.sequence !== job.task.acceptedHead.sequence + 1) {
+        throw new Error("CHECKPOINT_SEQUENCE_INVALID");
+      }
+      const expectedParent = job.task.acceptedHead.manifestDigest.toLowerCase() === EMPTY_HEAD
+        ? null
+        : job.task.acceptedHead.manifestDigest.toLowerCase();
+      if ((input.newHead.previousAcceptedHead?.toLowerCase() ?? null) !== expectedParent) {
+        throw new Error("CHECKPOINT_PARENT_MISMATCH");
+      }
+      const milestone = job.terms.task.milestones[job.task.nextMilestone];
+      if (!milestone) throw new Error("NO_MILESTONE_REMAINING");
+      const creditedBefore = job.credits.reduce((total, credit) => total + credit.amount, 0n);
+      if (input.totalCredited !== creditedBefore + milestone.reward) throw new Error("ONCHAIN_ACCOUNTING_MISMATCH");
+
+      job.task.acceptedHead = input.newHead;
+      job.task.nextMilestone = input.nextMilestone;
+      job.credits.push({
+        id: newId("credit"),
+        worker: input.producer,
+        milestoneId: milestone.id,
+        amount: milestone.reward,
+        claimed: false,
+      });
+      if (job.task.nextMilestone === job.terms.task.milestones.length) job.task.status = "COMPLETED";
+      touch(job);
+      return job;
+    });
+  }
+
   public async drain(jobId: string): Promise<JobSnapshot> {
     return this.mutate((state) => {
       const job = requireJob(state, jobId);
@@ -251,8 +311,6 @@ export class JobStore {
       if (input.compatibilityReport === EMPTY_HEAD) throw new Error("COMPATIBILITY_REPORT_REQUIRED");
       job.task.assignedWorker = input.successor;
       job.task.epoch += 1;
-      job.task.drained = false;
-      if (job.task.status === "DRAINED") job.task.status = "FUNDED";
       touch(job);
       return job;
     });
@@ -262,6 +320,7 @@ export class JobStore {
     return this.mutate((state) => {
       const job = requireJob(state, jobId);
       if (job.task.status === "CLOSED") throw new Error("TASK_CLOSED");
+      if (job.task.drained) throw new Error("TASK_DRAINED");
       job.task.status = "PAUSED";
       touch(job);
       return job;
@@ -272,6 +331,29 @@ export class JobStore {
     return this.mutate((state) => {
       const job = requireJob(state, jobId);
       if (job.task.status !== "PAUSED") throw new Error("TASK_NOT_PAUSED");
+      if (job.task.drained) throw new Error("TASK_DRAINED");
+      job.task.status = "FUNDED";
+      touch(job);
+      return job;
+    });
+  }
+
+  /** Reopen only after the durable gateway coordinator confirms the transition. */
+  public async reopen(jobId: string, proof: GatewayReopenProof): Promise<JobSnapshot> {
+    return this.mutate((state) => {
+      const job = requireJob(state, jobId);
+      if (job.task.status === "CLOSED" || job.task.status === "COMPLETED") throw new Error("TASK_NOT_OPEN");
+      if (proof.state !== "RUNNING" || !Number.isSafeInteger(proof.generation) || proof.generation <= 0) {
+        throw new Error("GATEWAY_REOPEN_PROOF_INVALID");
+      }
+      if (!job.task.drained) {
+        if (job.task.assignedWorker?.toLowerCase() === proof.worker.toLowerCase() && job.task.epoch === proof.epoch
+          && job.task.status === "FUNDED") return job;
+        throw new Error("TASK_NOT_DRAINED");
+      }
+      if (job.task.assignedWorker?.toLowerCase() !== proof.worker.toLowerCase()) throw new Error("WORKER_NOT_ASSIGNED");
+      if (job.task.epoch !== proof.epoch) throw new Error("STALE_EPOCH");
+      job.task.drained = false;
       job.task.status = "FUNDED";
       touch(job);
       return job;
@@ -287,6 +369,30 @@ export class JobStore {
       for (const credit of credits) credit.claimed = true;
       touch(job);
       return { amount, credits };
+    });
+  }
+
+  /** Mark rewards claimed only after confirmed escrow accounting matches the local worker credits. */
+  public async reconcileConfirmedClaim(
+    jobId: string,
+    worker: Hex,
+    onChainCredits: bigint,
+    onChainWithdrawnCredits: bigint,
+  ): Promise<{ amount: bigint; credits: RewardCredit[] }> {
+    return this.mutate((state) => {
+      const job = requireJob(state, jobId);
+      const workerCredits = job.credits.filter((credit) => credit.worker.toLowerCase() === worker.toLowerCase());
+      const earned = workerCredits.reduce((total, credit) => total + credit.amount, 0n);
+      const claimed = workerCredits.filter((credit) => credit.claimed).reduce((total, credit) => total + credit.amount, 0n);
+      if (onChainCredits !== earned) throw new Error("ONCHAIN_WORKER_CREDIT_MISMATCH");
+      if (onChainWithdrawnCredits === claimed) return { amount: 0n, credits: [] };
+      if (onChainWithdrawnCredits !== earned) throw new Error("ONCHAIN_WORKER_WITHDRAWAL_MISMATCH");
+
+      const unclaimed = workerCredits.filter((credit) => !credit.claimed);
+      const amount = unclaimed.reduce((total, credit) => total + credit.amount, 0n);
+      for (const credit of unclaimed) credit.claimed = true;
+      touch(job);
+      return { amount, credits: unclaimed };
     });
   }
 

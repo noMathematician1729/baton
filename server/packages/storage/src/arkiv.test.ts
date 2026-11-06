@@ -1,13 +1,55 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import type { Hex } from "viem";
-import { artifactManifestDigest, MAX_PLAINTEXT_CHUNK_BYTES } from "../../checkpoint/src/index.js";
+import { recoverTypedDataAddress, type Address, type Hex } from "viem";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { domain, OFFER_TYPES, type MilestoneOffer } from "../../../src/chain/signing.js";
+import {
+  artifactManifestDigest,
+  encryptedEnvelopeDigest,
+  MAX_PLAINTEXT_CHUNK_BYTES,
+  type CheckpointManifest,
+  type EncryptedEnvelope,
+} from "../../checkpoint/src/index.js";
 import { batchOneCheckpoint } from "../../checkpoint/src/fixtures.js";
 import { ArkivContentStore } from "./arkiv.js";
 import { recoverAcceptedPackage } from "./recovery.js";
 
 const storageOwner = ("0x" + "11".repeat(20)) as `0x${string}`;
+const boundaryKey = "0x" + "66".repeat(32);
+const boundarySigner = privateKeyToAccount(generatePrivateKey());
+
+test("Arkiv content reader can run without the storage-owner signer", async () => {
+  const reader = new ArkivContentStore({ accessKey: "test-read-only", permissionlessExtension: false });
+  await assert.rejects(reader.writeEncrypted({
+    jobId: "job-1",
+    taskId: "task-1",
+    kind: "artifact",
+    contentId: "artifact-1",
+    chunkIndex: 0,
+    payload: new Uint8Array([1]),
+  }), /ARKIV_SIGNER_REQUIRED_FOR_WRITE/);
+});
+
+const boundaryFixture = JSON.parse(readFileSync(
+  new URL("../../../contracts/test/fixtures/checkpoint-boundary.json", import.meta.url),
+  "utf8",
+)) as {
+  chain: {
+    jobId: Hex;
+    taskId: Hex;
+    termsHash: Hex;
+    acceptanceSpecHash: Hex;
+    expectedHead: Hex;
+    newHead: Hex;
+    manifestRef: string;
+    sequence: number;
+  };
+  manifest: CheckpointManifest;
+  envelope: EncryptedEnvelope;
+  artifactManifestDigest: Hex;
+};
 
 function createInMemoryArkivHarness() {
   const store = new ArkivContentStore({
@@ -84,6 +126,51 @@ test("Arkiv artifact chunks encrypt, recover, and reuse unchanged chunks", async
   assert.deepEqual(Buffer.from(await harness.store.readArtifact({ jobId: "job-1", taskId: "task-1", reference: delta, keyHex })), Buffer.from(updated));
 });
 
+test("Arkiv artifact staging rejects data above the documented recovery limit before writing", async () => {
+  const harness = createInMemoryArkivHarness();
+  const { MAX_RECOVERED_ARTIFACT_BYTES } = await import("./arkiv.js");
+  await assert.rejects(harness.store.stageArtifact({
+    jobId: "job-1",
+    taskId: "task-1",
+    artifactId: "too-large",
+    mediaType: "application/octet-stream",
+    plaintext: new Uint8Array(MAX_RECOVERED_ARTIFACT_BYTES + 1),
+    keyHex: boundaryKey,
+  }), /ARTIFACT_SIZE_LIMIT_EXCEEDED/);
+  assert.equal(harness.writes, 0);
+});
+
+test("Arkiv artifact recovery reads at most four encrypted chunks concurrently", async () => {
+  const harness = createInMemoryArkivHarness();
+  const keyHex = "0x" + "33".repeat(32);
+  const plaintext = new Uint8Array(MAX_PLAINTEXT_CHUNK_BYTES * 5).fill(0x7a);
+  const reference = await harness.store.stageArtifact({
+    jobId: "job-1",
+    taskId: "task-1",
+    artifactId: "bounded-read",
+    mediaType: "application/octet-stream",
+    plaintext,
+    keyHex,
+  });
+  const readExact = harness.store.readExact.bind(harness.store);
+  let currentReads = 0;
+  let maximumReads = 0;
+  harness.store.readExact = async (entityKey, expectedDigest) => {
+    currentReads += 1;
+    maximumReads = Math.max(maximumReads, currentReads);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      return await readExact(entityKey, expectedDigest);
+    } finally {
+      currentReads -= 1;
+    }
+  };
+
+  const recovered = await harness.store.readArtifact({ jobId: "job-1", taskId: "task-1", reference, keyHex });
+  assert.equal(Buffer.from(recovered).equals(Buffer.from(plaintext)), true);
+  assert.equal(maximumReads, 4);
+});
+
 test("Arkiv manifest head commits exact serialized envelope and preserves its locator", async () => {
   const harness = createInMemoryArkivHarness();
   const keyHex = "0x" + "44".repeat(32);
@@ -97,6 +184,81 @@ test("Arkiv manifest head commits exact serialized envelope and preserves its lo
   assert.notEqual(staged.manifestDigest, staged.envelope.ciphertextDigest, "outer payload and inner AES-GCM digests are distinct");
   assert.deepEqual(await harness.store.readManifest(staged.manifestRef, staged.manifestDigest, keyHex), batchOneCheckpoint);
   assert.equal(staged.artifactManifestDigest, "0x" + createHash("sha256").update("[]").digest("hex"));
+});
+
+test("shared boundary fixture binds encrypted storage recovery and the signed offer", async () => {
+  const { chain, envelope, manifest } = boundaryFixture;
+  assert.equal(encryptedEnvelopeDigest(envelope).toLowerCase(), chain.newHead.toLowerCase());
+  assert.equal(artifactManifestDigest(manifest).toLowerCase(), boundaryFixture.artifactManifestDigest.toLowerCase());
+
+  const recovered = await recoverAcceptedPackage({
+    store: {
+      async readEnvelope(entityKey, expectedDigest) {
+        assert.equal(entityKey, chain.manifestRef);
+        assert.equal(expectedDigest.toLowerCase(), chain.newHead.toLowerCase());
+        return envelope;
+      },
+      async readArtifact() { throw new Error("NO_ARTIFACTS_EXPECTED"); },
+      async getEntityMetadata() { return { owner: storageOwner, expiresAt: 10_000n }; },
+    },
+    keyGrants: {
+      async resolveGrantedKey(request) {
+        assert.equal(request.jobId, manifest.jobId);
+        assert.equal(request.taskId, manifest.taskId);
+        assert.equal(request.manifestDigest.toLowerCase(), chain.newHead.toLowerCase());
+        assert.equal(request.worker.toLowerCase(), boundarySigner.address.toLowerCase());
+        assert.equal(request.keyId, envelope.keyId);
+        return boundaryKey;
+      },
+    },
+    accepted: {
+      jobId: manifest.jobId,
+      taskId: manifest.taskId,
+      producerEpoch: manifest.epoch,
+      manifestDigest: chain.newHead,
+      manifestRef: chain.manifestRef,
+      sequence: chain.sequence,
+      previousAcceptedHead: manifest.previousAcceptedHead,
+      artifactManifestDigest: boundaryFixture.artifactManifestDigest,
+    },
+    worker: boundarySigner.address,
+    expectedStorageOwner: storageOwner,
+    supportedAdapters: [manifest.adapter],
+    retentionUntilBlock: 9_999n,
+  });
+  assert.deepEqual(recovered.manifest, manifest);
+  assert.equal(recovered.manifestDigest.toLowerCase(), chain.newHead.toLowerCase());
+  assert.equal(recovered.manifestRef, chain.manifestRef);
+
+  const offer: MilestoneOffer = {
+    jobId: chain.jobId,
+    taskId: chain.taskId,
+    termsHash: chain.termsHash,
+    producer: boundarySigner.address,
+    epoch: BigInt(manifest.epoch),
+    milestone: 0,
+    acceptanceSpecHash: chain.acceptanceSpecHash,
+    expectedHead: chain.expectedHead,
+    newHead: chain.newHead,
+    manifestRef: chain.manifestRef,
+    sequence: BigInt(chain.sequence),
+    nonce: 1n,
+    expiry: BigInt(Math.floor(Date.now() / 1000) + 120),
+  };
+  const offerDomain = domain(11_155_111, "0x5555555555555555555555555555555555555555" as Address);
+  const signature = await boundarySigner.signTypedData({
+    domain: offerDomain,
+    types: OFFER_TYPES,
+    primaryType: "MilestoneOffer",
+    message: offer,
+  });
+  assert.equal(await recoverTypedDataAddress({
+    domain: offerDomain,
+    types: OFFER_TYPES,
+    primaryType: "MilestoneOffer",
+    message: offer,
+    signature,
+  }), boundarySigner.address);
 });
 
 test("Arkiv artifact recovery rejects a corrupted encrypted chunk", async () => {
@@ -136,6 +298,8 @@ test("cold recovery fetches only the accepted head and validates scoped key, ada
   });
   const manifest = { ...batchOneCheckpoint, artifacts: [artifact] };
   const staged = await harness.store.stageManifest(manifest, keyHex, "buyer-controlled-key-v1");
+  // Renewal changes the entity's live expiry while the signed manifest preserves its original expiry floor.
+  harness.store.getEntityMetadata = async () => ({ owner: storageOwner, expiresAt: 1_000_001n });
   let grantRequest: unknown;
   const recovered = await recoverAcceptedPackage({
     store: harness.store,
@@ -188,7 +352,7 @@ test("cold recovery fetches only the accepted head and validates scoped key, ada
       worker,
       expectedStorageOwner: storageOwner,
       supportedAdapters: [{ id: "unknown", version: "1", stateSchemaVersion: "1" }],
-      retentionUntilBlock: 1_000_001n,
+      retentionUntilBlock: 1_000_002n,
     }),
     /ARKIV_RETENTION_TOO_SHORT/,
   );

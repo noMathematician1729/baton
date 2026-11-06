@@ -35,7 +35,7 @@ export function parseInitialChainJobSnapshot(value: unknown): JobSnapshot {
     || typeof terms.serviceAsset !== "string" || terms.serviceAsset.length === 0
     || typeof policy.providerId !== "string" || policy.providerId.length === 0
     || typeof policy.network !== "string" || policy.network.length === 0
-    || !isAddress(policy.payee) || typeof policy.policyVersion !== "string" || policy.policyVersion.length === 0
+    || !isPaymentPayee(policy.payee) || typeof policy.policyVersion !== "string" || policy.policyVersion.length === 0
     || typeof policy.perRequestCap !== "bigint" || policy.perRequestCap <= 0n
     || !Array.isArray(policy.approvedServices) || policy.approvedServices.some((service) => typeof service !== "string" || service.length === 0)
     || typeof snapshot.createdAt !== "string" || typeof snapshot.updatedAt !== "string") {
@@ -52,6 +52,10 @@ export function parseInitialChainJobSnapshot(value: unknown): JobSnapshot {
     throw new Error("CHAIN_TERMS_SNAPSHOT_MISMATCH");
   }
   return snapshot;
+}
+
+function isPaymentPayee(value: unknown): value is string {
+  return typeof value === "string" && (isAddress(value) || /^\d+\.\d+\.\d+$/.test(value));
 }
 
 export function rewardPoolFromSnapshot(job: JobSnapshot): bigint {

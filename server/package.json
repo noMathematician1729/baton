@@ -18,6 +18,7 @@
     "test:tools": "tsx --test services/tools/index.test.ts",
     "test:admission": "tsx --test services/admission/index.test.ts",
     "test:authority": "node --import tsx --test src/chain/*.test.ts",
+    "test:gateway": "node --import tsx --test src/services/gateway/*.test.ts",
     "test:ledger": "tsx --test src/services/ledger/*.test.ts",
     "test:api": "tsx --test src/app.integration.test.ts"
   },

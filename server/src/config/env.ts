@@ -13,7 +13,7 @@ export const SERVER_ROOT = serverRoot;
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   SERVER_HOST: z.string().default("127.0.0.1"),
-  SERVER_PORT: z.coerce.number().int().min(1).max(65535).default(4000),
+  SERVER_PORT: z.coerce.number().int().min(1).max(65535).default(Number(process.env.PORT) || 4000),
   CLIENT_ORIGIN: z.string().url().default("http://127.0.0.1:5173"),
   PAYMENT_LEDGER_PATH: z.string().min(1).default("./data/payment-ledger.sqlite"),
   SEPOLIA_RPC_URL: z.string().default(""),

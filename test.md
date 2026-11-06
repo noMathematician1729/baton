@@ -26,12 +26,13 @@ node --import tsx --test \
   server/apps/worker/src/*.test.ts \
   server/services/*/*.test.ts \
   server/src/app.routes.test.ts \
+  server/src/services/gateway/checkpointCandidateVerifier.test.ts \
   server/src/domain/jobs/*.test.ts \
   server/src/chain/*.test.ts \
   server/src/services/*/*.test.ts
 ```
 
-The current G0–G4 candidate passed this command with 42 tests. That includes buyer-signed/idempotent chain-job import, production import gating, unsigned action rejection, signed-action verifier cases for replay/expiry/binding failures, mocked authority-reader checks for confirmed-block consistency/reorg/grant/chain ID, offline recovery and key-grant-client fakes, policy-bound operation fingerprints, cross-store job/budget crash recovery, output-state recovery after a SQLite write failure, and checkpoint deadline/parent checks. Route checks exercise Express middleware and dispatch in-process; they do not exercise a TCP listener, the Arkiv network, provider, or Sepolia.
+The current G0–G4 candidate passed this command with 45 tests. That includes buyer-signed/idempotent chain-job import, production import gating, unsigned action rejection, exact encrypted candidate manifest/owner/adapter/parent checks with fake storage, signed-action verifier cases for replay/expiry/binding failures, mocked authority-reader checks for confirmed-block consistency/reorg/grant/chain ID, offline recovery and key-grant-client fakes, policy-bound operation fingerprints, cross-store job/budget crash recovery, output-state recovery after a SQLite write failure, and checkpoint deadline/parent checks. Route checks exercise Express middleware and dispatch in-process; they do not exercise a TCP listener, Arkiv network, provider, or Sepolia.
 
 ## Gateway authority and payment recovery
 

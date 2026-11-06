@@ -2,6 +2,7 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import { isAbsolute, resolve } from "node:path";
+import { privateKeyToAccount } from "viem/accounts";
 import { env, SERVER_ROOT } from "./config/env.js";
 import { JobStore } from "./domain/jobs/jobStore.js";
 import { OperationLedger } from "./services/ledger/operationLedger.js";
@@ -10,6 +11,8 @@ import { SepoliaAuthorityReader } from "./chain/sepoliaAuthority.js";
 import { authorizeSignedGatewayAction } from "./chain/gatewayActionAuth.js";
 import { serialise, type CheckpointHead, type Hex, type JobSnapshot } from "./protocol/v1.js";
 import { importInitialChainJob } from "./chain/chainJobImporter.js";
+import { ArkivContentStore } from "../packages/storage/src/arkiv.js";
+import { ArkivCheckpointCandidateVerifier, SUPPORTED_CHECKPOINT_ADAPTERS } from "./services/gateway/checkpointCandidateVerifier.js";
 
 export function createServices() {
   const dataDirectory = isAbsolute(env.BATON_DATA_DIR)
@@ -33,7 +36,13 @@ export function createServices() {
       confirmationBlocks: env.CONFIRMATION_BLOCKS,
     })
     : undefined;
-  const gateway = new Gateway(jobs, ledger, new LocalPaymentProvider(), authority);
+  const checkpointVerifier = useChainAuthority
+    && env.ARKIV_ACCESS_KEY
+    && env.ARKIV_SIGNER_PRIVATE_KEY
+    && env.CHECKPOINT_ENCRYPTION_KEY
+    ? createCheckpointCandidateVerifier()
+    : undefined;
+  const gateway = new Gateway(jobs, ledger, new LocalPaymentProvider(), authority, checkpointVerifier);
   return { jobs, ledger, gateway };
 }
 
@@ -359,6 +368,30 @@ export async function recoverPendingJobProvisions(jobs: JobStore, ledger: Operat
   await jobs.init();
   await ledger.init();
   await finishPendingJobProvisions(jobs, ledger);
+}
+
+function createCheckpointCandidateVerifier(): ArkivCheckpointCandidateVerifier {
+  const signerKey = privateKeyValue(env.ARKIV_SIGNER_PRIVATE_KEY);
+  const store = new ArkivContentStore({
+    accessKey: env.ARKIV_ACCESS_KEY,
+    signerPrivateKey: signerKey,
+    rpcUrl: env.ARKIV_RPC_URL || undefined,
+    permissionlessExtension: false,
+  });
+  const signerAddress = privateKeyToAccount(signerKey).address;
+  return new ArkivCheckpointCandidateVerifier({
+    store,
+    checkpointKey: env.CHECKPOINT_ENCRYPTION_KEY,
+    keyId: env.CHECKPOINT_KEY_ID,
+    expectedStorageOwner: signerAddress,
+    supportedAdapters: SUPPORTED_CHECKPOINT_ADAPTERS,
+  });
+}
+
+function privateKeyValue(value: string): Hex {
+  const normalized = value.startsWith("0x") ? value : `0x${value}`;
+  if (!/^0x[\da-f]{64}$/i.test(normalized)) throw new Error("ARKIV_SIGNER_PRIVATE_KEY_INVALID");
+  return normalized as Hex;
 }
 
 async function finishPendingJobProvisions(jobs: JobStore, ledger: OperationLedger): Promise<void> {

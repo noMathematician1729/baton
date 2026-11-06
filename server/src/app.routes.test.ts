@@ -7,12 +7,13 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { test } from "node:test";
 import type { Express } from "express";
+import { encodeFunctionData, keccak256, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { gatewayActionDomain, gatewayActionMessage, GATEWAY_ACTION_TYPES } from "./chain/gatewayAction.js";
 import { parseInitialChainJobSnapshot } from "./chain/chainJobImport.js";
 import { OFFER_TYPES } from "./chain/signing.js";
 import type { JobAuthorityReader, SepoliaAuthorityReader } from "./chain/sepoliaAuthority.js";
-import type { SepoliaTakeoverWriter } from "./chain/sepoliaTakeoverWriter.js";
+import type { EscrowMutationWriter } from "./chain/sepoliaEscrowWriter.js";
 import { JobStore } from "./domain/jobs/jobStore.js";
 import { digest, serialise, type Hex, type JobSnapshot } from "./protocol/v1.js";
 import { Gateway, LocalPaymentProvider, type PaymentResult } from "./services/gateway/gateway.js";
@@ -370,7 +371,29 @@ test("signed chain-mode route dispatch covers assignment through payment reconci
     });
     assert.equal((await dispatch(fixture.app, "POST", `/api/jobs/${snapshot.terms.jobId}/resume`, resumeBody)).statusCode, 200);
 
-    const claimBody = { worker: worker.address, transactionHash: digest("fake-claim-tx") };
+    const signedTransaction = await worker.signTransaction({
+      chainId: 11155111,
+      nonce: 0,
+      to: escrow,
+      value: 0n,
+      gas: 100_000n,
+      maxFeePerGas: 10n,
+      maxPriorityFeePerGas: 1n,
+      data: encodeFunctionData({
+        abi: parseAbi(["function claim(bytes32 jobId)"]),
+        functionName: "claim",
+        args: [snapshot.chainJobId!],
+      }),
+    });
+    const claimFields = { worker: worker.address.toLowerCase(), transactionHash: keccak256(signedTransaction) };
+    const claimBody = await signedActionBody({
+      job: successorJob,
+      signer: worker,
+      action: "CLAIM_REWARD",
+      epoch: successorJob.task.epoch,
+      payload: claimFields,
+      body: { worker: worker.address, epoch: successorJob.task.epoch, signedTransaction },
+    });
     const claimed = await dispatch(fixture.app, "POST", `/api/jobs/${snapshot.terms.jobId}/claim`, claimBody);
     assert.equal(claimed.statusCode, 200);
     assert.equal(claimed.body.amount, "3n");
@@ -635,7 +658,7 @@ test("chain-mode claim route requires a confirmed transaction before changing lo
       epoch: 1,
     });
     assert.equal(response.statusCode, 409);
-    assert.equal(response.body.error, "INVALID_TRANSACTION_HASH");
+    assert.equal(response.body.error, "INVALID_SIGNED_TRANSACTION");
     assert.equal((await fixture.jobs.get(snapshot.terms.jobId))?.credits.length, 0);
   } finally {
     fixture.ledger.close();
@@ -690,14 +713,16 @@ async function createFixture(options: { localPaymentProvider?: boolean } = {}) {
     assertCanCancelDrain: async () => chainDrained,
     assertDrainCancelled: async () => { chainDrained = false; },
   } as unknown as JobAuthorityReader & SepoliaAuthorityReader;
-  const takeoverWriter = {
-    async assignTask() { return digest("assign-tx"); },
-    async acceptMilestone() { return digest("milestone-tx"); },
-    async pause() { chainPaused = true; return digest("pause-tx"); },
-    async resume() { chainPaused = false; return digest("resume-tx"); },
-    async drainTask() { chainDrained = true; return digest("drain-tx"); },
-    async cancelDrain() { chainDrained = false; return digest("cancel-drain-tx"); },
-  } as unknown as SepoliaTakeoverWriter;
+  const mutationWriter: EscrowMutationWriter = {
+    async assign() {},
+    async acceptMilestone() {},
+    async drain() { chainDrained = true; },
+    async cancelDrain() { chainDrained = false; },
+    async takeover() { return undefined; },
+    async pause() { chainPaused = true; },
+    async resume() { chainPaused = false; },
+    async claim() { return undefined; },
+  };
   let providerSubmissionCount = 0;
   const localProvider = new LocalPaymentProvider();
   const paidOutput = Buffer.from("fake-paid-output");
@@ -723,8 +748,13 @@ async function createFixture(options: { localPaymentProvider?: boolean } = {}) {
   };
   const gateway = new Gateway(jobs, ledger, provider, authority, {
     verifyCandidate: async () => undefined,
-  }, takeoverWriter);
-  const app = createApp({ jobs, ledger, gateway, authority, takeoverWriter });
+  }, {
+    assignTask: (job, assignedWorker) => mutationWriter.assign(job, assignedWorker),
+    acceptMilestone: (job, offer, signature) => mutationWriter.acceptMilestone(job, offer, signature),
+    pause: (job) => mutationWriter.pause(job),
+    resume: (job) => mutationWriter.resume(job),
+  });
+  const app = createApp({ jobs, ledger, gateway, authority, mutationWriter });
   return {
     root,
     jobs,

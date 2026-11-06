@@ -2,13 +2,14 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import { isAbsolute, resolve } from "node:path";
+import { keccak256 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { env, SERVER_ROOT } from "./config/env.js";
 import { JobStore } from "./domain/jobs/jobStore.js";
 import { OperationLedger } from "./services/ledger/operationLedger.js";
 import { Gateway, LocalPaymentProvider, MAX_PROVIDER_INPUT_BYTES, type PaymentProvider } from "./services/gateway/gateway.js";
 import { SepoliaAuthorityReader } from "./chain/sepoliaAuthority.js";
-import { SepoliaTakeoverWriter } from "./chain/sepoliaTakeoverWriter.js";
+import { SepoliaEscrowWriter, type EscrowMutationWriter } from "./chain/sepoliaEscrowWriter.js";
 import type { MilestoneOffer, TakeoverAck } from "./chain/signing.js";
 import { authorizeSignedGatewayAction } from "./chain/gatewayActionAuth.js";
 import { serialise, type CheckpointHead, type Hex, type JobSnapshot } from "./protocol/v1.js";
@@ -27,7 +28,7 @@ export type AppServices = {
   ledger: OperationLedger;
   gateway: Gateway;
   ready?: Promise<void>;
-  takeoverWriter?: SepoliaTakeoverWriter;
+  mutationWriter?: EscrowMutationWriter;
   takeoverPolicy?: BuyerTakeoverPolicy;
   retentionMonitor?: ArkivRetentionMonitor;
   authority?: SepoliaAuthorityReader;
@@ -62,24 +63,30 @@ export function createServices() {
     && env.CHECKPOINT_ENCRYPTION_KEY
     ? createCheckpointCandidateVerifier()
     : undefined;
-  const takeoverWriter = authority && env.SEPOLIA_DEPLOYER_PRIVATE_KEY
-    ? new SepoliaTakeoverWriter({
+  const mutationWriter = authority && env.SEPOLIA_DEPLOYER_PRIVATE_KEY
+    ? new SepoliaEscrowWriter({
       rpcUrl: env.SEPOLIA_RPC_URL,
       escrowAddress: env.BATON_ESCROW_ADDRESS,
       buyerPrivateKey: privateKeyValue(env.SEPOLIA_DEPLOYER_PRIVATE_KEY, "BUYER_TAKEOVER_SIGNER_INVALID"),
       confirmationBlocks: env.CONFIRMATION_BLOCKS,
     })
     : undefined;
-  const gateway = new Gateway(jobs, ledger, createPaymentProvider(), authority, checkpointVerifier, takeoverWriter);
+  const lifecycleWriter = mutationWriter ? {
+    assignTask: (job: JobSnapshot, worker: Hex) => mutationWriter.assign(job, worker),
+    acceptMilestone: (job: JobSnapshot, offer: MilestoneOffer, signature: Hex) => mutationWriter.acceptMilestone(job, offer, signature),
+    pause: (job: JobSnapshot) => mutationWriter.pause(job),
+    resume: (job: JobSnapshot) => mutationWriter.resume(job),
+  } : undefined;
+  const gateway = new Gateway(jobs, ledger, createPaymentProvider(), authority, checkpointVerifier, lifecycleWriter);
   if (env.TAKEOVER_POLICY_ENABLED && !authority) throw new Error("TAKEOVER_POLICY_REQUIRES_CHAIN_AUTHORITY");
-  if (env.TAKEOVER_POLICY_ENABLED && !takeoverWriter) throw new Error("BUYER_TAKEOVER_SIGNER_REQUIRED");
+  if (env.TAKEOVER_POLICY_ENABLED && !mutationWriter) throw new Error("BUYER_TAKEOVER_SIGNER_REQUIRED");
   const takeoverPolicy = env.TAKEOVER_POLICY_ENABLED
     ? new BuyerTakeoverPolicy({
       jobs,
       ledger,
       gateway,
       authority: authority!,
-      writer: takeoverWriter!,
+      writer: mutationWriter!,
       workerA: configuredAddress(env.WORKER_A_ADDRESS, "WORKER_A_ADDRESS_REQUIRED"),
       successor: configuredAddress(env.WORKER_B_ADDRESS, "WORKER_B_ADDRESS_REQUIRED"),
       escrowAddress: env.BATON_ESCROW_ADDRESS,
@@ -99,12 +106,12 @@ export function createServices() {
     })
     : undefined;
   const ready = recoverPendingJobProvisions(jobs, ledger);
-  return { jobs, ledger, gateway, authority, takeoverWriter, takeoverPolicy, retentionMonitor, ready };
+  return { jobs, ledger, gateway, authority, mutationWriter, takeoverPolicy, retentionMonitor, ready };
 }
 
 export function createApp(services: AppServices = createServices()) {
   const app = express();
-  const { jobs, ledger, gateway, takeoverPolicy, takeoverWriter, retentionMonitor, authority } = services;
+  const { jobs, ledger, gateway, takeoverPolicy, mutationWriter, retentionMonitor, authority } = services;
   const ready = services.ready ?? recoverPendingJobProvisions(jobs, ledger);
   if (takeoverPolicy) void ready.then(() => takeoverPolicy.start(), (error) => {
     console.error(`[takeover-policy] startup blocked (${error instanceof Error ? error.message : "UNKNOWN_ERROR"})`);
@@ -137,6 +144,7 @@ export function createApp(services: AppServices = createServices()) {
       configuration: {
         arkiv: arkivConfigured,
         sepolia: Boolean(env.SEPOLIA_RPC_URL && env.BATON_ESCROW_ADDRESS && env.BATON_AUTHORITY_ADAPTER_ADDRESS),
+        sepoliaMutations: Boolean(mutationWriter),
         ens: Boolean(env.ENS_JOB_NAME && env.ENS_RESOLVER_ADDRESS),
         hederaX402: !gateway.usesLocalPaymentProvider,
       },
@@ -174,10 +182,10 @@ export function createApp(services: AppServices = createServices()) {
     if (env.NODE_ENV !== "production") return next();
     if (gateway.requiresChainAuthority && request.method === "POST" && request.path === "/import") return next();
     if (gateway.requiresChainAuthority && request.method === "GET" && /^\/[^/]+$/.test(request.path)) return next();
-    if (gateway.requiresChainAuthority && takeoverWriter && request.method === "POST"
+    if (gateway.requiresChainAuthority && mutationWriter && request.method === "POST"
       && /^\/[^/]+\/(assign|checkpoints|pause|resume)$/.test(request.path)) return next();
-    if (gateway.requiresChainAuthority && request.method === "POST" && /^\/[^/]+\/claim$/.test(request.path)) return next();
-    if (gateway.requiresChainAuthority && env.TAKEOVER_POLICY_ENABLED && request.method === "POST"
+    if (gateway.requiresChainAuthority && mutationWriter && request.method === "POST" && /^\/[^/]+\/claim$/.test(request.path)) return next();
+    if (gateway.requiresChainAuthority && mutationWriter && env.TAKEOVER_POLICY_ENABLED && request.method === "POST"
       && /^\/[^/]+\/(heartbeat|takeover-ack|drain|cancel-drain)$/.test(request.path)) return next();
     if (gateway.requiresChainAuthority && request.method === "POST"
       && /^\/[^/]+\/services\/(execute|operations\/list|operations\/[^/]+\/output)$/.test(request.path)) return next();
@@ -369,14 +377,14 @@ export function createApp(services: AppServices = createServices()) {
     await authorizeGatewayAction({ gateway, ledger, body: request.body ?? {}, job, actor: job.terms.buyer, epoch: job.task.epoch, action: "DRAIN_TASK", payload: {} });
     const drained = await gateway.drain(request.params.jobId);
     if (gateway.requiresChainAuthority) {
-      if (!takeoverWriter || !authority || !job.task.assignedWorker) throw new Error("BUYER_TAKEOVER_SIGNER_REQUIRED");
+      if (!mutationWriter || !authority || !job.task.assignedWorker) throw new Error("BUYER_TAKEOVER_SIGNER_REQUIRED");
       const state = await authority.readTakeoverState(drained, job.task.assignedWorker);
       if (state.acceptedHead.toLowerCase() !== drained.task.acceptedHead.manifestDigest.toLowerCase()
         || state.acceptedSequence !== drained.task.acceptedHead.sequence
         || state.acceptedManifestRef !== drained.task.acceptedHead.manifestRef
         || state.assignedWorker.toLowerCase() !== job.task.assignedWorker.toLowerCase()
         || state.epoch !== job.task.epoch) throw new Error("ONCHAIN_TASK_STATE_MISMATCH");
-      if (!state.drained) await takeoverWriter.drainTask(drained);
+      if (!state.drained) await mutationWriter.drain(drained);
       await authority.assertTaskDrained(drained, job.task.assignedWorker);
     }
     response.json(serialise(drained));
@@ -438,11 +446,11 @@ export function createApp(services: AppServices = createServices()) {
     await authorizeGatewayAction({ gateway, ledger, body: request.body ?? {}, job, actor: job.terms.buyer, epoch: job.task.epoch, action: "PAUSE_JOB", payload: {} });
     response.json(serialise(await gateway.pause(request.params.jobId, gateway.requiresChainAuthority
       ? async (currentJob) => {
-        if (!authority || !takeoverWriter || !currentJob.task.assignedWorker || !authority.assertPauseAllowed || !authority.assertTaskPaused) {
+        if (!authority || !mutationWriter || !currentJob.task.assignedWorker || !authority.assertPauseAllowed || !authority.assertTaskPaused) {
           throw new Error("ESCROW_LIFECYCLE_WRITER_UNAVAILABLE");
         }
         const alreadyPaused = await authority.assertPauseAllowed(currentJob, currentJob.task.assignedWorker);
-        if (!alreadyPaused) await takeoverWriter.pause(currentJob);
+        if (!alreadyPaused) await mutationWriter.pause(currentJob);
         await authority.assertTaskPaused(currentJob, currentJob.task.assignedWorker);
       }
       : undefined)));
@@ -454,11 +462,11 @@ export function createApp(services: AppServices = createServices()) {
     await authorizeGatewayAction({ gateway, ledger, body: request.body ?? {}, job, actor: job.terms.buyer, epoch: job.task.epoch, action: "RESUME_JOB", payload: {} });
     if (gateway.requiresChainAuthority) {
       const worker = job.task.assignedWorker;
-      if (!authority || !takeoverWriter || !worker || !authority.assertResumeAllowed || !authority.assertTaskResumed) {
+      if (!authority || !mutationWriter || !worker || !authority.assertResumeAllowed || !authority.assertTaskResumed) {
         throw new Error("ESCROW_LIFECYCLE_WRITER_UNAVAILABLE");
       }
       const chainPaused = await authority.assertResumeAllowed(job, worker);
-      if (chainPaused) await takeoverWriter.resume(job);
+      if (chainPaused) await mutationWriter.resume(job);
       await authority.assertTaskResumed(job, worker);
     }
     response.json(serialise(await gateway.resume(request.params.jobId)));
@@ -479,12 +487,12 @@ export function createApp(services: AppServices = createServices()) {
     });
     response.json(serialise(await gateway.cancelDrain(request.params.jobId, gateway.requiresChainAuthority
       ? async (currentJob) => {
-        if (!authority || !takeoverWriter || !currentJob.task.assignedWorker) {
+        if (!authority || !mutationWriter || !currentJob.task.assignedWorker) {
           throw new Error("BUYER_TAKEOVER_SIGNER_REQUIRED");
         }
         const chainDrained = await authority.assertCanCancelDrain(currentJob, currentJob.task.assignedWorker);
         if (chainDrained) {
-          await takeoverWriter.cancelDrain(currentJob);
+          await mutationWriter.cancelDrain(currentJob);
           await authority.assertDrainCancelled(currentJob, currentJob.task.assignedWorker);
         }
       }
@@ -497,8 +505,12 @@ export function createApp(services: AppServices = createServices()) {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const worker = requiredAddress(body.worker, "WORKER");
     if (gateway.requiresChainAuthority) {
-      if (!authority?.confirmWorkerClaim) throw new Error("CLAIM_CONFIRMATION_UNAVAILABLE");
-      const transactionHash = digestValue(body.transactionHash, "TRANSACTION_HASH");
+      if (!authority?.confirmWorkerClaim || !mutationWriter) throw new Error("CLAIM_CONFIRMATION_UNAVAILABLE");
+      const signedTransaction = transactionValue(body.signedTransaction);
+      const transactionHash = keccak256(signedTransaction);
+      const epoch = body.epoch === undefined ? job.task.epoch : epochValue(body.epoch);
+      await authorizeGatewayAction({ gateway, ledger, body, job, actor: worker, epoch, action: "CLAIM_REWARD", payload: { worker, transactionHash } });
+      await mutationWriter.claim(job, worker, signedTransaction);
       const accounting = await authority.confirmWorkerClaim(job, worker, transactionHash);
       response.json(serialise(await jobs.reconcileConfirmedClaim(
         request.params.jobId,
@@ -839,6 +851,11 @@ function digestValue(value: unknown, label: string): Hex {
 
 function signatureValue(value: unknown, label: string): Hex {
   if (typeof value !== "string" || !/^0x[\da-f]{130}$/i.test(value)) throw new Error(`INVALID_${label}`);
+  return value as Hex;
+}
+
+function transactionValue(value: unknown): Hex {
+  if (typeof value !== "string" || !/^0x(?:[\da-f]{2})+$/i.test(value)) throw new Error("INVALID_SIGNED_TRANSACTION");
   return value as Hex;
 }
 

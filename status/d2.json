@@ -3,9 +3,9 @@
   "executionRole": "D2",
   "branch": "build/audit-g0-g4",
   "startedAt": "2026-11-05T22:17:32+05:30",
-  "updatedAt": "2026-11-06T15:38:36+05:30",
-  "elapsedHours": 17.35,
-  "currentTask": "Escrow-independent G0-G5 work is locally verified: 96/96 automated tests, production builds, Solidity compile, signing vector and local acceptance. After SQLite restart B reuses the settled operation, retrieves the original 30 bytes and verifies its digest with one simulated submission; signed API retrieval rejects unsigned B and stale A. The worker:paid-output:b CLI composes signed discovery/reuse/retrieval and streams output to a task consumer. API, client and key service are healthy. Live provider/Arkiv settings and V2 escrow remain unconfigured; no live transaction, Arkiv write or payment was sent.",
+  "updatedAt": "2026-11-06T15:53:17+05:30",
+  "elapsedHours": 17.6,
+  "currentTask": "Upstream D1 escrow-mutation and x402-policy work is integrated locally with the D2 recovery/payment-output work. Worker B's suffixed environment mapping is covered and excludes buyer/A signers. `npm run verify` passes 117 tests, client/server builds, Solidity compile, signing vector and local acceptance; Foundry passes 17/17. No new live V2 transaction, Arkiv write or x402 payment was sent; live V2 and external integration remain pending.",
   "completedFeatures": [
     "React and Node TypeScript workspaces pass typecheck and production build",
     "Checkpoint manifest schema and AES-256-GCM manifest/chunk encryption",
@@ -40,7 +40,10 @@
     "Worker B clean-recovery CLI uses filtered B-only environment values and read-only Arkiv access; runtime import and exact-head acknowledgement ordering pass 5/5 worker tests",
     "G4 local provider boundary, encrypted Arkiv output pointer/readback, settlement amount and reconciliation tests pass 11/11; ledger passes 10/10 and gateway passes 8/8",
     "API, client and buyer-host key service return HTTP 200 on loopback; prepared V2 lifecycle plan remains in .baton-data/prepared-sepolia-v2-test-job.json",
-    "Worker B signs operation discovery, reuse and paid-output retrieval; local worker and API route tests verify response bindings, output SHA-256 and no second provider submission"
+    "Worker B signs operation discovery, reuse and paid-output retrieval; local worker and API route tests verify response bindings, output SHA-256 and no second provider submission",
+    "Integrated confirmed Sepolia escrow writer for buyer lifecycle mutations and buyer-side takeover policy; worker claims relay only after signed raw transaction chain/escrow/calldata/value/sender validation",
+    "Worker B environment loader maps suffixed Arkiv credentials while filtering buyer and Worker A private signers; unit regression passes",
+    "Merged working tree: npm run verify passes 117 automated tests, client/server typecheck and production builds, Solidity compile, signing vector and local acceptance; Foundry passes 17/17 · 2026-11-06T10:23Z"
   ],
   "nextGate": "Complete live configuration and evidence after the paid-service endpoints, buyer-owned Arkiv signer/RPC, B MCP endpoint/credential, accepted checkpoint and reviewed V2 escrow are available. The local provider client, signed B output retrieval, and full verification are complete.",
   "blockers": [
@@ -86,7 +89,7 @@
     "server/services/admission/",
     "server/services/provider/hederaX402.ts",
     "client/src/app/App.tsx",
-    "Branch reconciliation \u00b7 active build/audit-g0-g4 is 11 commits ahead and 0 behind origin/build/authority-payments; separate local build/authority-payments is 2 ahead/6 behind its origin with local README/status edits; no merge or push",
+    "Branch reconciliation before upstream merge \u00b7 local build/audit-g0-g4 was 1 commit ahead and 4 behind origin/build/audit-g0-g4; separate build/authority-payments worktree was left untouched",
     "npm run verify · base SHA 2e13b07 plus dirty working tree · 96/96 tests, client/server typecheck and builds, Solidity compile, signing vector and local acceptance passed · 2026-11-06T10:07:26Z–10:07:42Z",
     "Worker B paid-output CLI · signed paginated discovery, reuse authorization, bounded byte retrieval and digest verification; 11/11 worker tests pass · 2026-11-06",
     "forge test --root server/contracts --offline · 17/17 passed · 2026-11-06T09:57Z",
@@ -95,6 +98,7 @@
     "Focused accepted-head/takeover/API route regressions \u00b7 14/14 passed \u00b7 2026-11-06",
     "API job-provisioning restart integration \u00b7 1/1 passed \u00b7 2026-11-06",
     "Read-only Sepolia snapshot \u00b7 block 12075152, chain 11155111, escrow bytecode present, V2 protocol call unavailable; adapter/resolver code present \u00b7 no writes",
-    "V2 test-job preparation \u00b7 .baton-data/prepared-sepolia-v2-test-job.json \u00b7 3/3/4 token milestones, A-to-B accepted-checkpoint takeover, stale-A rejection, close and 3/7 token claims \u00b7 no job submitted"
+    "V2 test-job preparation \u00b7 .baton-data/prepared-sepolia-v2-test-job.json \u00b7 3/3/4 token milestones, A-to-B accepted-checkpoint takeover, stale-A rejection, close and 3/7 token claims \u00b7 no job submitted",
+    "Merge verification \u00b7 npm run verify: 117/117 automated tests, client/server typecheck/build, Solidity compile, signing vector, local acceptance; forge test: 17/17 \u00b7 no live transaction or payment"
   ]
 }

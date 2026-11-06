@@ -5,10 +5,49 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { digest } from "../../protocol/v1.js";
 import { JobStore } from "../../domain/jobs/jobStore.js";
-import { Gateway, type PaymentResult } from "./gateway.js";
+import { Gateway, LocalPaymentProvider, type PaymentResult } from "./gateway.js";
 import { OperationLedger } from "../ledger/operationLedger.js";
 
 const worker = ("0x" + "a".repeat(40)) as `0x${string}`;
+
+test("assignment is not recorded locally until confirmed chain state matches", async () => {
+  const root = await mkdtemp(join(tmpdir(), "baton-chain-assignment-postcheck-"));
+  const jobs = new JobStore(join(root, "jobs.json"));
+  const ledger = new OperationLedger(join(root, "ledger.sqlite"));
+  try {
+    const job = await jobs.create({
+      chainJobId: digest("chain-job"),
+      chainTaskId: digest("chain-task"),
+      buyer: ("0x" + "1".repeat(40)) as `0x${string}`,
+      rewardToken: ("0x" + "2".repeat(40)) as `0x${string}`,
+      verifier: ("0x" + "3".repeat(40)) as `0x${string}`,
+      rewards: [1n],
+      serviceBudget: 0n,
+      serviceAsset: "HBAR",
+      approvedServices: [],
+      perRequestCap: 1n,
+    });
+    let writes = 0;
+    const gateway = new Gateway(jobs, ledger, new LocalPaymentProvider(), {
+      async assertCurrentWorker() {},
+      async assertAssignedWorker() {},
+      async assertAssignmentTransition() { return false; },
+      async assertAssignmentConfirmed() { throw new Error("ONCHAIN_ASSIGNMENT_NOT_CONFIRMED"); },
+    }, undefined, {
+      async assignTask() { writes += 1; },
+      async acceptMilestone() {},
+      async pause() {},
+      async resume() {},
+    });
+
+    await assert.rejects(gateway.assign(job.terms.jobId, worker), /ONCHAIN_ASSIGNMENT_NOT_CONFIRMED/);
+    assert.equal(writes, 1, "the simulated assignment write must be confirmed before local state advances");
+    assert.equal((await jobs.get(job.terms.jobId))?.task.assignedWorker, null);
+  } finally {
+    ledger.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("gateway rejects input bytes that do not match the immutable operation digest before reserving", async () => {
   const root = await mkdtemp(join(tmpdir(), "baton-input-digest-"));

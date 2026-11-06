@@ -60,10 +60,10 @@ export interface CheckpointAcceptanceVerifier {
 }
 
 export interface EscrowLifecycleWriter {
-  assignTask(job: JobSnapshot, worker: Hex): Promise<Hex>;
-  acceptMilestone(job: JobSnapshot, offer: MilestoneOffer, signature: Hex): Promise<Hex>;
-  pause(job: JobSnapshot): Promise<Hex>;
-  resume(job: JobSnapshot): Promise<Hex>;
+  assignTask(job: JobSnapshot, worker: Hex): Promise<unknown>;
+  acceptMilestone(job: JobSnapshot, offer: MilestoneOffer, signature: Hex): Promise<unknown>;
+  pause(job: JobSnapshot): Promise<unknown>;
+  resume(job: JobSnapshot): Promise<unknown>;
 }
 
 export class LocalPaymentProvider implements PaymentProvider {

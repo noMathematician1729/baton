@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { privateKeyToAccount } from "viem/accounts";
 import type { SepoliaAuthorityReader } from "../../chain/sepoliaAuthority.js";
 import { domain, TAKEOVER_TYPES, type TakeoverAck } from "../../chain/signing.js";
-import type { SepoliaTakeoverWriter } from "../../chain/sepoliaTakeoverWriter.js";
+import type { EscrowMutationWriter } from "../../chain/sepoliaEscrowWriter.js";
 import { JobStore } from "../../domain/jobs/jobStore.js";
 import { digest, type Hex, type JobSnapshot } from "../../protocol/v1.js";
 import { Gateway, LocalPaymentProvider } from "../gateway/gateway.js";
@@ -162,7 +162,7 @@ async function createFixture(options: { failTakeoverOnce?: boolean } = {}) {
   const writer = {
     get drainCalls() { return drainCalls; },
     get takeoverCalls() { return takeoverCalls; },
-    async drainTask() {
+    async drain() {
       drainCalls += 1;
       chain.drained = true;
       return digest("drain-tx");
@@ -236,7 +236,7 @@ function makePolicy(fixture: Awaited<ReturnType<typeof createFixture>> & {
     ledger: fixture.ledger,
     gateway: fixture.gateway,
     authority,
-    writer: fixture.writer as unknown as SepoliaTakeoverWriter,
+    writer: fixture.writer as unknown as Pick<EscrowMutationWriter, "drain" | "takeover">,
     workerA: workerA.address as Hex,
     successor: workerB.address as Hex,
     escrowAddress: escrow,

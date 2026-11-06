@@ -2,7 +2,7 @@ import { getAddress, recoverTypedDataAddress, type Hex } from "viem";
 import type { JobStore } from "../../domain/jobs/jobStore.js";
 import { domain, TAKEOVER_TYPES, type TakeoverAck } from "../../chain/signing.js";
 import type { SepoliaAuthorityReader } from "../../chain/sepoliaAuthority.js";
-import { SepoliaTakeoverWriter } from "../../chain/sepoliaTakeoverWriter.js";
+import type { EscrowMutationWriter } from "../../chain/sepoliaEscrowWriter.js";
 import { digest, type JobSnapshot } from "../../protocol/v1.js";
 import { Gateway } from "../gateway/gateway.js";
 import { OperationLedger, type StoredTakeoverAcknowledgement } from "../ledger/operationLedger.js";
@@ -18,7 +18,7 @@ export class BuyerTakeoverPolicy {
     ledger: OperationLedger;
     gateway: Gateway;
     authority: SepoliaAuthorityReader;
-    writer: SepoliaTakeoverWriter;
+    writer: Pick<EscrowMutationWriter, "drain" | "takeover">;
     workerA: Hex;
     successor: Hex;
     escrowAddress: string;
@@ -107,7 +107,7 @@ export class BuyerTakeoverPolicy {
 
     if (state.assignedWorker.toLowerCase() === currentWorker.toLowerCase() && state.epoch === oldEpoch) {
       if (!state.drained) {
-        await this.input.writer.drainTask(job);
+        await this.input.writer.drain(job);
         state = await this.input.authority.readTakeoverState(job, this.input.successor);
       }
       if (state.assignedWorker.toLowerCase() !== currentWorker.toLowerCase() || state.epoch !== oldEpoch || !state.drained) {

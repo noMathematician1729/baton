@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { Baton } from "../../components/Baton";
+import { SignalField } from "../../components/SignalField";
 
 export const HANDS_SRC = "/fresco/hands-cutout.webp";
 const GAP_X = 0.5;
@@ -187,6 +188,7 @@ export function CreationHero({ sections }: { sections: RailSection[] }) {
     <>
       <section ref={heroRef} className="creation" aria-label="Introduction">
         <div className="creation-stage">
+          <SignalField className="signal-hero" />
           <div ref={introRef} className="creation-intro">
             <p className="eyebrow">The handoff layer for agent work</p>
             <h1>Work that outlives <em>its worker.</em></h1>

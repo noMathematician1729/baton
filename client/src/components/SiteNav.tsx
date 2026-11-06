@@ -5,7 +5,11 @@ import { BatonMark } from "./Baton";
 type Theme = "light" | "dark";
 
 function readTheme(): Theme {
-  return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+  try {
+    const saved = localStorage.getItem("baton-theme");
+    if (saved === "light" || saved === "dark") return saved;
+  } catch { /* storage unavailable */ }
+  return "dark";
 }
 
 export function SiteNav() {
@@ -16,7 +20,7 @@ export function SiteNav() {
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
-    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme === "dark" ? "#111a20" : "#f4efe5");
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme === "dark" ? "#080b14" : "#f5f7fc");
     try { localStorage.setItem("baton-theme", theme); } catch { /* storage unavailable */ }
   }, [theme]);
 

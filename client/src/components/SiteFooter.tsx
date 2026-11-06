@@ -7,7 +7,7 @@ export function SiteFooter() {
       <div className="footer-inner">
         <div className="footer-brand">
           <div className="brand"><BatonMark /><span>BATON</span></div>
-          <p>Resumable, verifiable handoff for agent work. Built on ENS, Arkiv, Sepolia and Hedera.</p>
+          <p>Resumable, verifiable handoffs for agent work. Accepted checkpoints, scoped worker authority, and durable receipts.</p>
         </div>
         <div className="footer-cols">
           <div>
@@ -21,7 +21,7 @@ export function SiteFooter() {
             <h4>Stack</h4>
             <span>ENSv2 · Sepolia</span>
             <span>Arkiv</span>
-            <span>Hedera x402</span>
+            <span>Buyer-controlled service gateway</span>
           </div>
         </div>
       </div>

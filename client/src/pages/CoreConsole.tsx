@@ -10,6 +10,7 @@ import {
   type CoreReconciliation,
   type CoreWorker,
 } from "../lib/api/core";
+import { SignalField } from "../components/SignalField";
 
 const ELIGIBLE = (worker: CoreWorker) => worker.alive
   && worker.connection === "available"
@@ -150,6 +151,7 @@ export function CoreConsole() {
     <div className="core-page">
       <div className="core-shell">
         <header className="core-heading">
+          <SignalField className="signal-core" />
           <div>
             <p className="eyebrow">Buyer operations</p>
             <h1>Live core console</h1>

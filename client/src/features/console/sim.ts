@@ -355,7 +355,7 @@ export class BatonSim {
   private async boot(job: string, primary: string) {
     const s = this.state;
     try {
-      this.log("sys", "buyer", `new job ${job}`, `3 milestones · rewards 10 tUSD · service budget ${s.budget.cap} HBAR`);
+      this.log("sys", "buyer", `new job ${job}`, `3 milestones · rewards 10 tUSD · service budget ${s.budget.cap} credits`);
       await this.wait(1);
       this.log("chain", "buyer", `escrow.fundJob(${job}, 10 tUSD)`, `tx ${short(hex(64))} · confirmed`);
       const root = this.addNode({ id: "job", label: job, ens: job, parent: null, role: "job", status: "live", records: { owner: "buyer 0xBuy3…r001", resolver: "BatonJobResolver", "baton.milestones": "3" } });
@@ -473,14 +473,14 @@ export class BatonSim {
       prior.status = "reused";
       await this.wait(1, id);
     } else {
-      this.log("x402", label, `GET gateway/svc/market-data?batch=${ms.index}`, `op_m${ms.index} · reserve ≤ ${s.budget.price} HBAR`);
+      this.log("x402", label, `GET gateway/svc/market-data?batch=${ms.index}`, `op_m${ms.index} · reserve ≤ ${s.budget.price} credits`);
       await this.wait(1.2, id);
-      this.log("response", "provider", `402 Payment Required · scheme exact · ${s.budget.price} HBAR · network hedera-testnet`);
+      this.log("response", "provider", `402 Payment Required · provider-defined payment · ${s.budget.price} credits`);
       await this.wait(1.2, id);
       const receipt = `rcpt_${hex(6)}`;
       s.budget.spent = +(s.budget.spent + s.budget.price).toFixed(2);
       this.ops.push({ id: `op_m${ms.index}`, milestone: ms.index, by: node.worker!, status: "settled", receipt, amount: s.budget.price });
-      this.log("x402", "gateway", `settled ${s.budget.price} HBAR · ${receipt}`, `ledger: op_m${ms.index} SETTLED · budget ${s.budget.spent}/${s.budget.cap} HBAR`);
+      this.log("x402", "gateway", `settled ${s.budget.price} credits · ${receipt}`, `ledger: op_m${ms.index} SETTLED · budget ${s.budget.spent}/${s.budget.cap} credits`);
       await this.wait(1.5, id);
     }
 

@@ -2,6 +2,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { SiteFooter } from "../components/SiteFooter";
+import { SignalField } from "../components/SignalField";
 
 const flow = [
   {
@@ -43,7 +44,7 @@ await escrow.takeover(job, ackFor(head, epoch))
 const boundaries = [
   ["No lossless cross-model continuation", "Accepted artifacts survive. An agent's hidden reasoning or full context window does not."],
   ["No credential export", "A tool manifest describes dependencies, not access. Each successor establishes its own authorized connections."],
-  ["No exactly-once by magic", "x402 alone cannot prevent duplicate billing. The durable ledger and provider idempotency handle reconciliation."],
+  ["No exactly-once by magic", "A durable operation ledger and provider idempotency help reconcile uncertain responses; neither makes an external provider infallible."],
   ["Buyer-controlled acceptance", "The contract enforces signed rules, not subjective truth. Independent arbitration needs its own mechanism."],
 ];
 
@@ -53,6 +54,7 @@ export function HowItWorks() {
   return (
     <div className="page">
       <header className="page-hero how-hero">
+        <SignalField className="signal-page" />
         <p className="eyebrow">How it works</p>
         <h1>A relay race with <em>receipts.</em></h1>
         <p className="lede">Three moments make a worker handoff verifiable: stage the work, accept one head, then recover it before authority moves.</p>
@@ -93,6 +95,7 @@ export function HowItWorks() {
               {flow.map((item, i) => (
                 <motion.article
                   key={item.t}
+                id={`phase-${i + 1}`}
                   className={`architecture-step${activeStep === i ? " active" : ""}`}
                   initial={{ opacity: 0, y: reduceMotion ? 0 : 28 }}
                   whileInView={{ opacity: 1, y: 0 }}
@@ -147,6 +150,9 @@ export function HowItWorks() {
           <p className="eyebrow">Watch the handoff</p>
           <h2>See the job <em>keep going.</em></h2>
           <p className="section-intro">Start a browser simulation. Kill a worker, watch its ENS branch turn inactive, and see its successor recover the last accepted checkpoint.</p>
+          <div className="how-cta-steps" aria-label="Handoff in three steps">
+            {["Stage encrypted work", "Accept one checkpoint", "Recover before takeover"].map((step, i) => <a key={step} href={`#phase-${i + 1}`}><span>{String(i + 1).padStart(2, "0")}</span>{step}<b aria-hidden="true">↗</b></a>)}
+          </div>
           <Link className="btn btn-primary btn-lg" to="/demo">Open the browser demo <span aria-hidden="true">↗</span></Link>
         </motion.section>
       </div>
@@ -203,8 +209,8 @@ function ArchitectureMap({ activeStep }: { activeStep: number }) {
       </g>
       <g className={node("gateway", [2])}>
         <rect x="322" y="210" width="108" height="56" rx="12" />
-        <text className="arch-node-title" x="376" y="234" textAnchor="middle">Hedera x402</text>
-        <text className="arch-node-sub" x="376" y="250" textAnchor="middle">paid services</text>
+        <text className="arch-node-title" x="376" y="234" textAnchor="middle">Service gateway</text>
+        <text className="arch-node-sub" x="376" y="250" textAnchor="middle">budgeted calls</text>
       </g>
     </svg>
   );

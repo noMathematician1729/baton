@@ -106,7 +106,7 @@ export function Console() {
 function ServicePulse({ touches }: { touches: Record<Service, number> }) {
   const [now, setNow] = useState(() => performance.now());
   useEffect(() => { const t = setInterval(() => setNow(performance.now()), 120); return () => clearInterval(t); }, []);
-  const items: [Service, string][] = [["arkiv", "Arkiv"], ["ens", "ENS"], ["chain", "Sepolia"], ["x402", "Hedera x402"]];
+  const items: [Service, string][] = [["arkiv", "Arkiv"], ["ens", "ENS"], ["chain", "Sepolia"], ["x402", "Service gateway"]];
   return (
     <div className="svc-pulse" role="group" aria-label="Simulated service activity">
       {items.map(([k, l]) => <span key={k} className={`svc ${now - touches[k] < 700 ? "hot" : ""}`}><i />{l}</span>)}
@@ -161,7 +161,7 @@ function SetupPanel({ sim }: { sim: BatonSim }) {
       </label>
       <div className="setup-summary">
         <div><span>Rewards</span><b>10 tUSD · 3 / 3 / 4</b></div>
-        <div><span>Service budget</span><b>1.5 HBAR cap</b></div>
+        <div><span>Service budget</span><b>1.5 credits cap</b></div>
       </div>
       <button className="btn btn-primary btn-block" disabled={!valid} onClick={() => sim.start()}>Start job</button>
     </div>
@@ -200,7 +200,7 @@ function JobPanel({ s, sim }: { s: SimState; sim: BatonSim }) {
           </div>
         ))}
         <div className="budget">
-          <div className="panel-title"><span className="small">Service budget · Hedera x402</span><span className="mono small">{s.budget.spent.toFixed(2)} / {s.budget.cap} HBAR</span></div>
+          <div className="panel-title"><span className="small">Service gateway budget</span><span className="mono small">{s.budget.spent.toFixed(2)} / {s.budget.cap} credits</span></div>
           <span className="credit-bar wide"><i style={{ width: `${(s.budget.spent / s.budget.cap) * 100}%` }} /></span>
         </div>
       </div>

@@ -81,6 +81,55 @@ test("authority reader rejects a non-Sepolia chain before reading escrow state",
   assert.deepEqual(calls, []);
 });
 
+test("authority reader compares independent RPCs at one shared confirmed block", async () => {
+  const primaryCalls: Array<{ functionName: string; blockNumber?: bigint }> = [];
+  const witnessCalls: Array<{ functionName: string; blockNumber?: bigint }> = [];
+  const reader = new SepoliaAuthorityReader({
+    escrowAddress: escrow,
+    adapterAddress: adapter,
+    confirmationBlocks: 2,
+    maxRpcHeadLagBlocks: 2,
+    client: fakeClient({ calls: primaryCalls, latestBlock: 102n }),
+    additionalClients: [fakeClient({ calls: witnessCalls, latestBlock: 101n })],
+  });
+
+  await reader.assertCurrentWorker(admission());
+
+  assert(primaryCalls.every((call) => call.blockNumber === 99n));
+  assert(witnessCalls.every((call) => call.blockNumber === 99n));
+  assert.equal(reader.lastConfirmedRead?.blockNumber, 99n);
+});
+
+test("authority reader fails closed when RPC block hashes or contract state disagree", async () => {
+  const headLag = new SepoliaAuthorityReader({
+    escrowAddress: escrow,
+    adapterAddress: adapter,
+    maxRpcHeadLagBlocks: 2,
+    client: fakeClient({ latestBlock: 100n }),
+    additionalClients: [fakeClient({ latestBlock: 97n })],
+  });
+  await assert.rejects(headLag.assertCurrentWorker(admission()), /CHAIN_RPC_DISAGREEMENT/);
+  assert.equal(headLag.lastConfirmedRead, undefined);
+
+  const hashDisagreement = new SepoliaAuthorityReader({
+    escrowAddress: escrow,
+    adapterAddress: adapter,
+    client: fakeClient(),
+    additionalClients: [fakeClient({ blockHash: digest("6") })],
+  });
+  await assert.rejects(hashDisagreement.assertCurrentWorker(admission()), /CHAIN_RPC_DISAGREEMENT/);
+  assert.equal(hashDisagreement.lastConfirmedRead, undefined);
+
+  const stateDisagreement = new SepoliaAuthorityReader({
+    escrowAddress: escrow,
+    adapterAddress: adapter,
+    client: fakeClient(),
+    additionalClients: [fakeClient({ granted: false })],
+  });
+  await assert.rejects(stateDisagreement.assertCurrentWorker(admission()), /CHAIN_RPC_DISAGREEMENT/);
+  assert.equal(stateDisagreement.lastConfirmedRead, undefined);
+});
+
 test("authority reader imports only a pristine funded job at one confirmed block", async () => {
   const snapshot = importSnapshot();
   const calls: Array<{ functionName: string; blockNumber?: bigint }> = [];
@@ -168,6 +217,8 @@ function fakeClient(options: {
   totalCredited?: bigint;
   totalWithdrawn?: bigint;
   totalRefunded?: bigint;
+  blockHash?: Hex;
+  latestBlock?: bigint;
 } = {}) {
   let blockReads = 0;
   return {
@@ -175,12 +226,12 @@ function fakeClient(options: {
       return options.chainId ?? 11155111;
     },
     async getBlockNumber() {
-      return blockNumber;
+      return options.latestBlock ?? blockNumber;
     },
     async getBlock() {
       blockReads += 1;
       return {
-        hash: blockReads > 1 ? (options.afterHash ?? blockHash) : blockHash,
+        hash: blockReads > 1 ? (options.afterHash ?? options.blockHash ?? blockHash) : (options.blockHash ?? blockHash),
         timestamp: options.blockTimestamp ?? 1_800_000_000n,
       };
     },

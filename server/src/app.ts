@@ -31,6 +31,7 @@ export function createServices() {
   const authority = useChainAuthority
     ? new SepoliaAuthorityReader({
       rpcUrl: env.SEPOLIA_RPC_URL,
+      backupRpcUrls: env.SEPOLIA_RPC_BACKUP_URLS.split(",").map((url) => url.trim()).filter(Boolean),
       escrowAddress: env.BATON_ESCROW_ADDRESS,
       adapterAddress: env.BATON_AUTHORITY_ADAPTER_ADDRESS,
       confirmationBlocks: env.CONFIRMATION_BLOCKS,
@@ -355,7 +356,14 @@ export function createApp(services = createServices()) {
     const message = error instanceof Error ? error.message : "INTERNAL_ERROR";
     const status = message.startsWith("JOB_NOT_FOUND") || message.startsWith("OPERATION_NOT_FOUND")
       ? 404
-      : message.startsWith("CHAIN_AUTHORITY_UNAVAILABLE")
+      : [
+        "CHAIN_AUTHORITY_UNAVAILABLE",
+        "CHAIN_CONFIRMATION_UNAVAILABLE",
+        "CHAIN_BLOCK_HASH_UNAVAILABLE",
+        "CHAIN_STATE_REORGED",
+        "CHAIN_RPC_DISAGREEMENT",
+        "CHAIN_NETWORK_MISMATCH",
+      ].includes(message)
         ? 503
         : 409;
     response.status(status).json({ error: message });

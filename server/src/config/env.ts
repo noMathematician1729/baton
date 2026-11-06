@@ -17,6 +17,7 @@ const schema = z.object({
   CLIENT_ORIGIN: z.string().url().default("http://127.0.0.1:5173"),
   PAYMENT_LEDGER_PATH: z.string().min(1).default("./data/payment-ledger.sqlite"),
   SEPOLIA_RPC_URL: z.string().default(""),
+  SEPOLIA_RPC_BACKUP_URLS: z.string().default(""),
   SEPOLIA_CHAIN_ID: z.coerce.number().int().default(11155111),
   GATEWAY_AUTHORITY_MODE: z.enum(["auto", "local", "sepolia"]).default("auto"),
   BATON_ESCROW_ADDRESS: z.string().default(""),

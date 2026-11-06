@@ -193,6 +193,87 @@ test("authority reader imports only a pristine funded job at one confirmed block
   await assert.rejects(alreadyAssignedReader.assertImportableJob(snapshot), /ONCHAIN_JOB_NOT_IMPORTABLE/);
 });
 
+test("authority reader validates a local accepted-head snapshot before key administration", async () => {
+  const snapshot = importSnapshot();
+  snapshot.task.assignedWorker = worker;
+  snapshot.task.epoch = 2;
+  snapshot.task.nextMilestone = 1;
+  snapshot.task.acceptedHead = {
+    manifestDigest: acceptedHead,
+    manifestRef,
+    artifactManifestDigest: digest("8"),
+    schemaVersion: "checkpoint.v1",
+    sequence: 1,
+    previousAcceptedHead: null,
+  };
+  snapshot.credits.push({ id: "credit-1", worker, milestoneId: "milestone-1", amount: 3n, claimed: false });
+  const reader = new SepoliaAuthorityReader({
+    escrowAddress: escrow,
+    adapterAddress: adapter,
+    client: fakeClient({
+      buyer: snapshot.terms.buyer as Hex,
+      rewardToken: snapshot.terms.rewardToken as Hex,
+      verifier: snapshot.terms.verifier as Hex,
+      termsHash: snapshot.terms.termsHash,
+      taskId: snapshot.chainTaskId,
+      rewardPool: 7n,
+      cutoff: BigInt(snapshot.terms.cutoff),
+      epoch: 2n,
+      nextMilestone: 1n,
+      assignedWorker: worker,
+      acceptedHead,
+      acceptedSequence: 1n,
+      acceptedManifestRef: manifestRef,
+      unallocated: 4n,
+      totalCredited: 3n,
+    }),
+  });
+  await reader.assertSnapshotCurrent(snapshot);
+
+  const accountingMismatchReader = new SepoliaAuthorityReader({
+    escrowAddress: escrow,
+    adapterAddress: adapter,
+    client: fakeClient({
+      buyer: snapshot.terms.buyer as Hex,
+      rewardToken: snapshot.terms.rewardToken as Hex,
+      verifier: snapshot.terms.verifier as Hex,
+      termsHash: snapshot.terms.termsHash,
+      taskId: snapshot.chainTaskId,
+      rewardPool: 7n,
+      cutoff: BigInt(snapshot.terms.cutoff),
+      epoch: 2n,
+      nextMilestone: 1n,
+      assignedWorker: worker,
+      acceptedHead,
+      acceptedSequence: 1n,
+      acceptedManifestRef: manifestRef,
+      unallocated: 3n,
+      totalCredited: 3n,
+    }),
+  });
+  await assert.rejects(accountingMismatchReader.assertSnapshotCurrent(snapshot), /ONCHAIN_JOB_ACCOUNTING_MISMATCH/);
+
+  const staleReader = new SepoliaAuthorityReader({
+    escrowAddress: escrow,
+    adapterAddress: adapter,
+    client: fakeClient({
+      buyer: snapshot.terms.buyer as Hex,
+      rewardToken: snapshot.terms.rewardToken as Hex,
+      verifier: snapshot.terms.verifier as Hex,
+      termsHash: snapshot.terms.termsHash,
+      taskId: snapshot.chainTaskId,
+      cutoff: BigInt(snapshot.terms.cutoff),
+      acceptedHead: digest("9"),
+      acceptedSequence: 1n,
+      acceptedManifestRef: manifestRef,
+      epoch: 2n,
+      nextMilestone: 1n,
+      assignedWorker: worker,
+    }),
+  });
+  await assert.rejects(staleReader.assertSnapshotCurrent(snapshot), /ONCHAIN_HEAD_MISMATCH/);
+});
+
 function fakeClient(options: {
   calls?: Array<{ functionName: string; blockNumber?: bigint }>;
   afterHash?: Hex;

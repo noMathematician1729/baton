@@ -20,6 +20,7 @@ const schema = z.object({
   SEPOLIA_RPC_BACKUP_URLS: z.string().default(""),
   SEPOLIA_CHAIN_ID: z.coerce.number().int().default(11155111),
   GATEWAY_AUTHORITY_MODE: z.enum(["auto", "local", "sepolia"]).default("auto"),
+  BATON_BUYER_EVM_PRIVATE_KEY: z.string().default(""),
   BATON_ESCROW_ADDRESS: z.string().default(""),
   BATON_REWARD_TOKEN_ADDRESS: z.string().default(""),
   ENS_JOB_NAME: z.string().default(""),

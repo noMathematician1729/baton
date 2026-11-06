@@ -1,8 +1,8 @@
 {
   "owner": "D1",
-  "updatedAt": "2026-11-06T09:11:41+05:30",
+  "updatedAt": "2026-11-06T09:30:22+05:30",
   "elapsedHours": 0.75,
-  "currentTask": "G0-G4 D1 audit remediation on build/audit-g0-g4; chain import, in-process API authorization, candidate verification and RPC disagreement handling locally tested, while live integrations remain pending",
+  "currentTask": "G0-G4 D1 audit remediation on build/audit-g0-g4; buyer-signed key grants, confirmed snapshot accounting, signed API route dispatch and buyer-only initial assignment locally tested, while production chain writes and live integrations remain pending",
   "completedFeatures": [
     "Versioned protocol types, canonical hashing and EIP-712 offer/takeover hash helpers",
     "Durable atomic operation ledger with reservation, settlement, UNKNOWN and reconciliation states",
@@ -32,7 +32,7 @@
     "G2 extracts the signed gateway-action verifier and fake authority reader; 6 authority tests cover replay, expiry, actor/deployment/task/action/payload, confirmed block, reorg, grant and chain ID",
     "G3 candidate adds bounded accepted-head recovery validation, storage owner/expiry checks, and an authenticated scoped key-grant HTTP client; only local fakes tested",
     "G4 candidate separates settlement from output availability, models settled/not-settled/unknown reconciliation, checks per-operation accounting, and rolls back JobStore memory on disk failure",
-    "Current candidate: typecheck/build pass, 47 offline tests pass including in-process Express route dispatch, fake-backed candidate verification and RPC witness checks, local acceptance and signing vector pass, nine Foundry tests pass using solc 0.8.38 wrapper",
+    "Current candidate: client/server typecheck and production build pass; 51 offline tests pass including signed Express route dispatch, production mutation gating, buyer key grants, fake-backed candidate verification and RPC witness checks; ten Foundry tests pass using solc 0.8.38 wrapper",
     "G4 stable payment fingerprints bind provider, network, payee, service policy version and approved policy hash while excluding worker/epoch for authorized reuse",
     "G4 SQLite job-provisioning journal repairs crashes before or after the JSON job write and commits job/budget completion idempotently",
     "G4 regression preserves SETTLED receipt and accounting through output-state SQLite write failure and restart; provider reconciliation restores output with one submission",
@@ -44,8 +44,11 @@
     "Sepolia authority reader compares configured RPC witnesses at a shared confirmed block and fails closed on head lag, block hash or contract state disagreement; mismatch responses map to HTTP 503 and backup URLs remain optional",
     "Earlier API SQLite payment-ledger restart check passed 1/1 on the user's Mac; latest job-provisioning journal path still needs a local rerun",
     "Buyer-host checkpoint key service implemented with encrypted SQLite key storage, worker-bound bearer tokens and X25519 response encryption",
+    "Buyer-only local accepted-checkpoint grant command verifies buyer signer, exact accepted head, confirmed Sepolia lifecycle/accounting snapshot, EIP-712 authorization and durable nonce before writing the encrypted grant; no live grant run",
+    "Signed route-dispatch regression covers assign, worker candidate plus buyer acceptance, drain/takeover, pause/resume, earned-credit claim, service execution and reconciliation; production mutation routes remain 503-gated",
+    "Foundry regression documents buyer-controlled initial assignment with exact job-scoped grant; worker-originated assignment and reassignment are rejected, and current ABI requires no worker consent signature",
     "Ignored mode-0600 service/A/B env files provisioned locally; B-only fixture decrypt, A denial and worker-identity spoof denial pass",
-    "Current candidate: 47 offline tests, local payment acceptance, signing vector, typecheck/build, contract compile and nine Foundry tests pass",
+    "Current candidate: 51 offline tests, local payment acceptance, signing vector, typecheck/build, contract compile and ten Foundry tests pass",
     "Safely merged D2 runtime/recovery with D1 gateway authority, SQLite payment ledger, payment-crash acceptance, and public Sepolia evidence",
     "Merged-tree client/server typecheck and builds, contract compile, signing vector, D1 acceptance, and 15 non-HTTP tests pass",
     "Configured Sepolia RPC in ignored local .env and verified chain ID 11155111",
@@ -57,7 +60,7 @@
   "branch": "build/audit-g0-g4",
   "baseCommit": "1e21837e5ed83c2b96c42a000d8b765cdd2e7460",
   "releaseLabel": "Sepolia lifecycle: LIVE_PASS; full integration: pending.",
-  "nextGate": "Complete the chain lifecycle route matrix and buyer key-grant administration, then verify candidate and RPC witness behavior against live read-only sources before coordinating D1-owned gateway work with D2's live Arkiv/x402 recovery proof",
+  "nextGate": "Connect production lifecycle routes to escrow writes and confirmed post-write reads; keep production mutation gates closed until the adapter is complete, then coordinate D1-owned gateway work with D2's live Arkiv/x402 recovery proof",
   "blockers": [
     "Foundry tests used solc 0.8.38; foundry.toml/package-lock pin 0.8.28, and node_modules currently differs from the lockfile",
     "npm registry DNS prevented a verified tmp 0.2.7 lockfile fix; package-lock.json remains unchanged",
@@ -66,7 +69,7 @@
     "The service process is not left running by this execution shell; start it on the buyer host. A temporary tunnel is conditional on D2 confirming cross-host workers",
     "Latest API integration rerun for job provisioning is unverified because this sandbox denies loopback listeners with EPERM",
     "No live Arkiv write/read, buyer-owned renewal, real x402 settlement/output lookup, or B-host recovery has been demonstrated",
-    "Chain-mode initial import and partial route coverage are implemented; lifecycle routes remain disabled in production, and buyer key-grant administration plus live Arkiv/RPC validation remain open; revised V2 escrow is not deployed"
+    "Signed lifecycle route dispatch and local buyer key-grant administration are implemented and tested, but production mutations remain disabled until escrow writes, worker offer signatures and confirmed post-write reads are wired; no real accepted-checkpoint grant or Arkiv/RPC validation exists; revised V2 escrow is not deployed"
   ],
   "neededInputs": [
     "Start the key service on the buyer host, keep it alive independently of Worker A, add B's exact accepted-checkpoint grant, and set up a temporary tunnel only if D2 confirms B is on another machine",

@@ -235,6 +235,39 @@ contract JobEscrowTest {
         escrow.takeover(JOB_ID, validAck, validSignature);
     }
 
+    function testInitialAssignmentIsBuyerOnlyAndRequiresJobScopedGrant() public {
+        bytes32 secondJobId = keccak256("buyer-controlled-initial-assignment");
+        token.mint(address(this), 7);
+        token.approve(address(escrow), 7);
+        uint256[] memory rewards = new uint256[](1);
+        rewards[0] = 7;
+        bytes32[] memory specs = new bytes32[](1);
+        specs[0] = SPEC_A;
+        escrow.fundJob(
+            secondJobId,
+            keccak256("second-job-terms"),
+            keccak256("second-job-task"),
+            address(token),
+            address(authority),
+            address(this),
+            uint64(block.timestamp + 1 days),
+            rewards,
+            specs
+        );
+
+        vm.expectRevert(JobEscrow.InvalidWorkerGrant.selector);
+        escrow.assignTask(secondJobId, workerB);
+
+        authority.grant(secondJobId, workerB);
+        vm.expectRevert(JobEscrow.Unauthorized.selector);
+        vm.prank(workerB);
+        escrow.assignTask(secondJobId, workerB);
+
+        escrow.assignTask(secondJobId, workerB);
+        vm.expectRevert(JobEscrow.Unauthorized.selector);
+        escrow.assignTask(secondJobId, workerA);
+    }
+
     function testTransferFailureRollsBackWithdrawalAccounting() public {
         bytes32 head = sha256("checkpoint for failed transfer");
         _accept(WORKER_A_KEY, workerA, 0, SPEC_A, bytes32(0), head, "arkiv://checkpoint/fail", 1);

@@ -48,6 +48,7 @@ export interface JobAuthorityReader {
   assertCurrentWorker(input: ChainAdmission): Promise<void>;
   assertAssignedWorker(input: ChainAdmission): Promise<void>;
   assertImportableJob?(input: JobSnapshot): Promise<void>;
+  assertSnapshotCurrent?(input: JobSnapshot): Promise<void>;
 }
 
 type EscrowJobState = {
@@ -183,6 +184,49 @@ export class SepoliaAuthorityReader implements JobAuthorityReader {
       || state.acceptedManifestRef !== "" || state.paused || state.drained || state.closed
       || state.totalCredited !== 0n || state.totalWithdrawn !== 0n || state.totalRefunded !== 0n) {
       throw new Error("ONCHAIN_JOB_NOT_IMPORTABLE");
+    }
+  }
+
+  public async assertSnapshotCurrent(job: JobSnapshot): Promise<void> {
+    if (!job.chainJobId || !job.chainTaskId) throw new Error("CHAIN_JOB_BINDING_REQUIRED");
+    const admission: ChainAdmission = {
+      chainJobId: job.chainJobId,
+      chainTaskId: job.chainTaskId,
+      termsHash: job.terms.termsHash,
+      acceptedHead: job.task.acceptedHead.manifestDigest,
+      acceptedSequence: job.task.acceptedHead.sequence,
+      acceptedManifestRef: job.task.acceptedHead.manifestRef,
+      buyer: job.terms.buyer,
+      worker: zeroAddress as Hex,
+      epoch: job.task.epoch,
+    };
+    const { state } = await this.readConfirmedJob(admission, { includeGrant: false });
+    this.assertBinding(state, admission);
+    if (state.rewardToken.toLowerCase() !== job.terms.rewardToken.toLowerCase()
+      || state.verifier.toLowerCase() !== job.terms.verifier.toLowerCase()
+      || state.cutoff !== BigInt(job.terms.cutoff)
+      || state.rewardPool !== rewardPoolFromSnapshot(job)) {
+      throw new Error("ONCHAIN_JOB_TERMS_MISMATCH");
+    }
+    const expectedWorker = (job.task.assignedWorker ?? zeroAddress).toLowerCase();
+    if (state.epoch !== BigInt(job.task.epoch)
+      || state.nextMilestone !== BigInt(job.task.nextMilestone)
+      || state.assignedWorker.toLowerCase() !== expectedWorker
+      || state.paused !== (job.task.status === "PAUSED")
+      || state.drained !== job.task.drained
+      || state.closed !== (job.task.status === "CLOSED")) {
+      throw new Error("ONCHAIN_JOB_LIFECYCLE_MISMATCH");
+    }
+    const totalCredited = job.credits.reduce((total, credit) => total + credit.amount, 0n);
+    const totalWithdrawn = job.credits.reduce((total, credit) => total + (credit.claimed ? credit.amount : 0n), 0n);
+    if (totalCredited > state.rewardPool) throw new Error("ONCHAIN_JOB_ACCOUNTING_MISMATCH");
+    const totalRefunded = state.closed ? state.rewardPool - totalCredited : 0n;
+    const unallocated = state.rewardPool - totalCredited - totalRefunded;
+    if (state.totalCredited !== totalCredited
+      || state.totalWithdrawn !== totalWithdrawn
+      || state.totalRefunded !== totalRefunded
+      || state.unallocated !== unallocated) {
+      throw new Error("ONCHAIN_JOB_ACCOUNTING_MISMATCH");
     }
   }
 

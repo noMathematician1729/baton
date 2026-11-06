@@ -17,8 +17,10 @@ import { OperationLedger } from "./services/ledger/operationLedger.js";
 
 const buyer = privateKeyToAccount("0x0000000000000000000000000000000000000000000000000000000000000001");
 const worker = privateKeyToAccount("0x0000000000000000000000000000000000000000000000000000000000000002");
+const workerB = privateKeyToAccount("0x0000000000000000000000000000000000000000000000000000000000000003");
 const escrow = "0x5555555555555555555555555555555555555555" as Hex;
 const adapter = "0x6666666666666666666666666666666666666666" as Hex;
+let authNonceCounter = 0;
 
 process.env.NODE_ENV = "production";
 process.env.GATEWAY_AUTHORITY_MODE = "sepolia";
@@ -63,9 +65,206 @@ test("production API permits only buyer-signed initial chain-job import", async 
     );
     assert.equal(idempotentImport.statusCode, 200);
     assert.equal(fixture.importReads(), 1);
+
+    for (const route of [
+      `/api/jobs/${snapshot.terms.jobId}/assign`,
+      `/api/jobs/${snapshot.terms.jobId}/checkpoints`,
+      `/api/jobs/${snapshot.terms.jobId}/drain`,
+      `/api/jobs/${snapshot.terms.jobId}/takeover`,
+      `/api/jobs/${snapshot.terms.jobId}/pause`,
+      `/api/jobs/${snapshot.terms.jobId}/resume`,
+      `/api/jobs/${snapshot.terms.jobId}/claim`,
+      `/api/jobs/${snapshot.terms.jobId}/services/execute`,
+      `/api/services/operations/route-test/reconcile`,
+    ]) {
+      const blocked = await dispatch(fixture.app, "POST", route, {});
+      assert.equal(blocked.statusCode, 503, `production must block ${route}`);
+      assert.equal(blocked.body.error, "LOCAL_FIXTURE_DISABLED");
+    }
   } finally {
     fixture.ledger.close();
     env.NODE_ENV = "production";
+    await rm(fixture.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 });
+  }
+});
+
+test("signed chain-mode route dispatch covers assignment through payment reconciliation", async () => {
+  const fixture = await createFixture();
+  const previousMode = env.NODE_ENV;
+  env.NODE_ENV = "test";
+  try {
+    const snapshot = makeSnapshot(fixture.jobs);
+    await fixture.ledger.beginJobProvision(snapshot);
+    await fixture.jobs.importInitial(snapshot);
+    await fixture.ledger.completeJobProvision(snapshot);
+
+    const assignBody = await signedActionBody({
+      job: (await fixture.jobs.get(snapshot.terms.jobId))!,
+      signer: buyer,
+      action: "ASSIGN_WORKER",
+      epoch: snapshot.task.epoch,
+      payload: { worker: worker.address.toLowerCase() },
+      body: { worker: worker.address },
+    });
+    const assigned = await dispatch(fixture.app, "POST", `/api/jobs/${snapshot.terms.jobId}/assign`, assignBody);
+    assert.equal(assigned.statusCode, 200, JSON.stringify(assigned.body));
+    assert.equal((await fixture.jobs.get(snapshot.terms.jobId))?.task.assignedWorker, worker.address.toLowerCase());
+
+    const assignedJob = (await fixture.jobs.get(snapshot.terms.jobId))!;
+    const candidate = {
+      manifestDigest: digest("a"),
+      manifestRef: "arkiv://route-test/checkpoint-1",
+      artifactManifestDigest: digest("b"),
+      schemaVersion: "checkpoint.v1",
+      sequence: 1,
+      previousAcceptedHead: null,
+    };
+    const candidatePayload = {
+      taskId: assignedJob.task.taskId,
+      worker: worker.address.toLowerCase(),
+      epoch: assignedJob.task.epoch,
+      acceptanceSpecHash: assignedJob.terms.task.milestones[0]!.acceptanceSpecHash,
+      expectedHead: assignedJob.task.acceptedHead.manifestDigest,
+      newHead: candidate,
+    };
+    const candidateBody = {
+      ...candidate,
+      taskId: candidatePayload.taskId,
+      worker: worker.address,
+      epoch: candidatePayload.epoch,
+      acceptanceSpecHash: candidatePayload.acceptanceSpecHash,
+      expectedHead: candidatePayload.expectedHead,
+    };
+    const workerAuthorizedCandidate = await signedActionBody({
+      job: assignedJob,
+      signer: worker,
+      action: "CHECKPOINT_CANDIDATE",
+      epoch: candidatePayload.epoch,
+      payload: candidatePayload,
+      body: candidateBody,
+      prefix: "workerAuth",
+    });
+    const acceptedCandidate = await signedActionBody({
+      job: assignedJob,
+      signer: buyer,
+      action: "MILESTONE_ACCEPT",
+      epoch: candidatePayload.epoch,
+      payload: candidatePayload,
+      body: workerAuthorizedCandidate,
+      prefix: "buyerAuth",
+    });
+    const accepted = await dispatch(fixture.app, "POST", `/api/jobs/${snapshot.terms.jobId}/checkpoints`, acceptedCandidate);
+    assert.equal(accepted.statusCode, 200);
+    assert.equal((await fixture.jobs.get(snapshot.terms.jobId))?.task.acceptedHead.manifestDigest, candidate.manifestDigest);
+
+    const acceptedJob = (await fixture.jobs.get(snapshot.terms.jobId))!;
+    const drainBody = await signedActionBody({
+      job: acceptedJob,
+      signer: buyer,
+      action: "DRAIN_TASK",
+      epoch: acceptedJob.task.epoch,
+      payload: {},
+      body: {},
+    });
+    assert.equal((await dispatch(fixture.app, "POST", `/api/jobs/${snapshot.terms.jobId}/drain`, drainBody)).statusCode, 200);
+
+    const drainedJob = (await fixture.jobs.get(snapshot.terms.jobId))!;
+    const takeoverFields = {
+      successor: workerB.address.toLowerCase(),
+      expectedHead: drainedJob.task.acceptedHead.manifestDigest,
+      expectedEpoch: drainedJob.task.epoch,
+      compatibilityReport: digest("c"),
+    };
+    const takeoverBody = await signedActionBody({
+      job: drainedJob,
+      signer: buyer,
+      action: "TAKEOVER_TASK",
+      epoch: takeoverFields.expectedEpoch,
+      payload: takeoverFields,
+      body: takeoverFields,
+    });
+    assert.equal((await dispatch(fixture.app, "POST", `/api/jobs/${snapshot.terms.jobId}/takeover`, takeoverBody)).statusCode, 200);
+    const successorJob = (await fixture.jobs.get(snapshot.terms.jobId))!;
+    assert.equal(successorJob.task.assignedWorker, workerB.address.toLowerCase());
+    assert.equal(successorJob.task.epoch, 2);
+
+    const pauseBody = await signedActionBody({
+      job: successorJob,
+      signer: buyer,
+      action: "PAUSE_JOB",
+      epoch: successorJob.task.epoch,
+      payload: {},
+      body: {},
+    });
+    assert.equal((await dispatch(fixture.app, "POST", `/api/jobs/${snapshot.terms.jobId}/pause`, pauseBody)).statusCode, 200);
+    const pausedJob = (await fixture.jobs.get(snapshot.terms.jobId))!;
+    const resumeBody = await signedActionBody({
+      job: pausedJob,
+      signer: buyer,
+      action: "RESUME_JOB",
+      epoch: pausedJob.task.epoch,
+      payload: {},
+      body: {},
+    });
+    assert.equal((await dispatch(fixture.app, "POST", `/api/jobs/${snapshot.terms.jobId}/resume`, resumeBody)).statusCode, 200);
+
+    const claimBody = await signedActionBody({
+      job: (await fixture.jobs.get(snapshot.terms.jobId))!,
+      signer: worker,
+      action: "CLAIM_REWARD",
+      epoch: 1,
+      payload: { worker: worker.address.toLowerCase() },
+      body: { worker: worker.address, epoch: 1 },
+    });
+    const claimed = await dispatch(fixture.app, "POST", `/api/jobs/${snapshot.terms.jobId}/claim`, claimBody);
+    assert.equal(claimed.statusCode, 200);
+    assert.equal(claimed.body.amount, "3n");
+
+    const serviceFields = {
+      operationId: "route-service-operation",
+      jobId: snapshot.terms.jobId,
+      taskId: snapshot.task.taskId,
+      worker: workerB.address.toLowerCase(),
+      epoch: 2,
+      service: "batch-data-v1",
+      inputDigest: digest("d"),
+      amount: "2",
+      asset: "HBAR",
+    };
+    const executeBody = await signedActionBody({
+      job: (await fixture.jobs.get(snapshot.terms.jobId))!,
+      signer: workerB,
+      action: "SERVICE_EXECUTE",
+      epoch: 2,
+      payload: serviceFields,
+      body: serviceFields,
+    });
+    const executed = await dispatch(fixture.app, "POST", `/api/jobs/${snapshot.terms.jobId}/services/execute`, executeBody);
+    assert.equal(executed.statusCode, 200);
+    assert.equal(executed.body.state, "OUTPUT_AVAILABLE");
+
+    const operation = await fixture.ledger.getOperation(serviceFields.operationId);
+    assert(operation);
+    const reconcileFields = {
+      operationId: operation.operationId,
+      requestFingerprint: operation.requestFingerprint,
+      worker: workerB.address.toLowerCase(),
+      epoch: 2,
+    };
+    const reconcileBody = await signedActionBody({
+      job: (await fixture.jobs.get(snapshot.terms.jobId))!,
+      signer: workerB,
+      action: "SERVICE_RECONCILE",
+      epoch: 2,
+      payload: reconcileFields,
+      body: { worker: workerB.address, epoch: 2 },
+    });
+    const reconciled = await dispatch(fixture.app, "POST", `/api/services/operations/${operation.operationId}/reconcile`, reconcileBody);
+    assert.equal(reconciled.statusCode, 200);
+    assert.equal(reconciled.body.state, "OUTPUT_AVAILABLE");
+  } finally {
+    fixture.ledger.close();
+    env.NODE_ENV = previousMode;
     await rm(fixture.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 });
   }
 });
@@ -109,9 +308,11 @@ async function createFixture() {
     assertAssignedWorker: async () => undefined,
     assertImportableJob: async () => { importReads += 1; },
   } as unknown as JobAuthorityReader;
-  const gateway = new Gateway(jobs, ledger, new LocalPaymentProvider(), authority);
+  const gateway = new Gateway(jobs, ledger, new LocalPaymentProvider(), authority, {
+    verifyCandidate: async () => undefined,
+  });
   const app = createApp({ jobs, ledger, gateway });
-  return { root, jobs, ledger, app, importReads: () => importReads };
+  return { root, jobs, ledger, gateway, app, importReads: () => importReads };
 }
 
 function makeSnapshot(jobs: JobStore): JobSnapshot {
@@ -148,6 +349,41 @@ async function signedImportBody(snapshot: JobSnapshot, nonce: Hex): Promise<Reco
     message,
   });
   return { snapshot: serialise(snapshot), authNonce: nonce, authExpiry: expiry, authSignature };
+}
+
+async function signedActionBody(input: {
+  job: JobSnapshot;
+  signer: ReturnType<typeof privateKeyToAccount>;
+  action: string;
+  epoch: number;
+  payload: unknown;
+  body: Record<string, unknown>;
+  prefix?: string;
+}): Promise<Record<string, unknown>> {
+  const prefix = input.prefix ?? "auth";
+  const nonce = digest(`route-auth-${authNonceCounter++}`);
+  const expiry = Math.floor(Date.now() / 1000) + 120;
+  const message = gatewayActionMessage({
+    action: input.action,
+    job: input.job,
+    actor: input.signer.address,
+    epoch: input.epoch,
+    payload: input.payload,
+    nonce,
+    expiry,
+  });
+  const authSignature = await input.signer.signTypedData({
+    domain: gatewayActionDomain(11155111, escrow),
+    types: GATEWAY_ACTION_TYPES,
+    primaryType: "GatewayAction",
+    message,
+  });
+  return {
+    ...input.body,
+    [`${prefix}Nonce`]: nonce,
+    [`${prefix}Expiry`]: expiry,
+    [`${prefix}Signature`]: authSignature,
+  };
 }
 
 async function dispatch(app: Express, method: string, url: string, body: unknown): Promise<{

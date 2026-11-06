@@ -18,19 +18,20 @@ npm run verify
 
 `npm test` runs the checkpoint, storage, runtime, worker, tools, admission, SQLite ledger, and HTTP restart suites. `npm run verify` adds typechecking, production builds, Solidity compilation, the signing vector, and local gateway acceptance, including the payment-crash recovery scenario. An earlier revision of the HTTP restart test passed 1/1 on the user's Mac before the job-provisioning journal change. The latest path needs a local rerun: this execution sandbox rejects `listen(127.0.0.1)` with `EPERM`.
 
-For the non-HTTP suites in this sandbox, bypass the `tsx --test` IPC launcher and run the source tests directly:
+For offline suites in this sandbox, bypass the `tsx --test` IPC launcher and run the source tests directly. This includes Express route dispatch with in-memory requests and responses; it does not bind a TCP listener:
 
 ```sh
 node --import tsx --test \
   server/packages/*/src/*.test.ts \
   server/apps/worker/src/*.test.ts \
   server/services/*/*.test.ts \
+  server/src/app.routes.test.ts \
   server/src/domain/jobs/*.test.ts \
   server/src/chain/*.test.ts \
   server/src/services/*/*.test.ts
 ```
 
-The current G0–G4 candidate passed this command with 40 tests. That includes buyer-signed/idempotent chain-job import, signed-action verifier cases for replay, expiry, wrong signer/deployment/task/action/payload, mocked authority-reader checks for confirmed-block consistency/reorg/grant/chain ID, offline recovery and key-grant-client fakes, policy-bound operation fingerprints, cross-store job/budget crash recovery, output-state recovery after a SQLite write failure, and checkpoint deadline/parent checks; it does not exercise HTTP route dispatch, the Arkiv network, provider, or Sepolia.
+The current G0–G4 candidate passed this command with 42 tests. That includes buyer-signed/idempotent chain-job import, production import gating, unsigned action rejection, signed-action verifier cases for replay/expiry/binding failures, mocked authority-reader checks for confirmed-block consistency/reorg/grant/chain ID, offline recovery and key-grant-client fakes, policy-bound operation fingerprints, cross-store job/budget crash recovery, output-state recovery after a SQLite write failure, and checkpoint deadline/parent checks. Route checks exercise Express middleware and dispatch in-process; they do not exercise a TCP listener, the Arkiv network, provider, or Sepolia.
 
 ## Gateway authority and payment recovery
 

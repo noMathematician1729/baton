@@ -11,6 +11,7 @@ import { fetchJobSnapshotFromGateway, recoverAndAcknowledgeAcceptedCheckpoint } 
 import { recoverReusablePaidOperation } from "./takeoverPolicyClient.js";
 import { runLocalDemo } from "./localDemo.js";
 import { discoverConfiguredMcpTools, probeConfiguredMcpTool } from "../../../services/tools/probe.js";
+import { applyWorkerEnvironment } from "./workerEnvironment.js";
 
 loadWorkerEnvironment();
 const [command, ...args] = process.argv.slice(2);
@@ -226,40 +227,7 @@ function loadWorkerEnvironment(): void {
   const root = resolve(directory, "../../../../");
   const rootValues = parseEnvFile(resolve(root, ".env"));
   const workerValues = parseEnvFile(resolve(root, ".env.worker-b"));
-  for (const name of [
-    "SEPOLIA_DEPLOYER_PRIVATE_KEY", "BUYER_SEPOLIA_SIGNER", "BATON_BUYER_EVM_PRIVATE_KEY",
-    "WORKER_A_EVM_PRIVATE_KEY", "ARKIV_SIGNER_PRIVATE_KEY", "ARKIV_SIGNER_PRIVATE_KEY_A",
-    "ARKIV_SIGNER_PRIVATE_KEY_B", "HEDERA_PRIVATE_KEY",
-  ]) delete process.env[name];
-  const allowedRootKeys = [
-    "SERVER_PORT", "SEPOLIA_RPC_URL", "SEPOLIA_RPC_BACKUP_URLS", "SEPOLIA_CHAIN_ID", "CONFIRMATION_BLOCKS",
-    "BATON_ESCROW_ADDRESS", "BATON_AUTHORITY_ADAPTER_ADDRESS", "WORKER_B_ADDRESS", "WORKER_B_EVM_PRIVATE_KEY",
-    "ARKIV_RPC_URL_B", "ARKIV_ACCESS_KEY", "ARKIV_ACCESS_KEY_B", "ARKIV_STORAGE_OWNER_ADDRESS",
-  ];
-  const workerKeys = [
-    "BATON_API_URL", "SEPOLIA_RPC_URL", "SEPOLIA_RPC_BACKUP_URLS", "SEPOLIA_CHAIN_ID", "CONFIRMATION_BLOCKS",
-    "BATON_ESCROW_ADDRESS", "BATON_AUTHORITY_ADAPTER_ADDRESS", "WORKER_ADDRESS", "WORKER_EVM_PRIVATE_KEY",
-    "WORKER_B_EVM_PRIVATE_KEY", "ARKIV_RPC_URL", "ARKIV_RPC_URL_B", "ARKIV_ACCESS_KEY", "ARKIV_ACCESS_KEY_B",
-    "ARKIV_STORAGE_OWNER_ADDRESS", "CHECKPOINT_KEY_SERVICE_URL",
-    "CHECKPOINT_KEY_SERVICE_TOKEN", "CHECKPOINT_KEY_SERVICE_DECRYPTION_PRIVATE_KEY",
-    "MCP_SERVER_URL", "MCP_API_KEY", "MCP_EXPECTED_SERVER_ID", "MCP_PROBE_TOOL_NAME",
-    "MCP_PROBE_SCHEMA_VERSION", "MCP_PROBE_SCHEMA_DIGEST", "MCP_PROBE_INPUT_JSON",
-    "MCP_PROBE_EXPECTED_OUTPUT_DIGEST", "MCP_PROBE_TIMEOUT_MS",
-  ];
-  for (const name of allowedRootKeys) {
-    if (process.env[name] === undefined && workerValues[name] === undefined && rootValues[name] !== undefined) {
-      process.env[name] = rootValues[name];
-    }
-  }
-  for (const name of workerKeys) {
-    if (process.env[name] === undefined && workerValues[name] !== undefined) process.env[name] = workerValues[name];
-  }
-  if (!process.env.WORKER_ADDRESS && process.env.WORKER_B_ADDRESS) process.env.WORKER_ADDRESS = process.env.WORKER_B_ADDRESS;
-  if (!process.env.WORKER_EVM_PRIVATE_KEY && process.env.WORKER_B_EVM_PRIVATE_KEY) {
-    process.env.WORKER_EVM_PRIVATE_KEY = process.env.WORKER_B_EVM_PRIVATE_KEY;
-  }
-  if (!process.env.ARKIV_RPC_URL && process.env.ARKIV_RPC_URL_B) process.env.ARKIV_RPC_URL = process.env.ARKIV_RPC_URL_B;
-  if (!process.env.ARKIV_ACCESS_KEY && process.env.ARKIV_ACCESS_KEY_B) process.env.ARKIV_ACCESS_KEY = process.env.ARKIV_ACCESS_KEY_B;
+  applyWorkerEnvironment(process.env, rootValues, workerValues);
 }
 
 function parseEnvFile(path: string): Record<string, string> {

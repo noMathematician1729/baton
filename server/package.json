@@ -15,7 +15,7 @@
     "worker:probe:b": "tsx apps/worker/src/cli.ts probe-tool",
     "status:refresh": "tsx ../scripts/status/refresh.ts",
     "tools:stdio": "tsx services/tools/stdio.ts",
-    "test:worker": "tsx --test apps/worker/src/localDemo.test.ts apps/worker/src/acceptedCheckpointRecovery.test.ts apps/worker/src/takeoverPolicyClient.test.ts",
+    "test:worker": "tsx --test apps/worker/src/localDemo.test.ts apps/worker/src/acceptedCheckpointRecovery.test.ts apps/worker/src/takeoverPolicyClient.test.ts apps/worker/src/workerEnvironment.test.ts",
     "test:checkpoint": "tsx --test packages/checkpoint/src/index.test.ts",
     "test:storage": "tsx --test packages/storage/src/arkiv.test.ts packages/storage/src/retention.test.ts",
     "test:runtime": "tsx --test packages/runtime/src/index.test.ts",

@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: baton-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build --workspace=server
+    startCommand: npm run start --workspace=server
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SERVER_HOST
+        value: 0.0.0.0

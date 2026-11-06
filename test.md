@@ -30,7 +30,7 @@ node --import tsx --test \
   server/src/services/ledger/*.test.ts
 ```
 
-The current G0–G4 candidate passed this command with 29 tests. That includes the signed gateway-action verifier cases for replay, expiry, wrong signer/deployment/task/action/payload, offline recovery and key-grant-client fakes, policy-bound operation fingerprints, cross-store job/budget crash recovery, and checkpoint deadline/parent checks; it does not exercise HTTP route dispatch, the Arkiv network, provider, or Sepolia.
+The current G0–G4 candidate passed this command with 32 tests. That includes signed gateway-action verifier cases for replay, expiry, wrong signer/deployment/task/action/payload, mocked authority-reader checks for confirmed-block consistency/reorg/grant/chain ID, offline recovery and key-grant-client fakes, policy-bound operation fingerprints, cross-store job/budget crash recovery, and checkpoint deadline/parent checks; it does not exercise HTTP route dispatch, the Arkiv network, provider, or Sepolia.
 
 ## Gateway authority and payment recovery
 

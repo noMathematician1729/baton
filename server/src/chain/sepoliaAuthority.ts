@@ -7,6 +7,7 @@ import {
   stringToHex,
   type Address,
   type Hex,
+  type PublicClient,
 } from "viem";
 import { sepolia } from "viem/chains";
 
@@ -19,6 +20,7 @@ const authorityAbi = parseAbi([
   "function hasWorkerGrant(bytes32 jobId, address worker) view returns (bool)",
 ]);
 const expectedEscrowVersion = keccak256(stringToHex("BATON_JOB_ESCROW_V2"));
+type AuthorityPublicClient = Pick<PublicClient, "getChainId" | "getBlockNumber" | "getBlock" | "readContract">;
 
 export type ChainAdmission = {
   chainJobId: Hex;
@@ -62,19 +64,20 @@ type EscrowJobState = {
 };
 
 export class SepoliaAuthorityReader implements JobAuthorityReader {
-  private readonly client;
+  private readonly client: AuthorityPublicClient;
   private readonly escrowAddress: Address;
   private readonly adapterAddress: Address;
   private readonly confirmationBlocks: number;
   private lastRead: ConfirmedChainRead | undefined;
 
   public constructor(input: {
-    rpcUrl: string;
+    rpcUrl?: string;
     escrowAddress: string;
     adapterAddress: string;
     confirmationBlocks?: number;
+    client?: AuthorityPublicClient;
   }) {
-    if (!input.rpcUrl) throw new Error("CHAIN_AUTHORITY_CONFIG_INCOMPLETE");
+    if (!input.client && !input.rpcUrl) throw new Error("CHAIN_AUTHORITY_CONFIG_INCOMPLETE");
     try {
       this.escrowAddress = getAddress(input.escrowAddress);
       this.adapterAddress = getAddress(input.adapterAddress);
@@ -85,7 +88,7 @@ export class SepoliaAuthorityReader implements JobAuthorityReader {
     if (!Number.isSafeInteger(this.confirmationBlocks) || this.confirmationBlocks < 0) {
       throw new Error("CHAIN_CONFIRMATION_CONFIG_INVALID");
     }
-    this.client = createPublicClient({ chain: sepolia, transport: http(input.rpcUrl) });
+    this.client = input.client ?? createPublicClient({ chain: sepolia, transport: http(input.rpcUrl!) });
   }
 
   public get lastConfirmedRead(): ConfirmedChainRead | undefined {

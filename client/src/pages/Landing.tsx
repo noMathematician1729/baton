@@ -167,7 +167,7 @@ export function Landing() {
             <Baton width={136} className="final-baton" />
             <h2>Kill an agent. <em>Watch the job keep going.</em></h2>
             <p className="section-intro">Open the console, start a job under an ENS name, and see Arkiv answer every query the replacement worker makes.</p>
-            <Link to="/console" className="btn btn-primary btn-lg">Launch the console</Link>
+            <Link to="/demo" className="btn btn-primary btn-lg">Launch the browser demo</Link>
           </Reveal>
         </section>
       </div>

@@ -2,6 +2,7 @@
 @import "@xyflow/react/dist/style.css";
 @import "./styles/tokens.css";
 @import "./styles/console.css";
+@import "./styles/core-console.css";
 @import "./styles/pages.css";
 
 .mono { font-family: var(--font-mono); }

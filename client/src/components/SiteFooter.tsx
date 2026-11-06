@@ -12,7 +12,8 @@ export function SiteFooter() {
         <div className="footer-cols">
           <div>
             <h4>Product</h4>
-            <Link to="/console">Console</Link>
+            <Link to="/console">Live console</Link>
+            <Link to="/demo">Browser demo</Link>
             <Link to="/how-it-works">How it works</Link>
             <Link to="/faq">FAQ</Link>
           </div>

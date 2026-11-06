@@ -30,7 +30,7 @@ export function SiteNav() {
   useEffect(() => { window.scrollTo(0, 0); setMenuOpen(false); }, [pathname]);
 
   return (
-    <header className={`site-nav${scrolled ? " is-scrolled" : ""}${pathname === "/console" ? " is-app" : ""}${menuOpen ? " menu-open" : ""}`}>
+    <header className={`site-nav${scrolled ? " is-scrolled" : ""}${pathname === "/console" || pathname === "/demo" ? " is-app" : ""}${menuOpen ? " menu-open" : ""}`}>
       <div className="site-nav-inner">
         <Link to="/" className="brand" aria-label="BATON home">
           <BatonMark />

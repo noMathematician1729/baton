@@ -217,7 +217,7 @@ export function CreationHero({ sections }: { sections: RailSection[] }) {
               exactly where the last accepted step left off.
             </p>
             <div className="cta-row">
-              <Link to="/console" className="btn btn-primary">Preview a handoff</Link>
+              <Link to="/demo" className="btn btn-primary">Preview a handoff</Link>
               <a className="btn btn-ghost" href="#problem" onClick={(e) => { e.preventDefault(); jump("problem"); }}>How it works ↓</a>
             </div>
           </div>

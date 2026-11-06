@@ -147,7 +147,7 @@ export function HowItWorks() {
           <p className="eyebrow">Watch the handoff</p>
           <h2>See the job <em>keep going.</em></h2>
           <p className="section-intro">Start a browser simulation. Kill a worker, watch its ENS branch turn inactive, and see its successor recover the last accepted checkpoint.</p>
-          <Link className="btn btn-primary btn-lg" to="/console">Open the console <span aria-hidden="true">↗</span></Link>
+          <Link className="btn btn-primary btn-lg" to="/demo">Open the browser demo <span aria-hidden="true">↗</span></Link>
         </motion.section>
       </div>
       <SiteFooter />

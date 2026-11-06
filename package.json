@@ -24,7 +24,7 @@
     "worker:probe:b": "npm run worker:probe:b --workspace=server --",
     "tools:mcp": "npm run tools:stdio --workspace=server",
     "status:refresh": "npm run status:refresh --workspace=server",
-    "test": "npm run test:checkpoint --workspace=server && npm run test:storage --workspace=server && npm run test:runtime --workspace=server && npm run test:worker --workspace=server && npm run test:provider --workspace=server && npm run test:tools --workspace=server && npm run test:admission --workspace=server && npm run test:authority --workspace=server && npm run test:gateway --workspace=server && npm run test:retention --workspace=server && npm run test:ledger --workspace=server && npm run test:api --workspace=server",
+    "test": "npm run test:checkpoint --workspace=server && npm run test:storage --workspace=server && npm run test:runtime --workspace=server && npm run test:worker --workspace=server && npm run test:provider --workspace=server && npm run test:tools --workspace=server && npm run test:admission --workspace=server && npm run test:authority --workspace=server && npm run test:gateway --workspace=server && npm run test:retention --workspace=server && npm run test:ledger --workspace=server && npm run test:api --workspace=server && npm run test:core --workspace=server",
     "test:local": "npm run build --workspace=server && node scripts/acceptance-local.mjs",
     "test:signing": "npm run build --workspace=server && node scripts/check-signing-vector.mjs",
     "contracts:compile": "node scripts/compile-contracts.mjs",
@@ -39,6 +39,10 @@
     "key-service:start": "npm run build --workspace=server && node --env-file=.env.key-service server/dist/src/services/key-service/index.js",
     "key-service:tunnel": "cloudflared tunnel --no-autoupdate --url http://127.0.0.1:4411",
     "key-service:set-url": "node scripts/key-service/set-url.mjs",
+    "core:setup": "npm run contracts:compile && node scripts/core/setup.mjs",
+    "core:api": "cd server && node --import tsx src/index.ts",
+    "baton": "node scripts/core/baton.mjs",
+    "core:e2e": "node scripts/core/run-e2e.mjs",
     "verify": "npm run typecheck && npm run build && npm test && npm run contracts:compile && npm run test:signing && npm run test:local"
   },
   "devDependencies": {

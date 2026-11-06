@@ -1,4 +1,7 @@
 import cors from "cors";
+import { createCoreServiceFromEnv } from "./services/core/config.js";
+import { createCoreRouter } from "./services/core/routes.js";
+import type { CoreService } from "./services/core/coreService.js";
 import express from "express";
 import helmet from "helmet";
 import { isAbsolute, resolve } from "node:path";
@@ -32,6 +35,7 @@ export type AppServices = {
   takeoverPolicy?: BuyerTakeoverPolicy;
   retentionMonitor?: ArkivRetentionMonitor;
   authority?: SepoliaAuthorityReader;
+  core?: CoreService;
 };
 
 export function createServices() {
@@ -105,8 +109,9 @@ export function createServices() {
       ),
     })
     : undefined;
-  const ready = recoverPendingJobProvisions(jobs, ledger);
-  return { jobs, ledger, gateway, authority, mutationWriter, takeoverPolicy, retentionMonitor, ready };
+  const core = createCoreServiceFromEnv(resolve(SERVER_ROOT, ".."), SERVER_ROOT);
+  const ready = recoverPendingJobProvisions(jobs, ledger).then(() => core?.init());
+  return { jobs, ledger, gateway, authority, mutationWriter, takeoverPolicy, retentionMonitor, ready, core };
 }
 
 export function createApp(services: AppServices = createServices()) {
@@ -123,10 +128,16 @@ export function createApp(services: AppServices = createServices()) {
   app.disable("x-powered-by");
   app.use(helmet());
   app.use(cors({ origin: env.CLIENT_ORIGIN }));
-  app.use(express.json({ limit: "1mb" }));
+  app.use(express.json({
+    limit: "1mb",
+    verify: (request, _response, buffer) => {
+      (request as express.Request & { rawBody?: string }).rawBody = buffer.toString("utf8");
+    },
+  }));
   app.use((_request, _response, next) => {
     void ready.then(() => next(), next);
   });
+  if (services.core) app.use("/api", createCoreRouter(services.core));
 
   app.get("/api/health", (_request, response) => {
     response.json({

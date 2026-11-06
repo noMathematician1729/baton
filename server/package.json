@@ -26,7 +26,8 @@
     "test:retention": "node --import tsx --test src/services/retention/*.test.ts",
     "test:ledger": "tsx --test src/services/ledger/*.test.ts",
     "test:provider": "tsx --test services/provider/*.test.ts",
-    "test:api": "node --import tsx --test src/app.integration.test.ts src/app.routes.test.ts"
+    "test:api": "node --import tsx --test src/app.integration.test.ts src/app.routes.test.ts",
+    "test:core": "node --import tsx --test src/services/core/core.test.ts"
   },
   "dependencies": {
     "@arkiv-network/sdk": "^1.0.1",

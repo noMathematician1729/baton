@@ -16,7 +16,7 @@ export function SiteNav() {
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
-    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme === "dark" ? "#111a20" : "#f4efe5");
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme === "dark" ? "#08070b" : "#f6f3f7");
     try { localStorage.setItem("baton-theme", theme); } catch { /* storage unavailable */ }
   }, [theme]);
 
@@ -53,7 +53,7 @@ export function SiteNav() {
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
             )}
           </button>
-          <Link to="/console" className="btn btn-primary btn-sm">Launch console</Link>
+          <Link to="/console" className="btn btn-primary btn-sm">Open console</Link>
           <button className="menu-toggle" aria-label={menuOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={menuOpen} aria-controls="mobile-menu" onClick={() => setMenuOpen((open) => !open)}>
             <span /><span />
           </button>
@@ -64,7 +64,7 @@ export function SiteNav() {
           <NavLink to="/" end>Home</NavLink>
           <NavLink to="/how-it-works">How it works</NavLink>
           <NavLink to="/faq">FAQ</NavLink>
-          <Link to="/console" className="btn btn-primary">Launch console <span aria-hidden="true">↗</span></Link>
+          <Link to="/console" className="btn btn-primary">Open console <span aria-hidden="true">↗</span></Link>
         </nav>
       )}
     </header>

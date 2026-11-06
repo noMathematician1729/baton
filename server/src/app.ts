@@ -10,6 +10,7 @@ import { OperationLedger } from "./services/ledger/operationLedger.js";
 import { Gateway, LocalPaymentProvider } from "./services/gateway/gateway.js";
 import { SepoliaAuthorityReader } from "./chain/sepoliaAuthority.js";
 import { SepoliaEscrowWriter } from "./chain/sepoliaEscrowWriter.js";
+import type { MilestoneOffer } from "./chain/signing.js";
 import { authorizeSignedGatewayAction } from "./chain/gatewayActionAuth.js";
 import { serialise, type CheckpointHead, type Hex, type JobSnapshot } from "./protocol/v1.js";
 import { importInitialChainJob } from "./chain/chainJobImporter.js";
@@ -88,13 +89,15 @@ export function createApp(services = createServices()) {
   });
 
   app.get("/api/status", (_request, response) => {
+    const arkivConfigured = Boolean(env.ARKIV_ACCESS_KEY && env.ARKIV_SIGNER_PRIVATE_KEY && env.CHECKPOINT_ENCRYPTION_KEY);
     response.json({
       api: "ready",
-      contentStore: "arkiv",
+      contentStore: arkivConfigured ? "arkiv" : "unconfigured",
       configuration: {
-        arkiv: Boolean(env.ARKIV_ACCESS_KEY && env.ARKIV_SIGNER_PRIVATE_KEY && env.CHECKPOINT_ENCRYPTION_KEY),
+        arkiv: arkivConfigured,
         sepolia: Boolean(env.SEPOLIA_RPC_URL && env.BATON_ESCROW_ADDRESS && env.BATON_AUTHORITY_ADAPTER_ADDRESS),
         sepoliaMutations: gateway.supportsChainMutations,
+        takeoverPolicyEnabled: false,
         ens: Boolean(env.ENS_JOB_NAME && env.ENS_RESOLVER_ADDRESS),
         hederaX402: Boolean(env.HEDERA_ACCOUNT_ID && env.HEDERA_PRIVATE_KEY && env.X402_FACILITATOR_URL),
       },
@@ -116,6 +119,10 @@ export function createApp(services = createServices()) {
       digest: "sha256",
       emptyHead: "0x" + "00".repeat(32),
       confirmationBlocks: env.CONFIRMATION_BLOCKS,
+      gatewayAuth: {
+        chainId: env.SEPOLIA_CHAIN_ID,
+        verifyingContract: env.BATON_ESCROW_ADDRESS || null,
+      },
       networkMode: gateway.requiresChainAuthority
         ? "testnet-configured"
         : "local-fixture",
@@ -251,8 +258,32 @@ export function createApp(services = createServices()) {
     const acceptanceSpecHash = digestValue(body.acceptanceSpecHash, "acceptanceSpecHash");
     const expectedHead = digestValue(body.expectedHead, "expectedHead");
     const candidatePayload = { taskId, worker, epoch, acceptanceSpecHash, expectedHead, newHead };
-    await authorizeGatewayAction({ gateway, ledger, body, job, actor: worker, epoch, action: "CHECKPOINT_CANDIDATE", payload: candidatePayload, prefix: "workerAuth" });
-    await authorizeGatewayAction({ gateway, ledger, body, job, actor: job.terms.buyer, epoch, action: "MILESTONE_ACCEPT", payload: candidatePayload, prefix: "buyerAuth" });
+    let contractOffer: MilestoneOffer | undefined;
+    let offerSignature: Hex | undefined;
+    if (gateway.requiresChainAuthority) {
+      if (!job.chainJobId || !job.chainTaskId) throw new Error("CHAIN_JOB_BINDING_REQUIRED");
+      contractOffer = {
+        jobId: job.chainJobId,
+        taskId: job.chainTaskId,
+        termsHash: job.terms.termsHash,
+        producer: worker,
+        epoch: BigInt(epoch),
+        milestone: job.task.nextMilestone,
+        acceptanceSpecHash,
+        expectedHead,
+        newHead: newHead.manifestDigest,
+        manifestRef: newHead.manifestRef,
+        sequence: BigInt(newHead.sequence),
+        nonce: bigintValue(body.offerNonce, -1n),
+        expiry: bigintValue(body.offerExpiry, -1n),
+      };
+      offerSignature = signatureValue(body.offerSignature, "offerSignature");
+    }
+    const authorizedPayload = contractOffer
+      ? { ...candidatePayload, contractOffer: { ...contractOffer, signature: offerSignature } }
+      : candidatePayload;
+    await authorizeGatewayAction({ gateway, ledger, body, job, actor: worker, epoch, action: "CHECKPOINT_CANDIDATE", payload: authorizedPayload, prefix: "workerAuth" });
+    await authorizeGatewayAction({ gateway, ledger, body, job, actor: job.terms.buyer, epoch, action: "MILESTONE_ACCEPT", payload: authorizedPayload, prefix: "buyerAuth" });
     const offerAuthorization = body.offerSignature === undefined ? undefined : {
       nonce: bigintValue(body.offerNonce, -1n),
       expiry: bigintValue(body.offerExpiry, -1n),

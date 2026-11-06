@@ -1,95 +1,142 @@
-/* BATON tokens — parchment / ivory / navy / walnut, drawn from the Sistine fresco */
+/* BATON design tokens — black graphite with a focused violet signal palette. */
 :root {
-  --nav-height: 68px;
-  --content-max: 1280px;
+  color-scheme: dark;
+
+  --color-bg: #08070b;
+  --color-bg-subtle: #100d14;
+  --color-surface: #15121a;
+  --color-surface-raised: #1d1824;
+  --color-text: #f5f1f7;
+  --color-text-secondary: #b6adbd;
+  --color-text-muted: #817789;
+  --color-accent: #b79af5;
+  --color-accent-hover: #d0bdff;
+  --color-accent-secondary: #9576de;
+  --color-accent-secondary-hover: #b69cf4;
+  --color-accent-contrast: #130d1d;
+  --color-border: rgba(237, 222, 248, 0.09);
+  --color-border-strong: rgba(237, 222, 248, 0.17);
+  --color-focus: #d0bdff;
+  --color-success: #b79af5;
+  --color-warning: #e7c16d;
+  --color-error: #f17f73;
+  --color-error-contrast: #130d1d;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --space-9: 96px;
+
+  --text-display: clamp(3.5rem, 6vw, 5.75rem);
+  --text-h1: clamp(2.75rem, 5vw, 4.75rem);
+  --text-h2: clamp(2.125rem, 4vw, 3.5rem);
+  --text-h3: clamp(1.25rem, 2vw, 1.625rem);
+  --text-body-lg: 1.125rem;
+  --text-body: 0.9375rem;
+  --text-body-sm: 0.8125rem;
+  --text-caption: 0.6875rem;
+
+  --nav-height: 72px;
+  --content-max: 1320px;
   --reading-max: 720px;
-  --bg: #f4efe5;
-  --bg-soft: #e9e1d3;
-  --surface: #fffdf8;
-  --surface-2: #f8f4ed;
-  --line: rgba(32, 46, 61, 0.1);
-  --line-strong: rgba(32, 46, 61, 0.2);
-  --ink: #202e3d;
-  --ink-soft: #56616a;
-  --muted: #746f66;
-  --navy: #245573;
-  --navy-2: #367fa4;
-  --blue: #5c97b4;
-  --blue-soft: #deebf0;
-  --walnut: #775034;
-  --tan: #bc966c;
-  --tan-soft: #eee0ca;
-  --ochre: #b9823d;
-  --ok: #4f7a5a;
-  --danger: #a4493d;
-  --primary: var(--navy);
-  --primary-ink: #f6efe3;
-  --accent: var(--walnut);
-  --terminal-bg: #141a26;
-  --terminal-ink: #e7dfd1;
-  --radius: 16px;
-  --radius-sm: 10px;
-  --font-display: "Inter Tight", "Inter", system-ui, sans-serif;
+
+  /* Compatibility names shared by the existing console and page styles. */
+  --bg: var(--color-bg);
+  --bg-soft: var(--color-bg-subtle);
+  --surface: var(--color-surface);
+  --surface-2: var(--color-surface-raised);
+  --line: var(--color-border);
+  --line-strong: var(--color-border-strong);
+  --ink: var(--color-text);
+  --ink-soft: var(--color-text-secondary);
+  --muted: var(--color-text-muted);
+  --navy: var(--color-accent-secondary);
+  --navy-2: var(--color-accent-secondary-hover);
+  --blue: var(--color-focus);
+  --blue-soft: #21182b;
+  --walnut: var(--color-accent);
+  --tan: var(--color-accent);
+  --tan-soft: #21182b;
+  --ochre: var(--color-warning);
+  --ok: var(--color-success);
+  --danger: var(--color-error);
+  --primary: var(--color-accent);
+  --primary-ink: var(--color-accent-contrast);
+  --terminal-bg: #09070c;
+  --terminal-ink: #e8e0ed;
+
+  --radius: 14px;
+  --radius-sm: 8px;
+  --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
   --font-sans: "Inter", system-ui, sans-serif;
-  --font-editorial: "Instrument Serif", Georgia, serif;
-  --font-marketing: "DM Sans", "Inter", system-ui, sans-serif;
+  --font-editorial: "Space Grotesk", "Inter", system-ui, sans-serif;
+  --font-marketing: "Inter", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
-  --shadow-soft: 0 1px 2px rgba(27, 34, 51, 0.04), 0 14px 40px rgba(27, 34, 51, 0.08);
-  --shadow-lift: 0 2px 4px rgba(27, 34, 51, 0.05), 0 24px 60px rgba(27, 34, 51, 0.14);
-  color-scheme: light;
+  --shadow-soft: 0 10px 32px rgba(0, 0, 0, 0.16);
+  --shadow-lift: 0 20px 56px rgba(0, 0, 0, 0.3);
 }
 
-:root[data-theme="dark"] {
-  --bg: #111a20;
-  --bg-soft: #19252c;
-  --surface: #1d2a32;
-  --surface-2: #24333b;
-  --line: rgba(231, 237, 235, 0.09);
-  --line-strong: rgba(231, 237, 235, 0.18);
-  --ink: #eaf0ed;
-  --ink-soft: #b3c0c1;
-  --muted: #829092;
-  --navy: #9cc4d5;
-  --navy-2: #a9d2e3;
-  --blue: #82b7cd;
-  --blue-soft: #203842;
-  --walnut: #d0a77e;
-  --tan: #d2b38c;
-  --tan-soft: #352f28;
-  --ochre: #d7a866;
-  --ok: #8fbf98;
-  --danger: #e08a7d;
-  --primary: #83b2c6;
-  --primary-ink: #101b21;
-  --terminal-bg: #0a0e15;
-  --terminal-ink: #e7dfd1;
-  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.3), 0 14px 40px rgba(0, 0, 0, 0.35);
-  --shadow-lift: 0 2px 4px rgba(0, 0, 0, 0.3), 0 24px 60px rgba(0, 0, 0, 0.5);
-  color-scheme: dark;
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #f6f3f7;
+  --color-bg-subtle: #ece7f0;
+  --color-surface: #fcfaff;
+  --color-surface-raised: #f5f0f8;
+  --color-text: #211926;
+  --color-text-secondary: #594d62;
+  --color-text-muted: #756b7c;
+  --color-accent: #7052b6;
+  --color-accent-hover: #57408f;
+  --color-accent-secondary: #8c70cf;
+  --color-accent-secondary-hover: #7052b6;
+  --color-accent-contrast: #ffffff;
+  --color-border: rgba(45, 30, 54, 0.1);
+  --color-border-strong: rgba(45, 30, 54, 0.2);
+  --color-focus: #57408f;
+  --color-success: #7052b6;
+  --color-warning: #9a6a15;
+  --color-error: #a3362e;
+  --color-error-contrast: #ffffff;
+  --blue-soft: #ece5f6;
+  --tan: var(--color-accent);
+  --tan-soft: #ece5f6;
+  --terminal-bg: #17111c;
+  --terminal-ink: #eee5f2;
+  --shadow-soft: 0 10px 32px rgba(39, 24, 49, 0.07);
+  --shadow-lift: 0 20px 56px rgba(39, 24, 49, 0.13);
 }
 
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; scroll-padding-top: calc(var(--nav-height) + 12px); }
+html { scroll-behavior: smooth; scroll-padding-top: calc(var(--nav-height) + 16px); }
 body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
   font-family: var(--font-sans);
-  line-height: 1.5;
+  font-size: 15px;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
-  transition: background-color .35s ease, color .35s ease;
+  transition: background-color .25s ease, color .25s ease;
 }
 a { color: inherit; text-decoration: none; }
 button { font: inherit; color: inherit; }
-::selection { background: var(--tan-soft); color: var(--ink); }
-a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
-.skip-link { position: fixed; top: 8px; left: 8px; z-index: 100; padding: 10px 14px; border-radius: 9px; background: var(--navy); color: var(--primary-ink); font-size: 13px; transform: translateY(-150%); transition: transform .2s ease; }
+::selection { background: color-mix(in srgb, var(--primary) 35%, transparent); color: var(--ink); }
+a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visible, [role="button"]:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 3px;
+}
+.skip-link { position: fixed; top: 8px; left: 8px; z-index: 100; padding: 10px 14px; border-radius: var(--radius-sm); background: var(--primary); color: var(--primary-ink); font-size: 13px; transform: translateY(-150%); transition: transform .2s ease; }
 .skip-link:focus { transform: translateY(0); }
 main:focus { outline: none; }
-section[id] { scroll-margin-top: calc(var(--nav-height) + 12px); }
+section[id] { scroll-margin-top: calc(var(--nav-height) + 16px); }
 button { -webkit-tap-highlight-color: transparent; }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
-  *, *::before, *::after { scroll-behavior: auto !important; }
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }

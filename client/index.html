@@ -3,13 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f4efe5" />
-    <meta name="description" content="BATON — resumable, verifiable handoff for agent work. ENS identity, Arkiv memory, escrowed rewards." />
+    <meta name="theme-color" content="#08070b" />
+    <meta name="description" content="BATON makes long-running agent work resumable, with buyer-accepted checkpoints, encrypted recovery state, and scoped worker authority." />
     <title>BATON — Work that outlives its worker</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <script>
       try {
         var t = localStorage.getItem("baton-theme");
-        if (!t) t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        if (!t) t = "dark";
         document.documentElement.setAttribute("data-theme", t);
       } catch (e) {}
     </script>

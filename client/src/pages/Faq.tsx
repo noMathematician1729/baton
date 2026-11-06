@@ -15,7 +15,7 @@ const faqs: { cat: string; q: string; a: string }[] = [
   { cat: "Arkiv", q: "What if Arkiv content is missing?", a: "Recovery fails closed. If a manifest or chunk is missing, expired or doesn't match its digest, B stops instead of continuing from partial state. There is no fallback mirror." },
   { cat: "Payments", q: "How are workers paid?", a: "Each milestone has a fixed reward agreed before funding. When the buyer accepts a milestone, the producing worker is credited in the escrow, and that credit can't be reassigned. Workers withdraw their own credits." },
   { cat: "Payments", q: "What stops paying twice for the same API call?", a: "A buyer-controlled gateway records every paid operation by stable ID in a durable SQLite ledger. B reconciles uncertain operations and reuses paid outputs before buying anything new." },
-  { cat: "Status", q: "Is this live?", a: "The funded Sepolia lifecycle and ENS grant checks are live-verified. Live Arkiv write/readback, x402 settlement and separate-host recovery are still in progress. The console on this site is a clearly labeled browser simulation." },
+  { cat: "Status", q: "Is this live?", a: "The console reads jobs and runtime status from the configured BATON API. On-chain operations still depend on the API's chain, signer, storage and payment configuration. The separate /demo route is a clearly labeled browser simulation and makes no external calls." },
 ];
 
 const cats = ["All", ...Array.from(new Set(faqs.map((f) => f.cat)))];

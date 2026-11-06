@@ -155,6 +155,29 @@ export function Landing() {
             </Reveal>
           </div>
           <p className="ledger-note">Separate chains and balances. There is no shared balance or atomic settlement between these ledgers.</p>
+
+        <aside className="status-strip" aria-labelledby="status-title">
+          <div className="status-intro">
+            <p className="eyebrow">Integration status</p>
+            <h2 id="status-title">A clear view of what’s ready.</h2>
+            <p>Live checks, in-progress integrations, and the local demo are identified separately.</p>
+            <Link to="/faq" className="status-link">Read the current status <span aria-hidden="true">↗</span></Link>
+          </div>
+          <div className="status-grid">
+            <div className="status-item">
+              <span className="status-label"><i className="status-dot is-verified" />Verified</span>
+              <p>Historical Sepolia lifecycle and ENS grant checks.</p>
+            </div>
+            <div className="status-item">
+              <span className="status-label"><i className="status-dot is-progress" />In progress</span>
+              <p>Live Arkiv write/readback, x402 settlement, and separate-host recovery.</p>
+            </div>
+            <div className="status-item">
+              <span className="status-label"><i className="status-dot" />Browser demo</span>
+              <p>Simulation only; it makes no chain, Arkiv, or x402 calls.</p>
+            </div>
+          </div>
+        </aside>
         </section>
 
         <GuaranteeSection />
@@ -163,8 +186,8 @@ export function Landing() {
           <Reveal>
             <Baton width={136} className="final-baton" />
             <h2>Kill an agent. <em>Watch the job keep going.</em></h2>
-            <p className="section-intro">Open the console, start a job under an ENS name, and see Arkiv answer every query the replacement worker makes.</p>
-            <Link to="/console" className="btn btn-primary btn-lg">Launch the console</Link>
+            <p className="section-intro">Start a browser simulation, stop a worker, and follow how its successor recovers the last checkpoint the buyer accepted.</p>
+            <Link to="/demo" className="btn btn-primary btn-lg">Run browser demo <span aria-hidden="true">↗</span></Link>
           </Reveal>
         </section>
       </div>

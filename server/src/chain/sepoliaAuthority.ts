@@ -1,5 +1,6 @@
 import {
   createPublicClient,
+  decodeFunctionData,
   getAddress,
   http,
   keccak256,
@@ -18,12 +19,16 @@ const escrowAbi = parseAbi([
   "function jobs(bytes32 jobId) view returns (address buyer, address rewardToken, address authority, address verifier, bytes32 termsHash, bytes32 taskId, uint256 rewardPool, uint64 cutoff, uint64 epoch, uint32 nextMilestone, address assignedWorker, bytes32 acceptedHead, uint256 unallocated, bool paused, bool drained, bool closed, uint256 totalCredited, uint256 totalWithdrawn, uint256 totalRefunded)",
   "function acceptedCheckpoint(bytes32 jobId) view returns (bytes32 head, uint64 sequence, string manifestRef)",
   "function milestoneCount(bytes32 jobId) view returns (uint256)",
+  "function credits(bytes32 jobId, address worker) view returns (uint256)",
+  "function withdrawnCredits(bytes32 jobId, address worker) view returns (uint256)",
 ]);
+const claimAbi = parseAbi(["function claim(bytes32 jobId)"]);
 const authorityAbi = parseAbi([
   "function hasWorkerGrant(bytes32 jobId, address worker) view returns (bool)",
 ]);
 const expectedEscrowVersion = keccak256(stringToHex("BATON_JOB_ESCROW_V2"));
-type AuthorityPublicClient = Pick<PublicClient, "getChainId" | "getBlockNumber" | "getBlock" | "readContract">;
+type AuthorityPublicClient = Pick<PublicClient, "getChainId" | "getBlockNumber" | "getBlock" | "readContract">
+  & Partial<Pick<PublicClient, "getTransaction" | "getTransactionReceipt">>;
 
 export type ChainAdmission = {
   chainJobId: Hex;
@@ -43,12 +48,54 @@ export type ConfirmedChainRead = {
   confirmationBlocks: number;
 };
 
+export type ConfirmedTakeoverState = {
+  assignedWorker: Hex;
+  epoch: number;
+  nextMilestone: number;
+  totalCredited: bigint;
+  acceptedHead: Hex;
+  acceptedSequence: number;
+  acceptedManifestRef: string;
+  paused: boolean;
+  drained: boolean;
+  closed: boolean;
+  expired: boolean;
+  successorGranted: boolean;
+};
+
+export type ConfirmedWorkerAccounting = {
+  credits: bigint;
+  withdrawnCredits: bigint;
+};
+
 export interface JobAuthorityReader {
   readonly lastConfirmedRead?: ConfirmedChainRead;
   assertCurrentWorker(input: ChainAdmission): Promise<void>;
   assertAssignedWorker(input: ChainAdmission): Promise<void>;
+  assertReconciliationWorker?(input: ChainAdmission): Promise<void>;
   assertImportableJob?(input: JobSnapshot): Promise<void>;
   assertSnapshotCurrent?(input: JobSnapshot): Promise<void>;
+  assertAssignmentTransition?(job: JobSnapshot, worker: Hex): Promise<boolean>;
+  assertAssignmentConfirmed?(job: JobSnapshot, worker: Hex): Promise<void>;
+  assertMilestoneTransition?(job: JobSnapshot, input: {
+    worker: Hex;
+    epoch: number;
+    acceptanceSpecHash: Hex;
+    expectedHead: Hex;
+    newHead: { manifestDigest: Hex; manifestRef: string; sequence: number };
+  }): Promise<boolean>;
+  assertMilestoneAccepted?(job: JobSnapshot, input: {
+    worker: Hex;
+    epoch: number;
+    newHead: { manifestDigest: Hex; manifestRef: string; sequence: number };
+    nextMilestone: number;
+    totalCredited: bigint;
+  }): Promise<void>;
+  assertPauseAllowed?(job: JobSnapshot, worker: Hex): Promise<boolean>;
+  assertTaskPaused?(job: JobSnapshot, worker: Hex): Promise<void>;
+  assertResumeAllowed?(job: JobSnapshot, worker: Hex): Promise<boolean>;
+  assertTaskResumed?(job: JobSnapshot, worker: Hex): Promise<void>;
+  confirmWorkerClaim?(job: JobSnapshot, worker: Hex, transactionHash: Hex): Promise<ConfirmedWorkerAccounting>;
 }
 
 type EscrowJobState = {
@@ -131,6 +178,174 @@ export class SepoliaAuthorityReader implements JobAuthorityReader {
     if (!granted) throw new Error("WORKER_AUTHORITY_REVOKED");
   }
 
+  /** Returns true when the exact assignment is already committed, making retries safe after a lost API response. */
+  public async assertAssignmentTransition(job: JobSnapshot, worker: Hex): Promise<boolean> {
+    const state = await this.readTakeoverState(job, worker);
+    this.assertSameHead(state, job.task.acceptedHead.manifestDigest, job.task.acceptedHead.sequence, job.task.acceptedHead.manifestRef);
+    if (state.nextMilestone !== 0 || state.totalCredited !== 0n || state.paused || state.drained || state.closed || state.expired) {
+      throw new Error("ONCHAIN_ASSIGNMENT_STATE_MISMATCH");
+    }
+    if (!state.successorGranted) throw new Error("WORKER_AUTHORITY_REVOKED");
+    const currentCredits = job.credits.reduce((total, credit) => total + credit.amount, 0n);
+    if (currentCredits !== 0n) throw new Error("LOCAL_ASSIGNMENT_STATE_MISMATCH");
+    if (state.epoch === 0 && state.assignedWorker.toLowerCase() === zeroAddress) return false;
+    if (state.epoch === 1 && state.assignedWorker.toLowerCase() === worker.toLowerCase()) return true;
+    throw new Error("ONCHAIN_ASSIGNMENT_STATE_MISMATCH");
+  }
+
+  public async assertAssignmentConfirmed(job: JobSnapshot, worker: Hex): Promise<void> {
+    const alreadyAssigned = await this.assertAssignmentTransition(job, worker);
+    if (!alreadyAssigned) throw new Error("ONCHAIN_ASSIGNMENT_NOT_CONFIRMED");
+  }
+
+  /** Classifies the exact local pre-state or the exact committed post-state for an accepted checkpoint. */
+  public async assertMilestoneTransition(job: JobSnapshot, input: {
+    worker: Hex;
+    epoch: number;
+    acceptanceSpecHash: Hex;
+    expectedHead: Hex;
+    newHead: { manifestDigest: Hex; manifestRef: string; sequence: number };
+  }): Promise<boolean> {
+    const state = await this.readTakeoverState(job, input.worker);
+    if (state.assignedWorker.toLowerCase() !== input.worker.toLowerCase()) throw new Error("WORKER_NOT_ASSIGNED");
+    if (state.epoch !== input.epoch) throw new Error("STALE_EPOCH");
+    if (state.paused || state.drained || state.closed || state.expired) throw new Error("ONCHAIN_JOB_NOT_OPEN");
+    if (!state.successorGranted) throw new Error("WORKER_AUTHORITY_REVOKED");
+    const milestone = job.terms.task.milestones[job.task.nextMilestone];
+    if (!milestone || milestone.acceptanceSpecHash.toLowerCase() !== input.acceptanceSpecHash.toLowerCase()) {
+      throw new Error("ACCEPTANCE_SPEC_MISMATCH");
+    }
+    const credited = job.credits.reduce((total, credit) => total + credit.amount, 0n);
+    const committed = state.acceptedHead.toLowerCase() === input.newHead.manifestDigest.toLowerCase()
+      && state.acceptedSequence === input.newHead.sequence
+      && state.acceptedManifestRef === input.newHead.manifestRef
+      && state.nextMilestone === job.task.nextMilestone + 1
+      && state.totalCredited === credited + milestone.reward;
+    if (committed) return true;
+
+    if (state.acceptedHead.toLowerCase() !== input.expectedHead.toLowerCase()
+      || state.acceptedHead.toLowerCase() !== job.task.acceptedHead.manifestDigest.toLowerCase()
+      || state.acceptedSequence !== job.task.acceptedHead.sequence
+      || state.acceptedManifestRef !== job.task.acceptedHead.manifestRef
+      || state.nextMilestone !== job.task.nextMilestone
+      || state.totalCredited !== credited) throw new Error("ONCHAIN_MILESTONE_STATE_MISMATCH");
+    if (input.newHead.sequence !== state.acceptedSequence + 1) throw new Error("CHECKPOINT_SEQUENCE_INVALID");
+    return false;
+  }
+
+  public async assertMilestoneAccepted(job: JobSnapshot, input: {
+    worker: Hex;
+    epoch: number;
+    newHead: { manifestDigest: Hex; manifestRef: string; sequence: number };
+    nextMilestone: number;
+    totalCredited: bigint;
+  }): Promise<void> {
+    const state = await this.readTakeoverState(job, input.worker);
+    if (state.assignedWorker.toLowerCase() !== input.worker.toLowerCase()) throw new Error("ONCHAIN_ASSIGNMENT_CHANGED");
+    if (state.epoch !== input.epoch) throw new Error("ONCHAIN_EPOCH_CHANGED");
+    this.assertSameHead(state, input.newHead.manifestDigest, input.newHead.sequence, input.newHead.manifestRef);
+    if (state.nextMilestone !== input.nextMilestone || state.totalCredited !== input.totalCredited) {
+      throw new Error("ONCHAIN_MILESTONE_ACCOUNTING_MISMATCH");
+    }
+    if (state.paused || state.drained || state.closed || state.expired) throw new Error("ONCHAIN_JOB_NOT_OPEN");
+    if (!state.successorGranted) throw new Error("WORKER_AUTHORITY_REVOKED");
+  }
+
+  public async assertPauseAllowed(job: JobSnapshot, worker: Hex): Promise<boolean> {
+    const state = await this.readTakeoverState(job, worker);
+    this.assertLocalLifecycle(job, state, worker);
+    if (state.drained || state.closed || state.expired) throw new Error("ONCHAIN_JOB_NOT_OPEN");
+    return state.paused;
+  }
+
+  public async assertTaskPaused(job: JobSnapshot, worker: Hex): Promise<void> {
+    const state = await this.readTakeoverState(job, worker);
+    this.assertLocalLifecycle(job, state, worker);
+    if (!state.paused || state.drained || state.closed || state.expired) throw new Error("ONCHAIN_PAUSE_NOT_CONFIRMED");
+  }
+
+  public async assertResumeAllowed(job: JobSnapshot, worker: Hex): Promise<boolean> {
+    const state = await this.readTakeoverState(job, worker);
+    this.assertLocalLifecycle(job, state, worker);
+    if (state.drained || state.closed || state.expired) throw new Error("ONCHAIN_JOB_NOT_OPEN");
+    if (!state.successorGranted) throw new Error("WORKER_AUTHORITY_REVOKED");
+    return state.paused;
+  }
+
+  public async assertTaskResumed(job: JobSnapshot, worker: Hex): Promise<void> {
+    const state = await this.readTakeoverState(job, worker);
+    this.assertLocalLifecycle(job, state, worker);
+    if (state.paused || state.drained || state.closed || state.expired) throw new Error("ONCHAIN_RESUME_NOT_CONFIRMED");
+    if (!state.successorGranted) throw new Error("WORKER_AUTHORITY_REVOKED");
+  }
+
+  public async confirmWorkerClaim(job: JobSnapshot, worker: Hex, transactionHash: Hex): Promise<ConfirmedWorkerAccounting> {
+    if (!job.chainJobId || !job.chainTaskId) throw new Error("CHAIN_JOB_BINDING_REQUIRED");
+    const chainJobId = job.chainJobId;
+    const state = await this.readConfirmedJob({
+      chainJobId: job.chainJobId,
+      chainTaskId: job.chainTaskId,
+      termsHash: job.terms.termsHash,
+      acceptedHead: job.task.acceptedHead.manifestDigest,
+      acceptedSequence: job.task.acceptedHead.sequence,
+      acceptedManifestRef: job.task.acceptedHead.manifestRef,
+      buyer: job.terms.buyer,
+      worker,
+      epoch: job.task.epoch,
+    }, { includeGrant: false, accountingWorker: getAddress(worker) });
+    this.assertJobIdentity(state.state, {
+      chainJobId: job.chainJobId,
+      chainTaskId: job.chainTaskId,
+      termsHash: job.terms.termsHash,
+      acceptedHead: job.task.acceptedHead.manifestDigest,
+      acceptedSequence: job.task.acceptedHead.sequence,
+      acceptedManifestRef: job.task.acceptedHead.manifestRef,
+      buyer: job.terms.buyer,
+      worker,
+      epoch: job.task.epoch,
+    });
+    const confirmedBlock = this.lastRead?.blockNumber;
+    if (confirmedBlock === undefined || !state.workerAccounting) throw new Error("CLAIM_CONFIRMATION_UNAVAILABLE");
+
+    const evidence = await Promise.all(this.clients.map(async (client) => {
+      if (!client.getTransaction || !client.getTransactionReceipt) throw new Error("CLAIM_CONFIRMATION_UNAVAILABLE");
+      const [transaction, receipt] = await Promise.all([
+        client.getTransaction({ hash: transactionHash }),
+        client.getTransactionReceipt({ hash: transactionHash }),
+      ]);
+      if (transaction.from.toLowerCase() !== worker.toLowerCase()
+        || transaction.to?.toLowerCase() !== this.escrowAddress.toLowerCase()
+        || receipt.status !== "success"
+        || receipt.transactionHash.toLowerCase() !== transactionHash.toLowerCase()
+        || receipt.blockNumber > confirmedBlock) throw new Error("CLAIM_TRANSACTION_INVALID");
+      let decoded;
+      try {
+        decoded = decodeFunctionData({ abi: claimAbi, data: transaction.input });
+      } catch {
+        throw new Error("CLAIM_TRANSACTION_INVALID");
+      }
+      if (decoded.functionName !== "claim" || decoded.args[0].toLowerCase() !== chainJobId.toLowerCase()) {
+        throw new Error("CLAIM_TRANSACTION_INVALID");
+      }
+      const receiptBlock = await client.getBlock({ blockNumber: receipt.blockNumber });
+      if (!receipt.blockHash || receiptBlock.hash?.toLowerCase() !== receipt.blockHash.toLowerCase()) {
+        throw new Error("CHAIN_STATE_REORGED");
+      }
+      return {
+        from: transaction.from.toLowerCase(),
+        to: transaction.to?.toLowerCase(),
+        input: transaction.input.toLowerCase(),
+        blockNumber: receipt.blockNumber.toString(),
+        blockHash: receipt.blockHash.toLowerCase(),
+        status: receipt.status,
+      };
+    }));
+    if (evidence.some((item) => JSON.stringify(item) !== JSON.stringify(evidence[0]))) {
+      throw new Error("CHAIN_RPC_DISAGREEMENT");
+    }
+    return state.workerAccounting;
+  }
+
   public async assertAssignedWorker(input: ChainAdmission): Promise<void> {
     const { state, granted } = await this.readConfirmedJob(input);
     this.assertBinding(state, input);
@@ -139,6 +354,103 @@ export class SepoliaAuthorityReader implements JobAuthorityReader {
     if (state.paused || state.drained || state.closed || state.cutoff <= state.blockTimestamp) {
       throw new Error("ONCHAIN_JOB_NOT_OPEN");
     }
+    if (!granted) throw new Error("WORKER_AUTHORITY_REVOKED");
+  }
+
+  /** Read the current, confirmed takeover-relevant state without assuming the local snapshot is current. */
+  public async readTakeoverState(job: JobSnapshot, successor: Hex): Promise<ConfirmedTakeoverState> {
+    if (!job.chainJobId || !job.chainTaskId) throw new Error("CHAIN_JOB_BINDING_REQUIRED");
+    const admission: ChainAdmission = {
+      chainJobId: job.chainJobId,
+      chainTaskId: job.chainTaskId,
+      termsHash: job.terms.termsHash,
+      acceptedHead: job.task.acceptedHead.manifestDigest,
+      acceptedSequence: job.task.acceptedHead.sequence,
+      acceptedManifestRef: job.task.acceptedHead.manifestRef,
+      buyer: job.terms.buyer,
+      worker: successor,
+      epoch: job.task.epoch,
+    };
+    const { state, granted } = await this.readConfirmedJob(admission);
+    this.assertJobIdentity(state, admission);
+    if (state.epoch > BigInt(Number.MAX_SAFE_INTEGER)
+      || state.nextMilestone > BigInt(Number.MAX_SAFE_INTEGER)
+      || state.acceptedSequence > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error("ONCHAIN_STATE_OUT_OF_RANGE");
+    }
+    return {
+      assignedWorker: state.assignedWorker,
+      epoch: Number(state.epoch),
+      nextMilestone: Number(state.nextMilestone),
+      totalCredited: state.totalCredited,
+      acceptedHead: state.acceptedHead,
+      acceptedSequence: Number(state.acceptedSequence),
+      acceptedManifestRef: state.acceptedManifestRef,
+      paused: state.paused,
+      drained: state.drained,
+      closed: state.closed,
+      expired: state.cutoff <= state.blockTimestamp,
+      successorGranted: granted,
+    };
+  }
+
+  public async assertTaskDrained(job: JobSnapshot, successor: Hex): Promise<void> {
+    const state = await this.readTakeoverState(job, successor);
+    this.assertSameHead(state, job.task.acceptedHead.manifestDigest, job.task.acceptedHead.sequence, job.task.acceptedHead.manifestRef);
+    if (state.assignedWorker.toLowerCase() !== job.task.assignedWorker?.toLowerCase()) throw new Error("ONCHAIN_ASSIGNMENT_CHANGED");
+    if (state.epoch !== job.task.epoch) throw new Error("ONCHAIN_EPOCH_CHANGED");
+    if (!state.drained || state.paused || state.closed || state.expired) throw new Error("ONCHAIN_TASK_NOT_DRAINED");
+  }
+
+  /** Validate whether the buyer can safely cancel a drain; returns the confirmed chain drain flag. */
+  public async assertCanCancelDrain(job: JobSnapshot, worker: Hex): Promise<boolean> {
+    const state = await this.readTakeoverState(job, worker);
+    this.assertSameHead(state, job.task.acceptedHead.manifestDigest, job.task.acceptedHead.sequence, job.task.acceptedHead.manifestRef);
+    if (state.assignedWorker.toLowerCase() !== worker.toLowerCase()) throw new Error("ONCHAIN_ASSIGNMENT_CHANGED");
+    if (state.epoch !== job.task.epoch) throw new Error("ONCHAIN_EPOCH_CHANGED");
+    if (state.paused || state.closed || state.expired) throw new Error("ONCHAIN_JOB_NOT_OPEN");
+    if (!state.successorGranted) throw new Error("WORKER_AUTHORITY_REVOKED");
+    return state.drained;
+  }
+
+  public async assertDrainCancelled(job: JobSnapshot, worker: Hex): Promise<void> {
+    const state = await this.readTakeoverState(job, worker);
+    this.assertSameHead(state, job.task.acceptedHead.manifestDigest, job.task.acceptedHead.sequence, job.task.acceptedHead.manifestRef);
+    if (state.assignedWorker.toLowerCase() !== worker.toLowerCase()) throw new Error("ONCHAIN_ASSIGNMENT_CHANGED");
+    if (state.epoch !== job.task.epoch) throw new Error("ONCHAIN_EPOCH_CHANGED");
+    if (state.drained || state.paused || state.closed || state.expired) throw new Error("ONCHAIN_JOB_NOT_OPEN");
+    if (!state.successorGranted) throw new Error("WORKER_AUTHORITY_REVOKED");
+  }
+
+  public async assertPreapprovedSuccessor(job: JobSnapshot, successor: Hex): Promise<void> {
+    const state = await this.readTakeoverState(job, successor);
+    this.assertSameHead(state, job.task.acceptedHead.manifestDigest, job.task.acceptedHead.sequence, job.task.acceptedHead.manifestRef);
+    if (state.assignedWorker.toLowerCase() !== job.task.assignedWorker?.toLowerCase()) throw new Error("ONCHAIN_ASSIGNMENT_CHANGED");
+    if (state.epoch !== job.task.epoch) throw new Error("ONCHAIN_EPOCH_CHANGED");
+    if (!state.drained || state.paused || state.closed || state.expired) throw new Error("ONCHAIN_TASK_NOT_DRAINED");
+    if (!state.successorGranted) throw new Error("SUCCESSOR_AUTHORITY_NOT_GRANTED");
+  }
+
+  public async assertTakeoverConfirmed(
+    job: JobSnapshot,
+    successor: Hex,
+    expectedEpoch: number,
+    expectedHead: Hex,
+  ): Promise<void> {
+    const state = await this.readTakeoverState(job, successor);
+    this.assertSameHead(state, expectedHead, job.task.acceptedHead.sequence, job.task.acceptedHead.manifestRef);
+    if (state.assignedWorker.toLowerCase() !== successor.toLowerCase()) throw new Error("ONCHAIN_ASSIGNMENT_NOT_CONFIRMED");
+    if (state.epoch !== expectedEpoch + 1) throw new Error("ONCHAIN_EPOCH_NOT_CONFIRMED");
+    if (state.drained || state.paused || state.closed || state.expired) throw new Error("ONCHAIN_JOB_NOT_OPEN");
+    if (!state.successorGranted) throw new Error("SUCCESSOR_AUTHORITY_NOT_GRANTED");
+  }
+
+  /** Confirm the original actor for already-admitted work, even while the task is drained. */
+  public async assertReconciliationWorker(input: ChainAdmission): Promise<void> {
+    const { state, granted } = await this.readConfirmedJob(input);
+    this.assertBinding(state, input);
+    if (state.assignedWorker.toLowerCase() !== input.worker.toLowerCase()) throw new Error("WORKER_NOT_ASSIGNED");
+    if (state.epoch !== BigInt(input.epoch)) throw new Error("STALE_EPOCH");
     if (!granted) throw new Error("WORKER_AUTHORITY_REVOKED");
   }
 
@@ -231,6 +543,13 @@ export class SepoliaAuthorityReader implements JobAuthorityReader {
   }
 
   private assertBinding(state: EscrowJobState, input: ChainAdmission): void {
+    this.assertJobIdentity(state, input);
+    if (state.acceptedHead.toLowerCase() !== input.acceptedHead.toLowerCase()) throw new Error("ONCHAIN_HEAD_MISMATCH");
+    if (state.acceptedSequence !== BigInt(input.acceptedSequence)) throw new Error("ONCHAIN_SEQUENCE_MISMATCH");
+    if (state.acceptedManifestRef !== input.acceptedManifestRef) throw new Error("ONCHAIN_LOCATOR_MISMATCH");
+  }
+
+  private assertJobIdentity(state: EscrowJobState, input: ChainAdmission): void {
     if (state.buyer === zeroAddress) throw new Error("ONCHAIN_JOB_NOT_FOUND");
     if (state.buyer.toLowerCase() !== input.buyer.toLowerCase()) throw new Error("ONCHAIN_BUYER_MISMATCH");
     if (state.authority.toLowerCase() !== this.adapterAddress.toLowerCase()) {
@@ -238,15 +557,33 @@ export class SepoliaAuthorityReader implements JobAuthorityReader {
     }
     if (state.taskId.toLowerCase() !== input.chainTaskId.toLowerCase()) throw new Error("ONCHAIN_TASK_MISMATCH");
     if (state.termsHash.toLowerCase() !== input.termsHash.toLowerCase()) throw new Error("ONCHAIN_TERMS_MISMATCH");
-    if (state.acceptedHead.toLowerCase() !== input.acceptedHead.toLowerCase()) throw new Error("ONCHAIN_HEAD_MISMATCH");
-    if (state.acceptedSequence !== BigInt(input.acceptedSequence)) throw new Error("ONCHAIN_SEQUENCE_MISMATCH");
-    if (state.acceptedManifestRef !== input.acceptedManifestRef) throw new Error("ONCHAIN_LOCATOR_MISMATCH");
+  }
+
+  private assertSameHead(state: ConfirmedTakeoverState, expectedHead: Hex, sequence: number, manifestRef: string): void {
+    if (state.acceptedHead.toLowerCase() !== expectedHead.toLowerCase()) throw new Error("ONCHAIN_HEAD_MISMATCH");
+    if (state.acceptedSequence !== sequence) throw new Error("ONCHAIN_SEQUENCE_MISMATCH");
+    if (state.acceptedManifestRef !== manifestRef) throw new Error("ONCHAIN_LOCATOR_MISMATCH");
+  }
+
+  private assertLocalLifecycle(job: JobSnapshot, state: ConfirmedTakeoverState, worker: Hex): void {
+    if (state.assignedWorker.toLowerCase() !== worker.toLowerCase()) throw new Error("ONCHAIN_ASSIGNMENT_CHANGED");
+    if (state.epoch !== job.task.epoch) throw new Error("ONCHAIN_EPOCH_CHANGED");
+    this.assertSameHead(state, job.task.acceptedHead.manifestDigest, job.task.acceptedHead.sequence, job.task.acceptedHead.manifestRef);
+    const credited = job.credits.reduce((total, credit) => total + credit.amount, 0n);
+    if (state.nextMilestone !== job.task.nextMilestone || state.totalCredited !== credited) {
+      throw new Error("ONCHAIN_JOB_ACCOUNTING_MISMATCH");
+    }
   }
 
   private async readConfirmedJob(
     input: ChainAdmission,
-    options: { includeGrant?: boolean; includeMilestoneCount?: boolean } = {},
-  ): Promise<{ state: EscrowJobState; granted: boolean; milestoneCount: bigint }> {
+    options: { includeGrant?: boolean; includeMilestoneCount?: boolean; accountingWorker?: Address } = {},
+  ): Promise<{
+    state: EscrowJobState;
+    granted: boolean;
+    milestoneCount: bigint;
+    workerAccounting?: ConfirmedWorkerAccounting;
+  }> {
     try {
       const chainIds = await Promise.all(this.clients.map((client) => client.getChainId()));
       if (chainIds.some((chainId) => chainId !== sepolia.id)) throw new Error("CHAIN_NETWORK_MISMATCH");
@@ -283,7 +620,7 @@ export class SepoliaAuthorityReader implements JobAuthorityReader {
           throw new Error("ESCROW_PROTOCOL_MISMATCH");
         }
 
-        const [result, checkpoint, granted, milestoneCount] = await Promise.all([
+        const [result, checkpoint, granted, milestoneCount, workerCredits, workerWithdrawnCredits] = await Promise.all([
           client.readContract({
             address: this.escrowAddress,
             abi: escrowAbi,
@@ -312,12 +649,26 @@ export class SepoliaAuthorityReader implements JobAuthorityReader {
             args: [input.chainJobId],
             blockNumber,
           }) : Promise.resolve(0n),
+          options.accountingWorker ? client.readContract({
+            address: this.escrowAddress,
+            abi: escrowAbi,
+            functionName: "credits",
+            args: [input.chainJobId, options.accountingWorker],
+            blockNumber,
+          }) : Promise.resolve(0n),
+          options.accountingWorker ? client.readContract({
+            address: this.escrowAddress,
+            abi: escrowAbi,
+            functionName: "withdrawnCredits",
+            args: [input.chainJobId, options.accountingWorker],
+            blockNumber,
+          }) : Promise.resolve(0n),
         ]);
         const blockAfter = await client.getBlock({ blockNumber });
         if (!blockAfter.hash || blocksBefore[index]?.hash?.toLowerCase() !== blockAfter.hash.toLowerCase()) {
           throw new Error("CHAIN_STATE_REORGED");
         }
-        return { result, checkpoint, granted, milestoneCount, blockAfter };
+        return { result, checkpoint, granted, milestoneCount, workerCredits, workerWithdrawnCredits, blockAfter };
       }));
       const referenceFingerprint = confirmedReadFingerprint(readings[0]!);
       if (readings.some((reading) => confirmedReadFingerprint(reading) !== referenceFingerprint)) {
@@ -352,6 +703,9 @@ export class SepoliaAuthorityReader implements JobAuthorityReader {
         },
         granted,
         milestoneCount: BigInt(milestoneCount),
+        workerAccounting: options.accountingWorker
+          ? { credits: BigInt(readings[0]!.workerCredits), withdrawnCredits: BigInt(readings[0]!.workerWithdrawnCredits) }
+          : undefined,
       };
     } catch (error) {
       if (error instanceof Error && [
@@ -372,6 +726,8 @@ function confirmedReadFingerprint(reading: {
   checkpoint: readonly unknown[];
   granted: boolean;
   milestoneCount: bigint;
+  workerCredits: bigint;
+  workerWithdrawnCredits: bigint;
 }): string {
   const normalize = (value: unknown) => {
     if (typeof value === "bigint") return value.toString();
@@ -383,6 +739,8 @@ function confirmedReadFingerprint(reading: {
     reading.checkpoint.map(normalize),
     reading.granted,
     reading.milestoneCount.toString(),
+    reading.workerCredits.toString(),
+    reading.workerWithdrawnCredits.toString(),
   ]);
 }
 

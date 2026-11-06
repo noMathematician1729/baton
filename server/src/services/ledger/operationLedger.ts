@@ -10,6 +10,7 @@ import {
   type Hex,
   type JobSnapshot,
   type OperationState,
+  type OperationPageCursor,
   serialise,
   type ServicePolicy,
 } from "../../protocol/v1.js";
@@ -28,12 +29,13 @@ export type ReserveRequest = {
   taskId: string;
   worker: Hex;
   epoch: number;
+  controlGeneration?: number;
   service: string;
   inputDigest: Hex;
   requestFingerprint: Hex;
   providerId: string;
   network: string;
-  payee: Hex;
+  payee: string;
   policyVersion: string;
   approvedPolicyHash: Hex;
   amount: bigint;
@@ -46,6 +48,47 @@ export type PendingJobProvision = {
   state: "PENDING";
 };
 
+export type GatewayTaskControlState =
+  | "RUNNING"
+  | "PAUSED"
+  | "DRAINING"
+  | "DRAINED"
+  | "TAKEOVER_PENDING";
+
+export type GatewayTaskControl = {
+  jobId: string;
+  taskId: string;
+  state: GatewayTaskControlState;
+  generation: number;
+  worker: Hex | null;
+  epoch: number;
+  successor: Hex | null;
+  successorEpoch: number | null;
+  updatedAt: string;
+};
+
+export type WorkerHeartbeat = {
+  jobId: string;
+  taskId: string;
+  worker: Hex;
+  epoch: number;
+  observedAt: number;
+};
+
+export type StoredTakeoverAcknowledgement = {
+  jobId: string;
+  taskId: string;
+  successor: Hex;
+  epoch: number;
+  expectedHead: Hex;
+  compatibilityReport: Hex;
+  servicePolicy: Hex;
+  nonce: string;
+  expiry: number;
+  signature: Hex;
+  receivedAt: number;
+};
+
 type BudgetRow = {
   policy_json: string;
   deposits: string;
@@ -56,7 +99,18 @@ type BudgetRow = {
 };
 
 type OperationRow = { operation_json: string };
-type OperationPatch = Partial<Pick<GatewayOperation, "providerReceipt" | "outputDigest" | "outputRef" | "failureCode" | "reusedBy">>;
+type TaskControlRow = {
+  job_id: string;
+  task_id: string;
+  state: GatewayTaskControlState;
+  generation: number;
+  worker: string | null;
+  epoch: number;
+  successor: string | null;
+  successor_epoch: number | null;
+  updated_at: string;
+};
+type OperationPatch = Partial<Pick<GatewayOperation, "providerReceipt" | "settledAmount" | "outputDigest" | "outputRef" | "failureCode" | "reusedBy">>;
 
 /** Durable operation and service-budget ledger backed by the gateway's local SQLite database. */
 export class OperationLedger {
@@ -75,7 +129,7 @@ export class OperationLedger {
 
   public async reset(): Promise<void> {
     this.transaction((db) => {
-      db.exec("DELETE FROM operations; DELETE FROM job_provisioning; DELETE FROM budgets; DELETE FROM auth_nonces;");
+      db.exec("DELETE FROM operations; DELETE FROM gateway_task_control; DELETE FROM worker_heartbeats; DELETE FROM takeover_acknowledgements; DELETE FROM job_provisioning; DELETE FROM budgets; DELETE FROM auth_nonces;");
     });
   }
 
@@ -138,8 +192,292 @@ export class OperationLedger {
     });
   }
 
-  public async reserve(request: ReserveRequest): Promise<GatewayOperation> {
+  public async ensureTaskControl(input: {
+    jobId: string;
+    taskId: string;
+    worker: Hex | null;
+    epoch: number;
+    state: GatewayTaskControlState;
+  }): Promise<GatewayTaskControl> {
     return this.transaction((db) => {
+      const timestamp = new Date().toISOString();
+      const state = input.state;
+      const generation = state === "DRAINING" ? 1 : 0;
+      db.prepare(`
+        INSERT OR IGNORE INTO gateway_task_control
+          (job_id, task_id, state, generation, worker, epoch, successor, successor_epoch, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?)
+      `).run(input.jobId, input.taskId, state, generation, input.worker, input.epoch, timestamp);
+      if (state === "DRAINING" && !this.hasUnresolvedOperations(db, input.jobId, input.taskId)) {
+        this.advanceDrainIfClear(db, input.jobId, input.taskId);
+      }
+      return this.requireTaskControl(db, input.jobId, input.taskId);
+    });
+  }
+
+  public async getTaskControl(jobId: string, taskId: string): Promise<GatewayTaskControl | undefined> {
+    const row = this.database().prepare(`
+      SELECT job_id, task_id, state, generation, worker, epoch, successor, successor_epoch, updated_at
+      FROM gateway_task_control WHERE job_id = ? AND task_id = ?
+    `).get(jobId, taskId) as TaskControlRow | undefined;
+    return row ? taskControlFromRow(row) : undefined;
+  }
+
+  public async recordWorkerHeartbeat(input: Omit<WorkerHeartbeat, "observedAt">): Promise<WorkerHeartbeat> {
+    return this.transaction((db) => {
+      const control = this.requireTaskControl(db, input.jobId, input.taskId);
+      assertControlWorker(control, input.worker, input.epoch);
+      if (control.state !== "RUNNING") throw new Error("GATEWAY_DRAINED");
+      const heartbeat = { ...input, observedAt: Date.now() };
+      db.prepare(`
+        INSERT INTO worker_heartbeats (job_id, task_id, worker, epoch, observed_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (job_id, task_id, worker, epoch)
+        DO UPDATE SET observed_at = excluded.observed_at
+      `).run(heartbeat.jobId, heartbeat.taskId, heartbeat.worker, heartbeat.epoch, heartbeat.observedAt);
+      return heartbeat;
+    });
+  }
+
+  public async getLastWorkerHeartbeat(input: {
+    jobId: string;
+    taskId: string;
+    worker: Hex;
+    epoch: number;
+  }): Promise<WorkerHeartbeat | undefined> {
+    const row = this.database().prepare(`
+      SELECT job_id, task_id, worker, epoch, observed_at FROM worker_heartbeats
+      WHERE job_id = ? AND task_id = ? AND lower(worker) = lower(?) AND epoch = ?
+    `).get(input.jobId, input.taskId, input.worker, input.epoch) as
+      | { job_id: string; task_id: string; worker: string; epoch: number; observed_at: number }
+      | undefined;
+    return row ? {
+      jobId: row.job_id,
+      taskId: row.task_id,
+      worker: row.worker as Hex,
+      epoch: row.epoch,
+      observedAt: row.observed_at,
+    } : undefined;
+  }
+
+  public async putTakeoverAcknowledgement(ack: StoredTakeoverAcknowledgement): Promise<void> {
+    this.transaction((db) => {
+      db.prepare(`
+        INSERT INTO takeover_acknowledgements (job_id, task_id, epoch, acknowledgement_json, received_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (job_id, task_id, epoch)
+        DO UPDATE SET acknowledgement_json = excluded.acknowledgement_json, received_at = excluded.received_at
+      `).run(ack.jobId, ack.taskId, ack.epoch, json(ack), ack.receivedAt);
+    });
+  }
+
+  public async getTakeoverAcknowledgement(
+    jobId: string,
+    taskId: string,
+    epoch: number,
+  ): Promise<StoredTakeoverAcknowledgement | undefined> {
+    const row = this.database().prepare(`
+      SELECT acknowledgement_json FROM takeover_acknowledgements
+      WHERE job_id = ? AND task_id = ? AND epoch = ?
+    `).get(jobId, taskId, epoch) as { acknowledgement_json: string } | undefined;
+    return row ? parseJson<StoredTakeoverAcknowledgement>(row.acknowledgement_json) : undefined;
+  }
+
+  public async clearTakeoverAcknowledgement(jobId: string, taskId: string, epoch: number): Promise<void> {
+    this.database().prepare(`
+      DELETE FROM takeover_acknowledgements WHERE job_id = ? AND task_id = ? AND epoch = ?
+    `).run(jobId, taskId, epoch);
+  }
+
+  public async assertTaskReconciliation(input: {
+    jobId: string;
+    taskId: string;
+    worker: Hex;
+    epoch: number;
+  }): Promise<GatewayTaskControl> {
+    const row = this.database().prepare(`
+      SELECT job_id, task_id, state, generation, worker, epoch, successor, successor_epoch, updated_at
+      FROM gateway_task_control WHERE job_id = ? AND task_id = ?
+    `).get(input.jobId, input.taskId) as TaskControlRow | undefined;
+    if (!row) throw new Error("TASK_CONTROL_NOT_INITIALIZED");
+    const control = taskControlFromRow(row);
+    if (control.state === "TAKEOVER_PENDING") throw new Error("TAKEOVER_PENDING");
+    assertControlWorker(control, input.worker, input.epoch);
+    return control;
+  }
+
+  public async assertTaskAdmission(input: {
+    jobId: string;
+    taskId: string;
+    worker: Hex;
+    epoch: number;
+    generation?: number;
+  }): Promise<GatewayTaskControl> {
+    const result = this.transaction((db): { control: GatewayTaskControl; blocked?: string } => {
+      const control = this.requireTaskControl(db, input.jobId, input.taskId);
+      assertControlWorker(control, input.worker, input.epoch);
+      if (control.state !== "RUNNING") {
+        return {
+          control,
+          blocked: control.state === "TAKEOVER_PENDING" ? "TAKEOVER_PENDING" : "GATEWAY_DRAINED",
+        };
+      }
+      if (input.generation !== undefined && control.generation !== input.generation) {
+        return { control, blocked: "GATEWAY_GENERATION_CHANGED" };
+      }
+      return { control };
+    });
+    if (result.blocked) throw new Error(result.blocked);
+    return result.control;
+  }
+
+  public async beginDrain(input: {
+    jobId: string;
+    taskId: string;
+    worker: Hex;
+    epoch: number;
+    generation: number;
+  }): Promise<GatewayTaskControl> {
+    return this.transaction((db) => {
+      const control = this.requireTaskControl(db, input.jobId, input.taskId);
+      assertControlWorker(control, input.worker, input.epoch);
+      if (control.state === "DRAINED" || control.state === "DRAINING") return control;
+      if (control.state === "TAKEOVER_PENDING") throw new Error("TAKEOVER_PENDING");
+      if (control.generation !== input.generation) throw new Error("GATEWAY_GENERATION_CHANGED");
+      if (control.state !== "RUNNING" && control.state !== "PAUSED") throw new Error("TASK_NOT_DRAINABLE");
+
+      this.updateTaskControl(db, control, {
+        state: "DRAINING",
+        generation: control.generation + 1,
+      });
+      return this.advanceDrainIfClear(db, input.jobId, input.taskId);
+    });
+  }
+
+  public async beginTakeover(input: {
+    jobId: string;
+    taskId: string;
+    worker: Hex;
+    epoch: number;
+    successor: Hex;
+    successorEpoch: number;
+    generation: number;
+  }): Promise<GatewayTaskControl> {
+    return this.transaction((db) => {
+      const control = this.requireTaskControl(db, input.jobId, input.taskId);
+      assertControlWorker(control, input.worker, input.epoch);
+      if (this.hasUnresolvedOperations(db, input.jobId, input.taskId)) throw new Error("UNRESOLVED_OPERATIONS");
+      if (control.state === "TAKEOVER_PENDING") {
+        if (control.successor?.toLowerCase() !== input.successor.toLowerCase()
+          || control.successorEpoch !== input.successorEpoch) throw new Error("DIFFERENT_TAKEOVER_PENDING");
+        return control;
+      }
+      if (control.state !== "DRAINED") throw new Error("TASK_NOT_DRAINED");
+      if (control.generation !== input.generation) throw new Error("GATEWAY_GENERATION_CHANGED");
+      if (input.successorEpoch !== input.epoch + 1) throw new Error("SUCCESSOR_EPOCH_INVALID");
+      this.updateTaskControl(db, control, {
+        state: "TAKEOVER_PENDING",
+        generation: control.generation + 1,
+        successor: input.successor,
+        successorEpoch: input.successorEpoch,
+      });
+      return this.requireTaskControl(db, input.jobId, input.taskId);
+    });
+  }
+
+  public async confirmTakeover(input: {
+    jobId: string;
+    taskId: string;
+    successor: Hex;
+    successorEpoch: number;
+    generation: number;
+  }): Promise<GatewayTaskControl> {
+    return this.transaction((db) => {
+      const control = this.requireTaskControl(db, input.jobId, input.taskId);
+      if (control.state !== "TAKEOVER_PENDING"
+        || control.generation !== input.generation
+        || control.successor?.toLowerCase() !== input.successor.toLowerCase()
+        || control.successorEpoch !== input.successorEpoch) throw new Error("TAKEOVER_STATE_CHANGED");
+      if (this.hasUnresolvedOperations(db, input.jobId, input.taskId)) throw new Error("UNRESOLVED_OPERATIONS");
+      this.updateTaskControl(db, control, {
+        state: "RUNNING",
+        generation: control.generation + 1,
+        worker: input.successor,
+        epoch: input.successorEpoch,
+        successor: null,
+        successorEpoch: null,
+      });
+      return this.requireTaskControl(db, input.jobId, input.taskId);
+    });
+  }
+
+  public async cancelTakeover(input: {
+    jobId: string;
+    taskId: string;
+    worker: Hex;
+    epoch: number;
+    generation: number;
+  }): Promise<GatewayTaskControl> {
+    return this.transaction((db) => {
+      const control = this.requireTaskControl(db, input.jobId, input.taskId);
+      if (control.state !== "TAKEOVER_PENDING" || control.generation !== input.generation) {
+        throw new Error("TAKEOVER_STATE_CHANGED");
+      }
+      assertControlWorker(control, input.worker, input.epoch);
+      this.updateTaskControl(db, control, {
+        state: "DRAINED",
+        generation: control.generation + 1,
+        successor: null,
+        successorEpoch: null,
+      });
+      return this.requireTaskControl(db, input.jobId, input.taskId);
+    });
+  }
+
+  public async pauseTask(input: {
+    jobId: string;
+    taskId: string;
+    worker: Hex;
+    epoch: number;
+    generation: number;
+  }): Promise<GatewayTaskControl> {
+    return this.transaction((db) => {
+      const control = this.requireTaskControl(db, input.jobId, input.taskId);
+      assertControlWorker(control, input.worker, input.epoch);
+      if (control.state !== "RUNNING") throw new Error("TASK_NOT_RUNNING");
+      if (control.generation !== input.generation) throw new Error("GATEWAY_GENERATION_CHANGED");
+      this.updateTaskControl(db, control, {
+        state: "PAUSED",
+        generation: control.generation + 1,
+      });
+      return this.requireTaskControl(db, input.jobId, input.taskId);
+    });
+  }
+
+  public async resumeTask(input: {
+    jobId: string;
+    taskId: string;
+    worker: Hex;
+    epoch: number;
+    generation: number;
+    from: "PAUSED" | "DRAINED";
+  }): Promise<GatewayTaskControl> {
+    return this.transaction((db) => {
+      const control = this.requireTaskControl(db, input.jobId, input.taskId);
+      assertControlWorker(control, input.worker, input.epoch);
+      if (control.state !== input.from) throw new Error(input.from === "DRAINED" ? "TASK_NOT_DRAINED" : "TASK_NOT_PAUSED");
+      if (control.generation !== input.generation) throw new Error("GATEWAY_GENERATION_CHANGED");
+      if (this.hasUnresolvedOperations(db, input.jobId, input.taskId)) throw new Error("UNRESOLVED_OPERATIONS");
+      this.updateTaskControl(db, control, {
+        state: "RUNNING",
+        generation: control.generation + 1,
+      });
+      return this.requireTaskControl(db, input.jobId, input.taskId);
+    });
+  }
+
+  public async reserve(request: ReserveRequest): Promise<GatewayOperation> {
+    const result = this.transaction((db): { operation?: GatewayOperation; blocked?: string } => {
       const existing = db.prepare("SELECT operation_json FROM operations WHERE operation_id = ?").get(request.operationId) as
         | OperationRow
         | undefined;
@@ -171,7 +509,7 @@ export class OperationLedger {
           || operation.payee?.toLowerCase() !== request.payee.toLowerCase()
           || operation.policyVersion !== request.policyVersion
           || operation.approvedPolicyHash !== request.approvedPolicyHash;
-        if (!changed) return operation;
+        if (!changed) return { operation };
         operation.providerId = request.providerId;
         operation.network = request.network;
         operation.payee = request.payee;
@@ -180,7 +518,16 @@ export class OperationLedger {
         operation.updatedAt = new Date().toISOString();
         db.prepare("UPDATE operations SET request_fingerprint = ?, operation_json = ?, updated_at = ? WHERE operation_id = ?")
           .run(operation.requestFingerprint, json(operation), operation.updatedAt, operation.operationId);
-        return operation;
+        return { operation };
+      }
+
+      const control = this.ensureControlForRequest(db, request);
+      if (control.state !== "RUNNING") {
+        return { blocked: control.state === "TAKEOVER_PENDING" ? "TAKEOVER_PENDING" : "GATEWAY_DRAINED" };
+      }
+      assertControlWorker(control, request.worker, request.epoch);
+      if (request.controlGeneration !== undefined && request.controlGeneration !== control.generation) {
+        throw new Error("GATEWAY_GENERATION_CHANGED");
       }
 
       const row = this.budgetRow(db, request.jobId);
@@ -199,18 +546,22 @@ export class OperationLedger {
       this.writeBalance(db, request.jobId, balance);
 
       const timestamp = new Date().toISOString();
+      const operationRequest = { ...request };
+      delete operationRequest.controlGeneration;
       const operation: GatewayOperation = {
-        ...request,
+        ...operationRequest,
+        admissionGeneration: control.generation,
         state: "RESERVED",
         createdAt: timestamp,
         updatedAt: timestamp,
       };
       db.prepare(`
-        INSERT INTO operations (operation_id, job_id, request_fingerprint, nonce, state, amount, operation_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO operations (operation_id, job_id, task_id, request_fingerprint, nonce, state, amount, operation_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         operation.operationId,
         operation.jobId,
+        operation.taskId,
         operation.requestFingerprint,
         operation.nonce,
         operation.state,
@@ -221,8 +572,11 @@ export class OperationLedger {
       );
       this.recordEvent(db, operation.operationId, null, operation.state, {});
       this.assertJobAccounting(db, operation.jobId);
-      return operation;
+      return { operation };
     });
+    if (result.blocked) throw new Error(result.blocked);
+    if (!result.operation) throw new Error("LEDGER_RESERVATION_FAILED");
+    return result.operation;
   }
 
   public async transition(
@@ -239,9 +593,23 @@ export class OperationLedger {
       const previousState = operation.state;
       assertTransition(previousState, next);
 
+      if (next === "SUBMITTED") {
+        const control = this.requireTaskControl(db, operation.jobId, operation.taskId);
+        if (control.state !== "RUNNING") throw new Error("GATEWAY_DRAINED");
+        assertControlWorker(control, operation.worker, operation.epoch);
+        if (operation.admissionGeneration !== undefined
+          && operation.admissionGeneration !== control.generation) throw new Error("GATEWAY_GENERATION_CHANGED");
+        if (operation.admissionGeneration === undefined && control.generation !== 0) {
+          throw new Error("GATEWAY_GENERATION_CHANGED");
+        }
+      }
+
       if (next === "SETTLED") {
         if (operation.providerReceipt) throw new Error("SETTLEMENT_ALREADY_RECORDED");
         if (!patch.providerReceipt?.trim()) throw new Error("PROVIDER_RECEIPT_REQUIRED");
+        const settledAmount = patch.settledAmount ?? operation.amount;
+        if (settledAmount < 0n || settledAmount > operation.amount) throw new Error("SETTLED_AMOUNT_OUT_OF_RANGE");
+        patch = { ...patch, settledAmount };
       }
       if (next === "FAILED" && operation.providerReceipt) {
         throw new Error("SETTLED_OPERATION_CANNOT_FAIL");
@@ -253,7 +621,7 @@ export class OperationLedger {
         if (!outputDigest || !/^0x[\da-f]{64}$/i.test(outputDigest)) throw new Error("OUTPUT_DIGEST_REQUIRED");
         if (!outputRef?.trim()) throw new Error("OUTPUT_REFERENCE_REQUIRED");
       }
-      if (next !== "SETTLED" && patch.providerReceipt !== undefined) {
+      if (next !== "SETTLED" && (patch.providerReceipt !== undefined || patch.settledAmount !== undefined)) {
         throw new Error("PROVIDER_RECEIPT_STATE_MISMATCH");
       }
       if (next !== "OUTPUT_AVAILABLE" && (patch.outputDigest !== undefined || patch.outputRef !== undefined)) {
@@ -264,7 +632,11 @@ export class OperationLedger {
         const balance = balanceFromRow(this.budgetRow(db, operation.jobId));
         if (balance.reserved < operation.amount) throw new Error("LEDGER_INVARIANT_BROKEN");
         balance.reserved -= operation.amount;
-        if (next === "SETTLED") balance.settledSpend += operation.amount;
+        if (next === "SETTLED") {
+          const settledAmount = patch.settledAmount ?? operation.amount;
+          balance.available += operation.amount - settledAmount;
+          balance.settledSpend += settledAmount;
+        }
         else balance.available += operation.amount;
         this.writeBalance(db, operation.jobId, balance);
       }
@@ -277,6 +649,7 @@ export class OperationLedger {
       `).run(next, json(operation), operation.updatedAt, operationId);
       this.recordEvent(db, operationId, previousState, next, patch);
       this.assertJobAccounting(db, operation.jobId);
+      this.advanceDrainIfClear(db, operation.jobId, operation.taskId);
       return operation;
     });
   }
@@ -293,6 +666,37 @@ export class OperationLedger {
       SELECT operation_json FROM operations WHERE job_id = ? ORDER BY created_at, operation_id
     `).all(jobId) as OperationRow[];
     return rows.map((row) => parseJson<GatewayOperation>(row.operation_json));
+  }
+
+  public async listReusableOperations(input: {
+    jobId: string;
+    taskId: string;
+    limit: number;
+    after?: OperationPageCursor;
+  }): Promise<{ operations: GatewayOperation[]; nextCursor: OperationPageCursor | null }> {
+    if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 100) {
+      throw new Error("OPERATION_PAGE_LIMIT_INVALID");
+    }
+    const db = this.database();
+    const rows = (input.after
+      ? db.prepare(`
+        SELECT operation_json FROM operations
+        WHERE job_id = ? AND task_id = ? AND state = 'OUTPUT_AVAILABLE'
+          AND (created_at > ? OR (created_at = ? AND operation_id > ?))
+        ORDER BY created_at, operation_id LIMIT ?
+      `).all(input.jobId, input.taskId, input.after.createdAt, input.after.createdAt, input.after.operationId, input.limit + 1)
+      : db.prepare(`
+        SELECT operation_json FROM operations
+        WHERE job_id = ? AND task_id = ? AND state = 'OUTPUT_AVAILABLE'
+        ORDER BY created_at, operation_id LIMIT ?
+      `).all(input.jobId, input.taskId, input.limit + 1)) as OperationRow[];
+    const hasMore = rows.length > input.limit;
+    const operations = rows.slice(0, input.limit).map((row) => parseJson<GatewayOperation>(row.operation_json));
+    const last = operations.at(-1);
+    return {
+      operations,
+      nextCursor: hasMore && last ? { createdAt: last.createdAt, operationId: last.operationId } : null,
+    };
   }
 
   public async recordReuse(operationId: string, worker: Hex, epoch: number): Promise<GatewayOperation> {
@@ -342,6 +746,18 @@ export class OperationLedger {
         PRAGMA synchronous = FULL;
         PRAGMA foreign_keys = ON;
         PRAGMA busy_timeout = 5000;
+        CREATE TABLE IF NOT EXISTS gateway_task_control (
+          job_id TEXT NOT NULL,
+          task_id TEXT NOT NULL,
+          state TEXT NOT NULL CHECK (state IN ('RUNNING', 'PAUSED', 'DRAINING', 'DRAINED', 'TAKEOVER_PENDING')),
+          generation INTEGER NOT NULL CHECK (generation >= 0),
+          worker TEXT,
+          epoch INTEGER NOT NULL CHECK (epoch >= 0),
+          successor TEXT,
+          successor_epoch INTEGER,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (job_id, task_id)
+        ) STRICT, WITHOUT ROWID;
         CREATE TABLE IF NOT EXISTS budgets (
           job_id TEXT PRIMARY KEY,
           policy_json TEXT NOT NULL,
@@ -354,6 +770,7 @@ export class OperationLedger {
         CREATE TABLE IF NOT EXISTS operations (
           operation_id TEXT PRIMARY KEY,
           job_id TEXT NOT NULL REFERENCES budgets(job_id),
+          task_id TEXT NOT NULL,
           request_fingerprint TEXT NOT NULL,
           nonce TEXT NOT NULL UNIQUE,
           state TEXT NOT NULL,
@@ -378,6 +795,22 @@ export class OperationLedger {
           created_at TEXT NOT NULL,
           PRIMARY KEY (scope, nonce)
         ) STRICT, WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS worker_heartbeats (
+          job_id TEXT NOT NULL,
+          task_id TEXT NOT NULL,
+          worker TEXT NOT NULL,
+          epoch INTEGER NOT NULL CHECK (epoch >= 0),
+          observed_at INTEGER NOT NULL,
+          PRIMARY KEY (job_id, task_id, worker, epoch)
+        ) STRICT, WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS takeover_acknowledgements (
+          job_id TEXT NOT NULL,
+          task_id TEXT NOT NULL,
+          epoch INTEGER NOT NULL CHECK (epoch >= 0),
+          acknowledgement_json TEXT NOT NULL,
+          received_at INTEGER NOT NULL,
+          PRIMARY KEY (job_id, task_id, epoch)
+        ) STRICT, WITHOUT ROWID;
         CREATE TABLE IF NOT EXISTS job_provisioning (
           job_id TEXT PRIMARY KEY,
           snapshot_json TEXT NOT NULL,
@@ -386,6 +819,18 @@ export class OperationLedger {
           updated_at TEXT NOT NULL
         ) STRICT;
       `);
+      const operationColumns = db.prepare("PRAGMA table_info(operations)").all() as Array<{ name: string }>;
+      if (!operationColumns.some((column) => column.name === "task_id")) {
+        db.exec("ALTER TABLE operations ADD COLUMN task_id TEXT NOT NULL DEFAULT ''");
+        const rows = db.prepare("SELECT operation_id, operation_json FROM operations").all() as Array<OperationRow & { operation_id: string }>;
+        const updateTaskId = db.prepare("UPDATE operations SET task_id = ? WHERE operation_id = ?");
+        for (const row of rows) {
+          const operation = parseJson<GatewayOperation>(row.operation_json);
+          updateTaskId.run(operation.taskId, row.operation_id);
+        }
+      }
+      db.exec("CREATE INDEX IF NOT EXISTS operations_by_task_state ON operations(job_id, task_id, state)");
+      db.exec("CREATE INDEX IF NOT EXISTS reusable_operations_page ON operations(job_id, task_id, state, created_at, operation_id)");
       this.db = db;
       return db;
     } catch (error) {
@@ -443,6 +888,80 @@ export class OperationLedger {
     return balance;
   }
 
+  private ensureControlForRequest(db: DatabaseSync, request: ReserveRequest): GatewayTaskControl {
+    const existing = db.prepare(`
+      SELECT job_id, task_id, state, generation, worker, epoch, successor, successor_epoch, updated_at
+      FROM gateway_task_control WHERE job_id = ? AND task_id = ?
+    `).get(request.jobId, request.taskId) as TaskControlRow | undefined;
+    if (existing) return taskControlFromRow(existing);
+
+    const timestamp = new Date().toISOString();
+    const control: GatewayTaskControl = {
+      jobId: request.jobId,
+      taskId: request.taskId,
+      state: "RUNNING",
+      generation: 0,
+      worker: request.worker,
+      epoch: request.epoch,
+      successor: null,
+      successorEpoch: null,
+      updatedAt: timestamp,
+    };
+    db.prepare(`
+      INSERT INTO gateway_task_control
+        (job_id, task_id, state, generation, worker, epoch, successor, successor_epoch, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?)
+    `).run(control.jobId, control.taskId, control.state, control.generation, control.worker, control.epoch, timestamp);
+    return control;
+  }
+
+  private requireTaskControl(db: DatabaseSync, jobId: string, taskId: string): GatewayTaskControl {
+    const row = db.prepare(`
+      SELECT job_id, task_id, state, generation, worker, epoch, successor, successor_epoch, updated_at
+      FROM gateway_task_control WHERE job_id = ? AND task_id = ?
+    `).get(jobId, taskId) as TaskControlRow | undefined;
+    if (!row) throw new Error("TASK_CONTROL_NOT_INITIALIZED");
+    return taskControlFromRow(row);
+  }
+
+  private updateTaskControl(
+    db: DatabaseSync,
+    current: GatewayTaskControl,
+    patch: Partial<Pick<GatewayTaskControl, "state" | "generation" | "worker" | "epoch" | "successor" | "successorEpoch">>,
+  ): void {
+    const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
+    db.prepare(`
+      UPDATE gateway_task_control
+      SET state = ?, generation = ?, worker = ?, epoch = ?, successor = ?, successor_epoch = ?, updated_at = ?
+      WHERE job_id = ? AND task_id = ?
+    `).run(
+      next.state,
+      next.generation,
+      next.worker,
+      next.epoch,
+      next.successor,
+      next.successorEpoch,
+      next.updatedAt,
+      next.jobId,
+      next.taskId,
+    );
+  }
+
+  private hasUnresolvedOperations(db: DatabaseSync, jobId: string, taskId: string): boolean {
+    const row = db.prepare(`
+      SELECT 1 AS unresolved FROM operations
+      WHERE job_id = ? AND task_id = ? AND state IN ('RESERVED', 'SUBMITTED', 'SETTLED', 'UNKNOWN') LIMIT 1
+    `).get(jobId, taskId) as { unresolved: number } | undefined;
+    return row !== undefined;
+  }
+
+  private advanceDrainIfClear(db: DatabaseSync, jobId: string, taskId: string): GatewayTaskControl {
+    const control = this.requireTaskControl(db, jobId, taskId);
+    if (control.state !== "DRAINING" || this.hasUnresolvedOperations(db, jobId, taskId)) return control;
+    this.updateTaskControl(db, control, { state: "DRAINED" });
+    return this.requireTaskControl(db, jobId, taskId);
+  }
+
   private writeBalance(db: DatabaseSync, jobId: string, balance: LedgerBalance): void {
     db.prepare(`
       UPDATE budgets SET available = ?, reserved = ?, settled_spend = ?, returned_funds = ? WHERE job_id = ?
@@ -465,7 +984,7 @@ export class OperationLedger {
       if (operation.state === "RESERVED" || operation.state === "SUBMITTED" || operation.state === "UNKNOWN") {
         reserved += operation.amount;
       } else if (operation.state === "SETTLED" || operation.state === "OUTPUT_AVAILABLE") {
-        settled += operation.amount;
+        settled += operation.settledAmount ?? operation.amount;
       }
     }
     if (balance.reserved !== reserved || balance.settledSpend !== settled) {
@@ -585,4 +1104,23 @@ function balanceValues(balance: LedgerBalance): string[] {
     balance.settledSpend.toString(),
     balance.returnedFunds.toString(),
   ];
+}
+
+function taskControlFromRow(row: TaskControlRow): GatewayTaskControl {
+  return {
+    jobId: row.job_id,
+    taskId: row.task_id,
+    state: row.state,
+    generation: row.generation,
+    worker: row.worker as Hex | null,
+    epoch: row.epoch,
+    successor: row.successor as Hex | null,
+    successorEpoch: row.successor_epoch,
+    updatedAt: row.updated_at,
+  };
+}
+
+function assertControlWorker(control: GatewayTaskControl, worker: Hex, epoch: number): void {
+  if (!control.worker || control.worker.toLowerCase() !== worker.toLowerCase()) throw new Error("WORKER_NOT_ASSIGNED");
+  if (control.epoch !== epoch) throw new Error("STALE_EPOCH");
 }

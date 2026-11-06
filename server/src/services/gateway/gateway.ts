@@ -1,11 +1,9 @@
-import { randomUUID } from "node:crypto";
-import { digest, paymentIntentFingerprint, type CheckpointHead, type GatewayOperation, type Hex, type JobSnapshot } from "../../protocol/v1.js";
+import { createHash, randomUUID } from "node:crypto";
+import { digest, paymentIntentFingerprint, type CheckpointHead, type GatewayOperation, type Hex, type JobSnapshot, type OperationPageCursor, type ReusableOperationPage } from "../../protocol/v1.js";
 import type { ChainAdmission, JobAuthorityReader } from "../../chain/sepoliaAuthority.js";
-import { OperationLedger, type LedgerBalance } from "../ledger/operationLedger.js";
+import type { MilestoneOffer } from "../../chain/signing.js";
+import { OperationLedger, type GatewayTaskControl, type GatewayTaskControlState, type LedgerBalance, type WorkerHeartbeat } from "../ledger/operationLedger.js";
 import { JobStore } from "../../domain/jobs/jobStore.js";
-import { getAddress, recoverTypedDataAddress } from "viem";
-import { OFFER_TYPES, TAKEOVER_TYPES, type MilestoneOffer, type TakeoverAck, domain } from "../../chain/signing.js";
-import type { EscrowMutationWriter } from "../../chain/sepoliaEscrowWriter.js";
 
 export type PaymentRequest = {
   operationId: string;
@@ -17,13 +15,19 @@ export type PaymentRequest = {
   inputDigest: Hex;
   amount: bigint;
   asset: string;
+  /** Ephemeral input for a new purchase; the SQLite ledger stores only its digest. */
+  inputBytes?: Uint8Array;
 };
+
+export const MAX_PROVIDER_INPUT_BYTES = 256 * 1024;
 
 export type ProviderPaymentRequest = PaymentRequest & Pick<GatewayOperation,
   "providerId" | "network" | "payee" | "policyVersion" | "approvedPolicyHash">;
 
 export type PaymentResult = {
   providerReceipt: string;
+  /** Actual debit after provider settlement; omitted adapters are treated as exact-amount. */
+  settledAmount?: bigint;
   outputDigest: Hex;
   outputRef: string;
 };
@@ -36,6 +40,7 @@ export type PaymentReconciliation =
 export interface PaymentProvider {
   submit(request: ProviderPaymentRequest): Promise<PaymentResult>;
   reconcile(operation: GatewayOperation): Promise<PaymentReconciliation>;
+  retrieveOutput?(operation: GatewayOperation): Promise<Uint8Array>;
 }
 export interface CheckpointAcceptanceVerifier {
   verifyCandidate(input: {
@@ -44,19 +49,22 @@ export interface CheckpointAcceptanceVerifier {
     expectedHead: Hex;
     newHead: CheckpointHead;
   }): Promise<void>;
+  recoverAcceptedCheckpoint?(input: {
+    job: JobSnapshot;
+    producer: Hex;
+    producerEpoch: number;
+    acceptedHead: Hex;
+    acceptedSequence: number;
+    acceptedManifestRef: string;
+  }): Promise<CheckpointHead>;
 }
 
-export type MilestoneOfferAuthorization = {
-  nonce: bigint;
-  expiry: bigint;
-  signature: Hex;
-};
-
-export type TakeoverAuthorization = {
-  nonce: bigint;
-  expiry: bigint;
-  signature: Hex;
-};
+export interface EscrowLifecycleWriter {
+  assignTask(job: JobSnapshot, worker: Hex): Promise<unknown>;
+  acceptMilestone(job: JobSnapshot, offer: MilestoneOffer, signature: Hex): Promise<unknown>;
+  pause(job: JobSnapshot): Promise<unknown>;
+  resume(job: JobSnapshot): Promise<unknown>;
+}
 
 export class LocalPaymentProvider implements PaymentProvider {
   private readonly settled = new Map<string, PaymentResult>();
@@ -66,6 +74,7 @@ export class LocalPaymentProvider implements PaymentProvider {
     if (existing) return existing;
     const result = {
       providerReceipt: `local-hedera-receipt:${request.operationId}`,
+      settledAmount: request.amount,
       outputDigest: digest({ operationId: request.operationId, inputDigest: request.inputDigest, service: request.service }),
       outputRef: `local://paid-output/${request.operationId}`,
     } satisfies PaymentResult;
@@ -88,18 +97,15 @@ export class Gateway {
     private readonly provider: PaymentProvider,
     private readonly authority?: JobAuthorityReader,
     private readonly checkpointVerifier?: CheckpointAcceptanceVerifier,
-    private readonly mutationWriter?: EscrowMutationWriter,
-    private readonly chainId = 11155111,
-    private readonly escrowAddress?: Hex,
+    private readonly lifecycleWriter?: EscrowLifecycleWriter,
   ) {}
 
   public get requiresChainAuthority(): boolean {
     return this.authority !== undefined;
   }
 
-  public get supportsChainMutations(): boolean {
-    return this.authority !== undefined && this.mutationWriter !== undefined
-      && this.authority.assertSnapshotCurrent !== undefined && this.escrowAddress !== undefined;
+  public get usesLocalPaymentProvider(): boolean {
+    return this.provider instanceof LocalPaymentProvider;
   }
 
   public async assertImportableJob(job: JobSnapshot): Promise<void> {
@@ -123,13 +129,31 @@ export class Gateway {
 
   public async execute(request: PaymentRequest): Promise<GatewayOperation> {
     return this.withJobLock(request.jobId, async () => {
+      if (request.inputBytes && createHash("sha256").update(request.inputBytes).digest("hex") !== request.inputDigest.slice(2).toLowerCase()) {
+        throw new Error("INPUT_DIGEST_MISMATCH");
+      }
+      if (request.inputBytes && (request.inputBytes.byteLength === 0 || request.inputBytes.byteLength > MAX_PROVIDER_INPUT_BYTES)) {
+        throw new Error("PROVIDER_INPUT_SIZE_LIMIT_EXCEEDED");
+      }
       const job = await this.requireJob(request.jobId);
       this.assertTaskId(job, request.taskId);
-      await this.assertAdmission(job, request.worker, request.epoch);
       const providerRequest = withPaymentPolicy(request, job);
       const fingerprint = paymentIntentFingerprint(providerRequest);
+      const existing = await this.ledger.getOperation(request.operationId);
+      if (existing) {
+        await this.assertReconciliationAdmission(job, existing, request.worker, request.epoch);
+        const operation = await this.ledger.reserve({
+          ...providerRequest,
+          requestFingerprint: fingerprint,
+          nonce: randomUUID(),
+        });
+        return this.reuseOrReconcile(operation, providerRequest);
+      }
+
+      const control = await this.assertAdmission(job, request.worker, request.epoch);
       const operation = await this.ledger.reserve({
         ...providerRequest,
+        controlGeneration: control.generation,
         requestFingerprint: fingerprint,
         nonce: randomUUID(),
       });
@@ -141,13 +165,22 @@ export class Gateway {
       } catch (error) {
         const current = await this.ledger.getOperation(operation.operationId);
         if (current && current.state !== "RESERVED") return this.reuseOrReconcile(current, providerRequest);
+        if (current?.state === "RESERVED") {
+          try {
+            await this.ledger.transition(operation.operationId, "FAILED", {
+              failureCode: error instanceof Error ? error.message : "SUBMISSION_STATE_PERSIST_FAILED",
+            });
+          } catch {
+            // Keep an unresolved reservation if even its terminal transition cannot be persisted.
+          }
+        }
         throw error;
       }
 
       try {
-        // The initial check can be separated from provider I/O by ledger writes. Recheck the
-        // confirmed worker/epoch/drain state at the spend boundary before releasing payment.
-        await this.assertAdmission(job, request.worker, request.epoch);
+        // Recheck confirmed authority and the durable admission generation at the spend boundary.
+        const finalControl = await this.assertAdmission(job, request.worker, request.epoch);
+        if (finalControl.generation !== control.generation) throw new Error("GATEWAY_GENERATION_CHANGED");
       } catch (error) {
         try {
           await this.ledger.transition(operation.operationId, "FAILED", {
@@ -189,7 +222,10 @@ export class Gateway {
       }
 
       try {
-        await this.ledger.transition(operation.operationId, "SETTLED", { providerReceipt: result.providerReceipt });
+        await this.ledger.transition(operation.operationId, "SETTLED", {
+          providerReceipt: result.providerReceipt,
+          settledAmount: result.settledAmount,
+        });
       } catch (error) {
         current = await this.ledger.getOperation(operation.operationId);
         if (current?.state === "OUTPUT_AVAILABLE") return this.recordAuthorizedReuse(current, providerRequest);
@@ -220,28 +256,108 @@ export class Gateway {
     return this.withJobLock(existing.jobId, async () => {
       const job = await this.requireJob(existing.jobId);
       this.assertTaskId(job, existing.taskId);
-      await this.assertAdmission(job, worker, epoch);
       const current = await this.ledger.getOperation(operationId);
       if (!current) throw new Error("OPERATION_NOT_FOUND");
+      await this.assertReconciliationAdmission(job, current, worker, epoch);
       return this.reuseOrReconcile(current, { ...current, worker, epoch });
     });
+  }
+
+  public async heartbeat(input: {
+    jobId: string;
+    taskId: string;
+    worker: Hex;
+    epoch: number;
+  }): Promise<WorkerHeartbeat> {
+    const job = await this.requireJob(input.jobId);
+    this.assertTaskId(job, input.taskId);
+    await this.assertAdmission(job, input.worker, input.epoch);
+    return this.ledger.recordWorkerHeartbeat(input);
+  }
+
+  public async listReusableOperations(input: {
+    jobId: string;
+    worker: Hex;
+    epoch: number;
+    limit: number;
+    after?: OperationPageCursor;
+  }): Promise<ReusableOperationPage> {
+    return this.withJobLock(input.jobId, async () => {
+      const job = await this.requireJob(input.jobId);
+      await this.assertAdmission(job, input.worker, input.epoch);
+      return this.ledger.listReusableOperations({
+        jobId: input.jobId,
+        taskId: job.task.taskId,
+        limit: input.limit,
+        after: input.after,
+      });
+    });
+  }
+
+  public async retrievePaidOutput(input: {
+    jobId: string;
+    operationId: string;
+    worker: Hex;
+    epoch: number;
+  }): Promise<{ operationId: string; outputDigest: Hex; bytes: Uint8Array }> {
+    const existing = await this.ledger.getOperation(input.operationId);
+    if (!existing || existing.jobId !== input.jobId) throw new Error("OPERATION_NOT_FOUND");
+    return this.withJobLock(input.jobId, async () => {
+      const job = await this.requireJob(input.jobId);
+      this.assertTaskId(job, existing.taskId);
+      const operation = await this.ledger.getOperation(input.operationId);
+      if (!operation || operation.jobId !== input.jobId) throw new Error("OPERATION_NOT_FOUND");
+      await this.assertReconciliationAdmission(job, operation, input.worker, input.epoch);
+      if (operation.state !== "OUTPUT_AVAILABLE" || !operation.outputRef || !operation.outputDigest) {
+        throw new Error("PAID_OUTPUT_NOT_AVAILABLE");
+      }
+      if (!this.provider.retrieveOutput) throw new Error("PAID_OUTPUT_RETRIEVAL_UNAVAILABLE");
+      const bytes = await this.provider.retrieveOutput(operation);
+      const outputDigest = `0x${createHash("sha256").update(bytes).digest("hex")}` as Hex;
+      if (outputDigest.toLowerCase() !== operation.outputDigest.toLowerCase()) {
+        throw new Error("PAID_OUTPUT_DIGEST_MISMATCH");
+      }
+      return { operationId: operation.operationId, outputDigest, bytes };
+    });
+  }
+
+  /** Reconcile every pending provider operation after the durable drain barrier is set. */
+  public async reconcilePendingOperations(jobId: string): Promise<boolean> {
+    const operations = await this.ledger.listOperations(jobId);
+    for (const operation of operations) {
+      if (operation.state !== "RESERVED" && operation.state !== "SUBMITTED"
+        && operation.state !== "SETTLED" && operation.state !== "UNKNOWN") continue;
+      try {
+        await this.reconcile(operation.operationId, operation.worker, operation.epoch);
+      } catch {
+        // An unresolved provider result remains reserved and blocks takeover on the next pass.
+      }
+    }
+    const remaining = await this.ledger.listOperations(jobId);
+    return !remaining.some((operation) => operation.state === "RESERVED"
+      || operation.state === "SUBMITTED" || operation.state === "SETTLED" || operation.state === "UNKNOWN");
   }
 
   public async assign(jobId: string, worker: Hex): Promise<JobSnapshot> {
     return this.withJobLock(jobId, async () => {
       const job = await this.requireJob(jobId);
-      if (job.task.status !== "FUNDED" || job.task.assignedWorker) throw new Error("TASK_NOT_ASSIGNABLE");
-      if (Math.floor(Date.now() / 1000) >= job.terms.cutoff) throw new Error("JOB_DEADLINE_PASSED");
       if (this.authority) {
-        const writer = this.requireMutationWriter();
-        await this.assertSnapshotCurrent(job);
-        const expected = structuredClone(job);
-        expected.task.assignedWorker = worker;
-        expected.task.epoch = 1;
-        await writer.assign(job, worker);
-        await this.assertSnapshotCurrent(expected);
+        if (!this.lifecycleWriter || !this.authority.assertAssignmentTransition || !this.authority.assertAssignmentConfirmed) {
+          throw new Error("ESCROW_LIFECYCLE_WRITER_UNAVAILABLE");
+        }
+        const alreadyAssigned = await this.authority.assertAssignmentTransition(job, worker);
+        if (!alreadyAssigned) await this.lifecycleWriter.assignTask(job, worker);
+        await this.authority.assertAssignmentConfirmed(job, worker);
       }
-      return this.jobs.assign(jobId, worker);
+      const assigned = await this.jobs.assign(jobId, worker, this.authority !== undefined);
+      await this.ledger.ensureTaskControl({
+        jobId,
+        taskId: assigned.task.taskId,
+        worker,
+        epoch: assigned.task.epoch,
+        state: "RUNNING",
+      });
+      return assigned;
     });
   }
 
@@ -253,19 +369,32 @@ export class Gateway {
     acceptanceSpecHash: Hex;
     expectedHead: Hex;
     newHead: CheckpointHead;
-    offerAuthorization?: MilestoneOfferAuthorization;
+    offer?: MilestoneOffer;
+    offerSignature?: Hex;
   }): Promise<JobSnapshot> {
     return this.withJobLock(input.jobId, async () => {
       const job = await this.requireJob(input.jobId);
       this.assertTaskId(job, input.taskId);
-      await this.assertAdmission(job, input.worker, input.epoch);
-      if (Math.floor(Date.now() / 1000) >= Math.min(job.terms.cutoff, job.terms.task.deadline)) {
-        throw new Error("JOB_DEADLINE_PASSED");
+      let alreadyAccepted = false;
+      if (this.authority) {
+        if (!this.lifecycleWriter || !this.authority.assertMilestoneTransition || !this.authority.assertMilestoneAccepted
+          || !input.offer || !input.offerSignature) throw new Error("ESCROW_LIFECYCLE_WRITER_UNAVAILABLE");
+        if (input.offer.jobId.toLowerCase() !== job.chainJobId?.toLowerCase()
+          || input.offer.taskId.toLowerCase() !== job.chainTaskId?.toLowerCase()
+          || input.offer.termsHash.toLowerCase() !== job.terms.termsHash.toLowerCase()
+          || input.offer.producer.toLowerCase() !== input.worker.toLowerCase()
+          || input.offer.epoch !== BigInt(input.epoch)
+          || input.offer.milestone !== job.task.nextMilestone
+          || input.offer.acceptanceSpecHash.toLowerCase() !== input.acceptanceSpecHash.toLowerCase()
+          || input.offer.expectedHead.toLowerCase() !== input.expectedHead.toLowerCase()
+          || input.offer.newHead.toLowerCase() !== input.newHead.manifestDigest.toLowerCase()
+          || input.offer.manifestRef !== input.newHead.manifestRef
+          || input.offer.sequence !== BigInt(input.newHead.sequence)) throw new Error("MILESTONE_OFFER_MISMATCH");
+        alreadyAccepted = await this.authority.assertMilestoneTransition(job, input);
+        if (!alreadyAccepted) await this.assertAdmission(job, input.worker, input.epoch);
+      } else {
+        await this.assertAdmission(job, input.worker, input.epoch);
       }
-      if (job.task.acceptedHead.manifestDigest !== input.expectedHead) throw new Error("STALE_HEAD");
-      const currentMilestone = job.terms.task.milestones[job.task.nextMilestone];
-      if (!currentMilestone) throw new Error("NO_MILESTONE_REMAINING");
-      if (currentMilestone.acceptanceSpecHash !== input.acceptanceSpecHash) throw new Error("ACCEPTANCE_SPEC_MISMATCH");
       if (this.authority && !this.checkpointVerifier) throw new Error("CHECKPOINT_VERIFIER_UNAVAILABLE");
       if (this.checkpointVerifier) {
         await this.checkpointVerifier.verifyCandidate({
@@ -276,32 +405,78 @@ export class Gateway {
         });
       }
       if (this.authority) {
-        const writer = this.requireMutationWriter();
-        const offer = this.makeMilestoneOffer(job, input, input.offerAuthorization);
-        await this.assertOfferSignature(offer, input.offerAuthorization!.signature, input.worker);
-        await this.assertSnapshotCurrent(job);
-        const expected = projectAcceptedMilestone(job, input);
-        await writer.acceptMilestone(job, offer, input.offerAuthorization!.signature);
-        await this.assertSnapshotCurrent(expected);
+        if (!alreadyAccepted) await this.lifecycleWriter!.acceptMilestone(job, input.offer!, input.offerSignature!);
+        const milestone = job.terms.task.milestones[job.task.nextMilestone];
+        if (!milestone) throw new Error("NO_MILESTONE_REMAINING");
+        await this.authority!.assertMilestoneAccepted!(job, {
+          worker: input.worker,
+          epoch: input.epoch,
+          newHead: input.newHead,
+          nextMilestone: job.task.nextMilestone + 1,
+          totalCredited: job.credits.reduce((total, credit) => total + credit.amount, 0n) + milestone.reward,
+        });
       }
-      return this.jobs.acceptMilestone(input);
+      return this.jobs.acceptMilestone({ ...input, confirmedOnChain: this.authority !== undefined });
+    });
+  }
+
+  /** Refresh a drained local snapshot only after recovering the exact checkpoint committed on-chain. */
+  public async refreshConfirmedAcceptedCheckpoint(input: {
+    jobId: string;
+    producer: Hex;
+    producerEpoch: number;
+    acceptedHead: Hex;
+    acceptedSequence: number;
+    acceptedManifestRef: string;
+    nextMilestone: number;
+    totalCredited: bigint;
+  }): Promise<JobSnapshot> {
+    return this.withJobLock(input.jobId, async () => {
+      const job = await this.requireJob(input.jobId);
+      if (!job.task.drained || job.task.status !== "DRAINED") throw new Error("TASK_NOT_DRAINED");
+      if (job.task.assignedWorker?.toLowerCase() !== input.producer.toLowerCase()
+        || job.task.epoch !== input.producerEpoch) throw new Error("ONCHAIN_ASSIGNMENT_CHANGED");
+      if (!this.checkpointVerifier?.recoverAcceptedCheckpoint) {
+        throw new Error("ACCEPTED_CHECKPOINT_RECOVERY_UNAVAILABLE");
+      }
+      const newHead = await this.checkpointVerifier.recoverAcceptedCheckpoint({
+        job,
+        producer: input.producer,
+        producerEpoch: input.producerEpoch,
+        acceptedHead: input.acceptedHead,
+        acceptedSequence: input.acceptedSequence,
+        acceptedManifestRef: input.acceptedManifestRef,
+      });
+      return this.jobs.reconcileConfirmedMilestone({
+        jobId: input.jobId,
+        producer: input.producer,
+        producerEpoch: input.producerEpoch,
+        newHead,
+        nextMilestone: input.nextMilestone,
+        totalCredited: input.totalCredited,
+      });
     });
   }
 
   public async drain(jobId: string): Promise<JobSnapshot> {
+    const job = await this.requireJob(jobId);
+    if (job.task.status === "CLOSED") throw new Error("TASK_CLOSED");
+    if (job.task.status === "COMPLETED") throw new Error("TASK_NOT_OPEN");
+    if (!job.task.assignedWorker) throw new Error("WORKER_NOT_ASSIGNED");
+    const control = await this.ensureTaskControl(job);
+    await this.ledger.beginDrain({
+      jobId,
+      taskId: job.task.taskId,
+      worker: job.task.assignedWorker,
+      epoch: job.task.epoch,
+      generation: control.generation,
+    });
+    // The SQLite admission barrier is set before waiting for active provider work to leave
+    // its per-job critical section. This stops new spend immediately and lets the drain
+    // caller reconcile only after an in-flight submit has returned a definitive outcome.
     return this.withJobLock(jobId, async () => {
-      const job = await this.requireJob(jobId);
-      if (job.task.status === "CLOSED" || job.task.status === "COMPLETED") throw new Error("TASK_NOT_OPEN");
-      if (this.authority) {
-        const writer = this.requireMutationWriter();
-        await this.assertSnapshotCurrent(job);
-        const expected = structuredClone(job);
-        expected.task.drained = true;
-        expected.task.status = expected.task.status === "PAUSED" ? "PAUSED" : "DRAINED";
-        await writer.drain(job);
-        await this.assertSnapshotCurrent(expected);
-      }
-      return this.jobs.drain(jobId);
+      await this.jobs.drain(jobId);
+      return this.requireJob(jobId);
     });
   }
 
@@ -311,89 +486,215 @@ export class Gateway {
     expectedHead: Hex;
     expectedEpoch: number;
     compatibilityReport: Hex;
-    authorization?: TakeoverAuthorization;
   }): Promise<JobSnapshot> {
     return this.withJobLock(input.jobId, async () => {
-      const job = await this.requireJob(input.jobId);
-      if (!job.task.drained) throw new Error("TASK_MUST_BE_DRAINED");
+      let job = await this.requireJob(input.jobId);
       if (job.task.status === "PAUSED" || job.task.status === "COMPLETED" || job.task.status === "CLOSED") {
         throw new Error("TASK_NOT_OPEN");
       }
       if (job.task.acceptedHead.manifestDigest !== input.expectedHead) throw new Error("STALE_HEAD");
-      if (job.task.epoch !== input.expectedEpoch) throw new Error("STALE_EPOCH");
-      if (job.task.assignedWorker?.toLowerCase() === input.successor.toLowerCase()) throw new Error("SUCCESSOR_ALREADY_ACTIVE");
-      if (input.compatibilityReport === "0x" + "00".repeat(32)) throw new Error("COMPATIBILITY_REPORT_REQUIRED");
-      if (this.authority) {
-        const writer = this.requireMutationWriter();
-        const ack = this.makeTakeoverAck(job, input, input.authorization);
-        await this.assertTakeoverSignature(ack, input.authorization!.signature, input.successor);
-        await this.assertSnapshotCurrent(job);
-        const expected = structuredClone(job);
-        expected.task.assignedWorker = input.successor;
-        expected.task.epoch += 1;
-        expected.task.drained = false;
-        if (expected.task.status === "DRAINED") expected.task.status = "FUNDED";
-        await writer.takeover(job, ack, input.authorization!.signature);
-        await this.assertSnapshotCurrent(expected);
+      if (job.task.epoch !== input.expectedEpoch && job.task.epoch !== input.expectedEpoch + 1) throw new Error("STALE_EPOCH");
+
+      const initialState: GatewayTaskControlState = job.task.drained ? "DRAINED" : "RUNNING";
+      let control = await this.ledger.ensureTaskControl({
+        jobId: job.terms.jobId,
+        taskId: job.task.taskId,
+        worker: job.task.assignedWorker,
+        epoch: job.task.epoch,
+        state: initialState,
+      });
+      if (job.task.drained && (control.state === "RUNNING" || control.state === "PAUSED")) {
+        if (!control.worker) throw new Error("WORKER_NOT_ASSIGNED");
+        control = await this.ledger.beginDrain({
+          jobId: job.terms.jobId,
+          taskId: job.task.taskId,
+          worker: control.worker,
+          epoch: control.epoch,
+          generation: control.generation,
+        });
       }
-      return this.jobs.takeover(input);
+      if (!job.task.drained && (control.state === "DRAINING" || control.state === "DRAINED")) {
+        await this.jobs.drain(input.jobId);
+        job = await this.requireJob(input.jobId);
+      }
+      if (!job.task.drained && !(job.task.assignedWorker?.toLowerCase() === input.successor.toLowerCase()
+        && job.task.epoch === input.expectedEpoch + 1)) throw new Error("TASK_MUST_BE_DRAINED");
+      const successorEpoch = input.expectedEpoch + 1;
+      const alreadyConfirmed = control.state === "RUNNING"
+        && control.worker?.toLowerCase() === input.successor.toLowerCase()
+        && control.epoch === successorEpoch;
+
+      if (!alreadyConfirmed) {
+        if (!control.worker) throw new Error("WORKER_NOT_ASSIGNED");
+        control = await this.ledger.beginTakeover({
+          jobId: job.terms.jobId,
+          taskId: job.task.taskId,
+          worker: control.worker,
+          epoch: control.epoch,
+          successor: input.successor,
+          successorEpoch,
+          generation: control.generation,
+        });
+      }
+
+      if (this.authority) {
+        await this.authority.assertAssignedWorker(this.chainAdmission(job, input.successor, successorEpoch));
+      }
+
+      if (job.task.assignedWorker?.toLowerCase() !== input.successor.toLowerCase()) {
+        await this.jobs.takeover(input);
+      }
+      if (!alreadyConfirmed) {
+        const pending = await this.ledger.getTaskControl(job.terms.jobId, job.task.taskId);
+        if (!pending) throw new Error("TASK_CONTROL_NOT_INITIALIZED");
+        control = await this.ledger.confirmTakeover({
+          jobId: job.terms.jobId,
+          taskId: job.task.taskId,
+          successor: input.successor,
+          successorEpoch,
+          generation: pending.generation,
+        });
+      }
+      if (control.state !== "RUNNING") throw new Error("TAKEOVER_STATE_CHANGED");
+      return this.jobs.reopen(input.jobId, {
+        state: "RUNNING",
+        worker: input.successor,
+        epoch: successorEpoch,
+        generation: control.generation,
+      });
     });
   }
 
-  public async pause(jobId: string): Promise<JobSnapshot> {
+  public async cancelDrain(jobId: string, confirmOnChain?: (job: JobSnapshot) => Promise<void>): Promise<JobSnapshot> {
+    if (this.authority && !confirmOnChain) throw new Error("CHAIN_DRAIN_CANCELLATION_REQUIRED");
+    const initialJob = await this.requireJob(jobId);
+    if (initialJob.task.status === "PAUSED") throw new Error("TASK_PAUSED");
+    if (initialJob.task.status === "COMPLETED" || initialJob.task.status === "CLOSED") throw new Error("TASK_NOT_OPEN");
+    if (!initialJob.task.assignedWorker) throw new Error("WORKER_NOT_ASSIGNED");
+    const initialControl = await this.ensureTaskControl(initialJob);
+    if (!["DRAINING", "DRAINED", "TAKEOVER_PENDING"].includes(initialControl.state)) {
+      throw new Error("TASK_NOT_DRAINED");
+    }
+    if (!await this.reconcilePendingOperations(jobId)) throw new Error("UNRESOLVED_OPERATIONS");
+
     return this.withJobLock(jobId, async () => {
-      const job = await this.requireJob(jobId);
-      if (job.task.status === "CLOSED") throw new Error("TASK_CLOSED");
-      if (this.authority) {
-        const writer = this.requireMutationWriter();
-        await this.assertSnapshotCurrent(job);
-        const expected = structuredClone(job);
-        expected.task.status = "PAUSED";
-        await writer.pause(job);
-        await this.assertSnapshotCurrent(expected);
+      let job = await this.requireJob(jobId);
+      if (job.task.status === "PAUSED") throw new Error("TASK_PAUSED");
+      if (job.task.status === "COMPLETED" || job.task.status === "CLOSED") throw new Error("TASK_NOT_OPEN");
+      if (!job.task.assignedWorker) throw new Error("WORKER_NOT_ASSIGNED");
+      const worker = job.task.assignedWorker;
+
+      let control = await this.ensureTaskControl(job);
+      if (control.state === "TAKEOVER_PENDING") {
+        control = await this.ledger.cancelTakeover({
+          jobId,
+          taskId: job.task.taskId,
+          worker,
+          epoch: job.task.epoch,
+          generation: control.generation,
+        });
       }
-      return this.jobs.pause(jobId);
+      if (control.state === "DRAINING") {
+        control = (await this.ledger.getTaskControl(jobId, job.task.taskId)) ?? control;
+      }
+      if (control.state !== "DRAINED") throw new Error("TASK_NOT_DRAINED");
+      if ((await this.ledger.listOperations(jobId)).some((operation) =>
+        operation.state === "RESERVED" || operation.state === "SUBMITTED"
+        || operation.state === "SETTLED" || operation.state === "UNKNOWN")) {
+        throw new Error("UNRESOLVED_OPERATIONS");
+      }
+
+      if (!job.task.drained) {
+        await this.jobs.drain(jobId);
+        job = await this.requireJob(jobId);
+      }
+      await confirmOnChain?.(job);
+
+      control = await this.ledger.resumeTask({
+        jobId,
+        taskId: job.task.taskId,
+        worker,
+        epoch: job.task.epoch,
+        generation: control.generation,
+        from: "DRAINED",
+      });
+      if (control.state !== "RUNNING") throw new Error("GATEWAY_REOPEN_PROOF_INVALID");
+      await this.ledger.clearTakeoverAcknowledgement(jobId, job.task.taskId, job.task.epoch);
+      return this.jobs.reopen(jobId, {
+        state: "RUNNING",
+        worker,
+        epoch: job.task.epoch,
+        generation: control.generation,
+      });
     });
   }
 
   public async resume(jobId: string): Promise<JobSnapshot> {
     return this.withJobLock(jobId, async () => {
-      const job = await this.requireJob(jobId);
+      let job = await this.requireJob(jobId);
       if (!job.task.assignedWorker) throw new Error("WORKER_NOT_ASSIGNED");
-      if (job.task.status !== "PAUSED") throw new Error("TASK_NOT_PAUSED");
-      if (this.authority) {
-        const writer = this.requireMutationWriter();
-        await this.assertSnapshotCurrent(job);
-        const expected = structuredClone(job);
-        expected.task.status = "FUNDED";
-        await writer.resume(job);
-        await this.assertSnapshotCurrent(expected);
+      const worker = job.task.assignedWorker;
+      const epoch = job.task.epoch;
+      const control = await this.ensureTaskControl(job);
+
+      if (control.state === "TAKEOVER_PENDING") throw new Error("TAKEOVER_PENDING");
+      if (control.state === "DRAINED" || control.state === "DRAINING" || job.task.drained) {
+        throw new Error("CANCEL_DRAIN_REQUIRED");
       }
-      return this.jobs.resume(jobId);
+
+      if (this.authority) {
+        await this.authority.assertAssignedWorker(this.chainAdmission(job, worker, epoch));
+      }
+
+      if (control.state === "PAUSED") {
+        if (job.task.status === "PAUSED") await this.jobs.resume(jobId);
+        await this.ledger.resumeTask({
+          jobId,
+          taskId: job.task.taskId,
+          worker,
+          epoch,
+          generation: control.generation,
+          from: "PAUSED",
+        });
+        return this.requireJob(jobId);
+      }
+      if (control.state === "RUNNING") {
+        if (job.task.status === "PAUSED") return this.jobs.resume(jobId);
+        return job;
+      }
+      throw new Error("GATEWAY_DRAINED");
     });
   }
 
-  public async claim(jobId: string, worker: Hex, signedTransaction?: Hex): Promise<{ amount: bigint; credits: JobSnapshot["credits"] }> {
+  public async pause(jobId: string, confirmOnChain?: (job: JobSnapshot) => Promise<void>): Promise<JobSnapshot> {
     return this.withJobLock(jobId, async () => {
       const job = await this.requireJob(jobId);
-      if (this.authority) {
-        const writer = this.requireMutationWriter();
-        if (!signedTransaction) throw new Error("WORKER_CLAIM_TRANSACTION_REQUIRED");
-        await this.assertSnapshotCurrent(job);
-        const expected = structuredClone(job);
-        const credits = expected.credits.filter((credit) => credit.worker.toLowerCase() === worker.toLowerCase() && !credit.claimed);
-        if (credits.length === 0) throw new Error("NO_WITHDRAWABLE_CREDITS");
-        for (const credit of credits) credit.claimed = true;
-        await writer.claim(job, worker, signedTransaction);
-        await this.assertSnapshotCurrent(expected);
+      if (!job.task.assignedWorker) throw new Error("WORKER_NOT_ASSIGNED");
+      if (job.task.status === "COMPLETED" || job.task.status === "CLOSED") throw new Error("TASK_NOT_OPEN");
+      const control = await this.ensureTaskControl(job);
+      if (control.state === "RUNNING") {
+        await this.ledger.pauseTask({
+          jobId,
+          taskId: job.task.taskId,
+          worker: job.task.assignedWorker,
+          epoch: job.task.epoch,
+          generation: control.generation,
+        });
+      } else if (control.state !== "PAUSED") {
+        throw new Error("TASK_NOT_RUNNING");
       }
-      return this.jobs.claim(jobId, worker);
+      await confirmOnChain?.(job);
+      return this.jobs.pause(jobId);
     });
   }
 
   private async reuseOrReconcile(operation: GatewayOperation, request: ProviderPaymentRequest): Promise<GatewayOperation> {
     if (operation.state === "OUTPUT_AVAILABLE") return this.recordAuthorizedReuse(operation, request);
     if (operation.state === "FAILED") throw new Error("PAYMENT_FAILED: operation is terminal");
+    if (operation.state === "RESERVED") {
+      await this.ledger.transition(operation.operationId, "FAILED", { failureCode: "NOT_SUBMITTED_BEFORE_DRAIN" });
+      throw new Error("PAYMENT_FAILED: operation was never submitted to the provider");
+    }
     if (operation.state !== "SUBMITTED" && operation.state !== "UNKNOWN" && operation.state !== "SETTLED") {
       throw new Error("OPERATION_STATE_NOT_RECOVERABLE");
     }
@@ -419,7 +720,10 @@ export class Gateway {
     if (!current) throw new Error("OPERATION_NOT_FOUND");
     if (current.state !== "SETTLED") {
       try {
-        await this.ledger.transition(operation.operationId, "SETTLED", { providerReceipt: result.providerReceipt });
+        await this.ledger.transition(operation.operationId, "SETTLED", {
+          providerReceipt: result.providerReceipt,
+          settledAmount: result.settledAmount,
+        });
       } catch (error) {
         current = await this.ledger.getOperation(operation.operationId);
         if (current?.state !== "SETTLED" && current?.state !== "OUTPUT_AVAILABLE") throw error;
@@ -451,13 +755,61 @@ export class Gateway {
     if (job.terms.task.taskId !== taskId) throw new Error("TASK_ID_MISMATCH");
   }
 
-  private async assertAdmission(job: JobSnapshot, worker: Hex, epoch: number): Promise<void> {
+  private async assertAdmission(job: JobSnapshot, worker: Hex, epoch: number): Promise<GatewayTaskControl> {
     if (job.task.assignedWorker?.toLowerCase() !== worker.toLowerCase()) throw new Error("WORKER_NOT_ASSIGNED");
     if (job.task.epoch !== epoch) throw new Error("STALE_EPOCH");
+    const control = await this.ensureTaskControl(job);
+    const admitted = await this.ledger.assertTaskAdmission({
+      jobId: job.terms.jobId,
+      taskId: job.task.taskId,
+      worker,
+      epoch,
+      generation: control.generation,
+    });
     if (job.task.drained || job.task.status !== "FUNDED") throw new Error("GATEWAY_DRAINED");
     if (this.authority) {
       await this.authority.assertCurrentWorker(this.chainAdmission(job, worker, epoch));
     }
+    return admitted;
+  }
+
+  private async assertReconciliationAdmission(
+    job: JobSnapshot,
+    operation: GatewayOperation,
+    worker: Hex,
+    epoch: number,
+  ): Promise<void> {
+    if (job.task.assignedWorker?.toLowerCase() !== worker.toLowerCase()) throw new Error("WORKER_NOT_ASSIGNED");
+    if (job.task.epoch !== epoch) throw new Error("STALE_EPOCH");
+    await this.ensureTaskControl(job);
+    await this.ledger.assertTaskReconciliation({
+      jobId: job.terms.jobId,
+      taskId: job.task.taskId,
+      worker,
+      epoch,
+    });
+    if ((operation.state === "RESERVED" || operation.state === "SUBMITTED"
+      || operation.state === "SETTLED" || operation.state === "UNKNOWN")
+      && (operation.worker.toLowerCase() !== worker.toLowerCase() || operation.epoch !== epoch)) {
+      throw new Error("OPERATION_OWNER_MISMATCH");
+    }
+    if (this.authority) {
+      if (!this.authority.assertReconciliationWorker) throw new Error("CHAIN_RECONCILIATION_CHECK_UNAVAILABLE");
+      await this.authority.assertReconciliationWorker(this.chainAdmission(job, worker, epoch));
+    }
+  }
+
+  private async ensureTaskControl(job: JobSnapshot): Promise<GatewayTaskControl> {
+    const initialState: GatewayTaskControlState = job.task.drained
+      ? "DRAINED"
+      : job.task.status === "PAUSED" ? "PAUSED" : "RUNNING";
+    return this.ledger.ensureTaskControl({
+      jobId: job.terms.jobId,
+      taskId: job.task.taskId,
+      worker: job.task.assignedWorker,
+      epoch: job.task.epoch,
+      state: initialState,
+    });
   }
 
   private requireChainJobId(job: JobSnapshot): Hex {
@@ -477,100 +829,6 @@ export class Gateway {
       buyer: job.terms.buyer,
       worker,
       epoch,
-    };
-  }
-
-  private requireMutationWriter(): EscrowMutationWriter {
-    if (!this.supportsChainMutations) throw new Error("CHAIN_MUTATION_WRITER_UNAVAILABLE");
-    return this.mutationWriter!;
-  }
-
-  private async assertSnapshotCurrent(job: JobSnapshot): Promise<void> {
-    if (!this.authority?.assertSnapshotCurrent) throw new Error("CHAIN_MUTATION_CONFIRMATION_UNAVAILABLE");
-    await this.authority.assertSnapshotCurrent(job);
-  }
-
-  private async assertOfferSignature(offer: MilestoneOffer, signature: Hex, signer: Hex): Promise<void> {
-    if (!this.escrowAddress) throw new Error("CHAIN_MUTATION_CONFIRMATION_UNAVAILABLE");
-    let recovered: string;
-    try {
-      recovered = await recoverTypedDataAddress({
-        domain: domain(this.chainId, getAddress(this.escrowAddress)),
-        types: OFFER_TYPES,
-        primaryType: "MilestoneOffer",
-        message: offer,
-        signature,
-      });
-    } catch {
-      throw new Error("CHAIN_WORKER_SIGNATURE_INVALID");
-    }
-    if (getAddress(recovered) !== getAddress(signer)) throw new Error("CHAIN_WORKER_SIGNATURE_INVALID");
-  }
-
-  private async assertTakeoverSignature(ack: TakeoverAck, signature: Hex, signer: Hex): Promise<void> {
-    if (!this.escrowAddress) throw new Error("CHAIN_MUTATION_CONFIRMATION_UNAVAILABLE");
-    let recovered: string;
-    try {
-      recovered = await recoverTypedDataAddress({
-        domain: domain(this.chainId, getAddress(this.escrowAddress)),
-        types: TAKEOVER_TYPES,
-        primaryType: "TakeoverAck",
-        message: ack,
-        signature,
-      });
-    } catch {
-      throw new Error("CHAIN_WORKER_SIGNATURE_INVALID");
-    }
-    if (getAddress(recovered) !== getAddress(signer)) throw new Error("CHAIN_WORKER_SIGNATURE_INVALID");
-  }
-
-  private makeMilestoneOffer(
-    job: JobSnapshot,
-    input: { worker: Hex; epoch: number; acceptanceSpecHash: Hex; expectedHead: Hex; newHead: CheckpointHead },
-    authorization?: MilestoneOfferAuthorization,
-  ): MilestoneOffer {
-    if (!authorization || !this.escrowAddress || !job.chainJobId || !job.chainTaskId) {
-      throw new Error("WORKER_MILESTONE_SIGNATURE_REQUIRED");
-    }
-    assertSignatureWindow(authorization.nonce, authorization.expiry);
-    const offer: MilestoneOffer = {
-      jobId: job.chainJobId,
-      taskId: job.chainTaskId,
-      termsHash: job.terms.termsHash,
-      producer: getAddress(input.worker),
-      epoch: BigInt(input.epoch),
-      milestone: job.task.nextMilestone,
-      acceptanceSpecHash: input.acceptanceSpecHash,
-      expectedHead: input.expectedHead,
-      newHead: input.newHead.manifestDigest,
-      manifestRef: input.newHead.manifestRef,
-      sequence: BigInt(input.newHead.sequence),
-      nonce: authorization.nonce,
-      expiry: authorization.expiry,
-    };
-    return offer;
-  }
-
-  private makeTakeoverAck(
-    job: JobSnapshot,
-    input: { successor: Hex; expectedHead: Hex; expectedEpoch: number; compatibilityReport: Hex },
-    authorization?: TakeoverAuthorization,
-  ): TakeoverAck {
-    if (!authorization || !this.escrowAddress || !job.chainJobId || !job.chainTaskId) {
-      throw new Error("SUCCESSOR_TAKEOVER_SIGNATURE_REQUIRED");
-    }
-    assertSignatureWindow(authorization.nonce, authorization.expiry);
-    return {
-      jobId: job.chainJobId,
-      taskId: job.chainTaskId,
-      termsHash: job.terms.termsHash,
-      successor: getAddress(input.successor),
-      epoch: BigInt(input.expectedEpoch),
-      expectedHead: input.expectedHead,
-      compatibilityReport: input.compatibilityReport,
-      servicePolicy: digest(job.servicePolicy),
-      nonce: authorization.nonce,
-      expiry: authorization.expiry,
     };
   }
 
@@ -600,31 +858,4 @@ function withPaymentPolicy(request: PaymentRequest, job: JobSnapshot): ProviderP
     policyVersion: policy.policyVersion,
     approvedPolicyHash: digest(policy),
   };
-}
-
-function projectAcceptedMilestone(
-  job: JobSnapshot,
-  input: { worker: Hex; newHead: CheckpointHead },
-): JobSnapshot {
-  const expected = structuredClone(job);
-  const milestone = expected.terms.task.milestones[expected.task.nextMilestone];
-  if (!milestone) throw new Error("NO_MILESTONE_REMAINING");
-  expected.task.acceptedHead = input.newHead;
-  expected.task.nextMilestone += 1;
-  expected.credits.push({
-    id: `chain-preview-${expected.task.nextMilestone}`,
-    worker: input.worker,
-    milestoneId: milestone.id,
-    amount: milestone.reward,
-    claimed: false,
-  });
-  if (expected.task.nextMilestone === expected.terms.task.milestones.length) expected.task.status = "COMPLETED";
-  return expected;
-}
-
-function assertSignatureWindow(nonce: bigint, expiry: bigint): void {
-  const now = BigInt(Math.floor(Date.now() / 1000));
-  if (nonce < 0n) throw new Error("CHAIN_SIGNATURE_NONCE_INVALID");
-  if (expiry <= now) throw new Error("CHAIN_SIGNATURE_EXPIRED");
-  if (expiry > now + 300n) throw new Error("CHAIN_SIGNATURE_LIFETIME_TOO_LONG");
 }

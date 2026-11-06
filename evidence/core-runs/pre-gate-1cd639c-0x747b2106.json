@@ -1,0 +1,1997 @@
+{
+  "kind": "baton-core-two-codex-worker-run",
+  "build": {
+    "commit": "1cd639c83c44c432303de1246af6c0ed982dbaef",
+    "trackedChanges": [
+      "M scripts/core/run-e2e.mjs",
+      " M scripts/core/stale-check.ts",
+      " M server/apps/worker/src/codexWorker.ts",
+      " M server/src/services/codex/appServerClient.ts",
+      " M server/src/services/core/chainOps.ts",
+      " M server/src/services/core/core.test.ts",
+      " M server/src/services/core/coreService.ts"
+    ],
+    "codex": "codex-cli 0.164.0"
+  },
+  "started": "2026-11-06T14:41:17.478Z",
+  "finished": "2026-11-06T14:59:53.055Z",
+  "result": "PASS",
+  "network": "sepolia",
+  "explorer": "https://sepolia.etherscan.io/tx/",
+  "job": {
+    "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+    "taskId": "0xfa0386584e44212cc976d4bbe854198fc44996f9b4d4eb10d5cdf7ff5221a60f",
+    "termsHash": "0xbdc662cc172263db47a8369fed0991529508627e0d57d5f726d3ff42d14db0c4",
+    "createdAt": "2026-11-06T14:41:18.107Z",
+    "rewardsWei": [
+      "3000000000000000000",
+      "3000000000000000000",
+      "4000000000000000000"
+    ],
+    "acceptanceSpecHashes": [
+      "0xf128e61202713db4d826f8bf9188a11454d74ec7404191deb31a5e4e67b2b15e",
+      "0x81ea28ed7833f55aab599c1f6612383dc3f48fda16848bf40eb4640b269310ca",
+      "0xb3f0448477c7900f9edca0e09cee224e5a33dbd12a723a5bf2e641c8e843f0b7"
+    ],
+    "escrow": "0x61d9200F06d208fE0Bb387607BD0C53cDd399E38",
+    "rewardToken": "0x9B610D57882dE15Fa2E61297a97f88FF934eADF2",
+    "buyer": "0x0f35bDe4F4b1270813c5116DA20915FCD49e47FA",
+    "ens": {
+      "parent": "baton.eth",
+      "label": "job-747b2106",
+      "name": "job-747b2106.baton.eth",
+      "workerNames": {
+        "a": {
+          "name": "a.job-747b2106.baton.eth",
+          "address": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+          "label": "a"
+        },
+        "b": {
+          "name": "b.job-747b2106.baton.eth",
+          "address": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+          "label": "b"
+        }
+      },
+      "registry": "0x05Bd6a18Fe2AFb282e7c95211C6263a8557A3B89",
+      "resolver": "0x2bEC71e07c389b6491d22A212682F1b751D8DaE8",
+      "authority": "0xE837d10497A6491eA27777c2DCAfD35E3c731fAF"
+    },
+    "phase": "completed",
+    "readiness": {
+      "resources": true,
+      "funding": true,
+      "execution": true
+    },
+    "epoch": 2,
+    "activeWorkerId": "b",
+    "assignments": [
+      {
+        "workerId": "a",
+        "address": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+        "epoch": 1,
+        "ensName": "a.job-747b2106.baton.eth",
+        "status": "replaced",
+        "assignedAt": "2026-11-06T14:41:18.108Z",
+        "endedAt": "2026-11-06T14:51:16.034Z"
+      },
+      {
+        "workerId": "b",
+        "address": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+        "epoch": 2,
+        "ensName": "b.job-747b2106.baton.eth",
+        "status": "completed",
+        "assignedAt": "2026-11-06T14:51:16.034Z",
+        "endedAt": "2026-11-06T14:59:50.211Z"
+      }
+    ],
+    "checkpoints": [
+      {
+        "milestone": 1,
+        "sequence": 1,
+        "epoch": 1,
+        "writer": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+        "workerId": "a",
+        "manifestDigest": "0x788cf711e3f415bc145992fe8dc69561146849c46d5cc7fb7a23db3deb1987f4",
+        "manifestRef": "0x5d6afc71dce2c99630f05790e7ca18214c15ee0f0c879732ca07eb24db8794a2",
+        "keyId": "baton:747b2106c60abe44:e1",
+        "arkivTx": "0xffbec00d2ec92a4c9ae3835951808e4d27ac5a542acd25b52b5e882112816322",
+        "arkivOwner": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+        "arkivExpiresAt": "8071352",
+        "newArtifacts": [
+          "normalized.json",
+          "clusters.json"
+        ],
+        "status": "accepted",
+        "checks": [
+          {
+            "name": "manifest job/task binding",
+            "ok": true
+          },
+          {
+            "name": "manifest epoch = offer epoch",
+            "ok": true
+          },
+          {
+            "name": "manifest sequence = offer sequence",
+            "ok": true
+          },
+          {
+            "name": "manifest previous head = accepted head",
+            "ok": true
+          },
+          {
+            "name": "manifest writer = authorized producer",
+            "ok": true
+          },
+          {
+            "name": "Arkiv manifest owned by producer wallet",
+            "ok": true,
+            "detail": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2"
+          },
+          {
+            "name": "file normalized.json present",
+            "ok": true
+          },
+          {
+            "name": "file clusters.json present",
+            "ok": true
+          },
+          {
+            "name": "normalized.json covers every incident once",
+            "ok": true
+          },
+          {
+            "name": "clusters.json has 3-8 uniquely named clusters",
+            "ok": true
+          },
+          {
+            "name": "clusters partition every incident exactly once",
+            "ok": true
+          },
+          {
+            "name": "escrow acceptMilestone simulation",
+            "ok": true
+          }
+        ],
+        "offer": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "taskId": "0xfa0386584e44212cc976d4bbe854198fc44996f9b4d4eb10d5cdf7ff5221a60f",
+          "termsHash": "0xbdc662cc172263db47a8369fed0991529508627e0d57d5f726d3ff42d14db0c4",
+          "producer": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+          "epoch": "1",
+          "milestone": 0,
+          "acceptanceSpecHash": "0xf128e61202713db4d826f8bf9188a11454d74ec7404191deb31a5e4e67b2b15e",
+          "expectedHead": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "newHead": "0x788cf711e3f415bc145992fe8dc69561146849c46d5cc7fb7a23db3deb1987f4",
+          "manifestRef": "0x5d6afc71dce2c99630f05790e7ca18214c15ee0f0c879732ca07eb24db8794a2",
+          "sequence": "1",
+          "nonce": "65081409240346517678176120173811040771",
+          "expiry": "1793998076"
+        },
+        "signature": "0x7078a44fac12f4d3d5854239b1743019ebcc029dfdeb90bb71c12553ffbdd1af6fce66836e4c7795432a4ab27e40462124eeef838e5ed24d0be9b25960bf49861b",
+        "submittedAt": "2026-11-06T14:47:57.735Z",
+        "recoveredFrom": null,
+        "acceptTx": "0x772c70b9d7b9a1b59724881ca3927b0a6d6c3a9256e6380d6585a8708370fe95"
+      },
+      {
+        "milestone": 2,
+        "sequence": 2,
+        "epoch": 2,
+        "writer": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+        "workerId": "b",
+        "manifestDigest": "0x1580641a8a63c495cfd61c203d3c9efd29d2fd57df7ab2780ceb52aab9726f6e",
+        "manifestRef": "0xe171b3881b463468b36656c4f531965c27f9b9ce4b60163d7cf73d509c6f4160",
+        "keyId": "baton:747b2106c60abe44:e2",
+        "arkivTx": "0xad06b2b1f8753d927cc86f00ce4ffb06a0424c2b6954f46f34c08c6759286d13",
+        "arkivOwner": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+        "arkivExpiresAt": "8071554",
+        "newArtifacts": [
+          "analysis.json"
+        ],
+        "status": "accepted",
+        "checks": [
+          {
+            "name": "manifest job/task binding",
+            "ok": true
+          },
+          {
+            "name": "manifest epoch = offer epoch",
+            "ok": true
+          },
+          {
+            "name": "manifest sequence = offer sequence",
+            "ok": true
+          },
+          {
+            "name": "manifest previous head = accepted head",
+            "ok": true
+          },
+          {
+            "name": "manifest writer = authorized producer",
+            "ok": true
+          },
+          {
+            "name": "Arkiv manifest owned by producer wallet",
+            "ok": true,
+            "detail": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5"
+          },
+          {
+            "name": "accepted output normalized.json carried forward unchanged",
+            "ok": true
+          },
+          {
+            "name": "accepted output clusters.json carried forward unchanged",
+            "ok": true
+          },
+          {
+            "name": "file normalized.json present",
+            "ok": true
+          },
+          {
+            "name": "file clusters.json present",
+            "ok": true
+          },
+          {
+            "name": "file analysis.json present",
+            "ok": true
+          },
+          {
+            "name": "normalized.json covers every incident once",
+            "ok": true
+          },
+          {
+            "name": "clusters.json has 3-8 uniquely named clusters",
+            "ok": true
+          },
+          {
+            "name": "clusters partition every incident exactly once",
+            "ok": true
+          },
+          {
+            "name": "analysis.json covers exactly the accepted clusters",
+            "ok": true
+          },
+          {
+            "name": "analysis evidence belongs to its cluster with substantive root causes",
+            "ok": true
+          },
+          {
+            "name": "escrow acceptMilestone simulation",
+            "ok": true
+          }
+        ],
+        "offer": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "taskId": "0xfa0386584e44212cc976d4bbe854198fc44996f9b4d4eb10d5cdf7ff5221a60f",
+          "termsHash": "0xbdc662cc172263db47a8369fed0991529508627e0d57d5f726d3ff42d14db0c4",
+          "producer": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+          "epoch": "2",
+          "milestone": 1,
+          "acceptanceSpecHash": "0x81ea28ed7833f55aab599c1f6612383dc3f48fda16848bf40eb4640b269310ca",
+          "expectedHead": "0x788cf711e3f415bc145992fe8dc69561146849c46d5cc7fb7a23db3deb1987f4",
+          "newHead": "0x1580641a8a63c495cfd61c203d3c9efd29d2fd57df7ab2780ceb52aab9726f6e",
+          "manifestRef": "0xe171b3881b463468b36656c4f531965c27f9b9ce4b60163d7cf73d509c6f4160",
+          "sequence": "2",
+          "nonce": "295926125989379307243179951866488409054",
+          "expiry": "1793998476"
+        },
+        "signature": "0xd9897c956d555530cfbb3db9bcd1d833327358cc37b41c7a7d7f0bff34f02b8f4a05cb40d9357551a127d464af9941e9c48f79e5e5024d047ba640a42088918b1c",
+        "submittedAt": "2026-11-06T14:54:39.323Z",
+        "recoveredFrom": {
+          "completed": [
+            "Read the objective, input log, milestone acceptance instructions, and recovery state (no recovered outputs).",
+            "Inspected workspace files and parsed incidents.log.",
+            "Created normalized.json with id, timestamp, service, severity, and message for every log line.",
+            "Created clusters.json with stable sequential cluster ids C1 through C6 and exactly one assignment per incident.",
+            "Validated both JSON files, all 24 original records, schema fields, timestamps, cluster ids, and complete nonduplicated membership."
+          ],
+          "epoch": 1,
+          "head": "0x788cf711e3f415bc145992fe8dc69561146849c46d5cc7fb7a23db3deb1987f4",
+          "sequence": 1,
+          "unfinished": [
+            "Milestone 2: reuse accepted clusters.json unchanged and create analysis.json with one evidence-supported analysis per cluster.",
+            "Milestone 3: create remediation.json with at least one action per cluster and report.md with required headings and all cluster ids."
+          ],
+          "writer": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2"
+        },
+        "acceptTx": "0x4f59741717e1402ac04fda0fc2c88956af1ba645aea0f4245ca82d56f42ef8cf"
+      },
+      {
+        "milestone": 3,
+        "sequence": 3,
+        "epoch": 2,
+        "writer": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+        "workerId": "b",
+        "manifestDigest": "0xd1907a464bea6d4f1bfad16ccbb13645e172f708d3a3fb6cf8b27bdff0bda13f",
+        "manifestRef": "0x18eb5f551cab3ad8dfd577451a1e8ee78a95adf307a3c763fbc09af266005fe2",
+        "keyId": "baton:747b2106c60abe44:e2",
+        "arkivTx": "0xa625f21972bf58c854df0bd34d1a74babf73f955be5d811f9056da9537caab82",
+        "arkivOwner": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+        "arkivExpiresAt": "8071616",
+        "newArtifacts": [
+          "remediation.json",
+          "report.md"
+        ],
+        "status": "accepted",
+        "checks": [
+          {
+            "name": "manifest job/task binding",
+            "ok": true
+          },
+          {
+            "name": "manifest epoch = offer epoch",
+            "ok": true
+          },
+          {
+            "name": "manifest sequence = offer sequence",
+            "ok": true
+          },
+          {
+            "name": "manifest previous head = accepted head",
+            "ok": true
+          },
+          {
+            "name": "manifest writer = authorized producer",
+            "ok": true
+          },
+          {
+            "name": "Arkiv manifest owned by producer wallet",
+            "ok": true,
+            "detail": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5"
+          },
+          {
+            "name": "accepted output normalized.json carried forward unchanged",
+            "ok": true
+          },
+          {
+            "name": "accepted output clusters.json carried forward unchanged",
+            "ok": true
+          },
+          {
+            "name": "accepted output analysis.json carried forward unchanged",
+            "ok": true
+          },
+          {
+            "name": "file normalized.json present",
+            "ok": true
+          },
+          {
+            "name": "file clusters.json present",
+            "ok": true
+          },
+          {
+            "name": "file analysis.json present",
+            "ok": true
+          },
+          {
+            "name": "file remediation.json present",
+            "ok": true
+          },
+          {
+            "name": "file report.md present",
+            "ok": true
+          },
+          {
+            "name": "normalized.json covers every incident once",
+            "ok": true
+          },
+          {
+            "name": "clusters.json has 3-8 uniquely named clusters",
+            "ok": true
+          },
+          {
+            "name": "clusters partition every incident exactly once",
+            "ok": true
+          },
+          {
+            "name": "analysis.json covers exactly the accepted clusters",
+            "ok": true
+          },
+          {
+            "name": "analysis evidence belongs to its cluster with substantive root causes",
+            "ok": true
+          },
+          {
+            "name": "remediation.json has an action for every cluster",
+            "ok": true
+          },
+          {
+            "name": "report.md has required sections",
+            "ok": true
+          },
+          {
+            "name": "report.md mentions every cluster id",
+            "ok": true
+          },
+          {
+            "name": "escrow acceptMilestone simulation",
+            "ok": true
+          }
+        ],
+        "offer": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "taskId": "0xfa0386584e44212cc976d4bbe854198fc44996f9b4d4eb10d5cdf7ff5221a60f",
+          "termsHash": "0xbdc662cc172263db47a8369fed0991529508627e0d57d5f726d3ff42d14db0c4",
+          "producer": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+          "epoch": "2",
+          "milestone": 2,
+          "acceptanceSpecHash": "0xb3f0448477c7900f9edca0e09cee224e5a33dbd12a723a5bf2e641c8e843f0b7",
+          "expectedHead": "0x1580641a8a63c495cfd61c203d3c9efd29d2fd57df7ab2780ceb52aab9726f6e",
+          "newHead": "0xd1907a464bea6d4f1bfad16ccbb13645e172f708d3a3fb6cf8b27bdff0bda13f",
+          "manifestRef": "0x18eb5f551cab3ad8dfd577451a1e8ee78a95adf307a3c763fbc09af266005fe2",
+          "sequence": "3",
+          "nonce": "159734023489176130777107079832689943029",
+          "expiry": "1793998603"
+        },
+        "signature": "0xaf8eff7ffbe3355df61bf62792f984f77fae9a183e1e4a1ae8b43175844d87b1711d51ae2bf77394783fb8614615509478092b0a889f1f8a87c65442c50b849a1c",
+        "submittedAt": "2026-11-06T14:56:47.051Z",
+        "recoveredFrom": {
+          "completed": [
+            "Read the objective, input log, milestone acceptance instructions, and recovery state (no recovered outputs).",
+            "Inspected workspace files and parsed incidents.log.",
+            "Created normalized.json with id, timestamp, service, severity, and message for every log line.",
+            "Created clusters.json with stable sequential cluster ids C1 through C6 and exactly one assignment per incident.",
+            "Validated both JSON files, all 24 original records, schema fields, timestamps, cluster ids, and complete nonduplicated membership."
+          ],
+          "epoch": 1,
+          "head": "0x788cf711e3f415bc145992fe8dc69561146849c46d5cc7fb7a23db3deb1987f4",
+          "sequence": 1,
+          "unfinished": [
+            "Milestone 2: reuse accepted clusters.json unchanged and create analysis.json with one evidence-supported analysis per cluster.",
+            "Milestone 3: create remediation.json with at least one action per cluster and report.md with required headings and all cluster ids."
+          ],
+          "writer": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2"
+        },
+        "acceptTx": "0x1989a8a577843b551865787659653e12f8244edea2ce178cf999a0c8fc7ba4c8"
+      }
+    ],
+    "ops": {
+      "token:mint": {
+        "key": "token:mint",
+        "status": "confirmed",
+        "intent": "mint 10000000000000000000 test reward units to buyer",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:41:37.331Z",
+        "txHash": "0x15f06eaffeaed29db0f4148f0704829d1441c9a70fc8f9e8723ac4d1fa2f3cc9",
+        "result": {
+          "block": "12077215",
+          "gasUsed": "140217"
+        }
+      },
+      "ens:job-resolver": {
+        "key": "ens:job-resolver",
+        "status": "confirmed",
+        "intent": "deploy PermissionedResolver for job-747b2106.baton.eth",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:42:01.103Z",
+        "txHash": "0xea5866048168d8b5835fe8771e973a46df8ed4177a88b93f8f1be17f7d483559",
+        "result": {
+          "block": "12077217",
+          "gasUsed": "791370",
+          "proxy": "0x2bEC71e07c389b6491d22A212682F1b751D8DaE8"
+        }
+      },
+      "ens:job-registry": {
+        "key": "ens:job-registry",
+        "status": "confirmed",
+        "intent": "deploy UserRegistry for job-747b2106.baton.eth",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:42:28.207Z",
+        "txHash": "0xd8d67178dd2aaeb1d05bfc2202b0f5ac99765e308e392a64ba215708e519d86e",
+        "result": {
+          "block": "12077219",
+          "gasUsed": "903322",
+          "proxy": "0x05Bd6a18Fe2AFb282e7c95211C6263a8557A3B89"
+        }
+      },
+      "ens:job-authority": {
+        "key": "ens:job-authority",
+        "status": "confirmed",
+        "intent": "deploy JobAuthority adapter bound to 0x2bEC71e07c389b6491d22A212682F1b751D8DaE8",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:42:51.240Z",
+        "txHash": "0x52dfa9bdf2b339c6e8773b8bd5d001a5a2634d5c0052c0eba5e7b683199e1d7f",
+        "result": {
+          "block": "12077221",
+          "gasUsed": "2063819",
+          "contractAddress": "0xe837d10497a6491ea27777c2dcafd35e3c731faf"
+        }
+      },
+      "ens:register-job": {
+        "key": "ens:register-job",
+        "status": "confirmed",
+        "intent": "register job-747b2106.baton.eth",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:43:15.781Z",
+        "txHash": "0xf78869a158c134258e83d162b4db3e2f1ce72dae9581f1fa09e0bbe62b6c8ce4",
+        "result": {
+          "block": "12077223",
+          "gasUsed": "716283"
+        }
+      },
+      "ens:job-records": {
+        "key": "ens:job-records",
+        "status": "confirmed",
+        "intent": "set 5 record(s) on job-747b2106.baton.eth",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:43:39.138Z",
+        "txHash": "0x7d7a0898d58126603a575cc6829f07f18c547a539bbcd0c0b64a6ce927df9d98",
+        "result": {
+          "block": "12077225",
+          "gasUsed": "1649522"
+        }
+      },
+      "ens:register-worker:a": {
+        "key": "ens:register-worker:a",
+        "status": "confirmed",
+        "intent": "register a.job-747b2106.baton.eth",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:44:01.867Z",
+        "txHash": "0x7c8dc4af25643a2c9ae849358017d422f0f47ba64333e4c926cb12b871b7b61b",
+        "result": {
+          "block": "12077227",
+          "gasUsed": "495405"
+        }
+      },
+      "ens:worker-records:a": {
+        "key": "ens:worker-records:a",
+        "status": "confirmed",
+        "intent": "set 4 record(s) on a.job-747b2106.baton.eth",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:44:28.709Z",
+        "txHash": "0x26bb849eec23e1e551040b426e1d7c830855b4718d7cc4ae593968c97e4e08ea",
+        "result": {
+          "block": "12077229",
+          "gasUsed": "652801"
+        }
+      },
+      "ens:grant:0x432Eeff3E312f1910F3D04A6449753306fFaA5D2": {
+        "key": "ens:grant:0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+        "status": "confirmed",
+        "intent": "grant job-scoped ROLE_SET_DATA to 0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:44:51.984Z",
+        "txHash": "0x3ad8c11475404839653284d83f775006280f8c487f1169b7cad23f5859bbf9fc",
+        "result": {
+          "block": "12077231",
+          "gasUsed": "260232"
+        }
+      },
+      "keys:writer:e1:0x432Eeff3E312f1910F3D04A6449753306fFaA5D2": {
+        "key": "keys:writer:e1:0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+        "status": "confirmed",
+        "intent": "grant epoch-1 writer key to 0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+        "network": "key-service",
+        "result": {
+          "keyId": "baton:747b2106c60abe44:e1"
+        },
+        "updatedAt": "2026-11-06T14:44:52.829Z"
+      },
+      "token:approve": {
+        "key": "token:approve",
+        "status": "confirmed",
+        "intent": "approve escrow for 10000000000000000000",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:45:14.476Z",
+        "txHash": "0xa21f4ac5133102c4799c4a6445eab2fba616a67bb9495e8f0080f33df4b7a5c2",
+        "result": {
+          "block": "12077233",
+          "gasUsed": "127877"
+        }
+      },
+      "escrow:fund": {
+        "key": "escrow:fund",
+        "status": "confirmed",
+        "intent": "fund job with 10000000000000000000 reward units",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:45:41.183Z",
+        "txHash": "0x10749559d60932dd5d9fdc181448fcca6da7a31229516a6619098a27cd53c999",
+        "result": {
+          "block": "12077235",
+          "gasUsed": "1919617"
+        }
+      },
+      "escrow:assign:1": {
+        "key": "escrow:assign:1",
+        "status": "confirmed",
+        "intent": "assign 0x432Eeff3E312f1910F3D04A6449753306fFaA5D2 at epoch 1",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:46:05.088Z",
+        "txHash": "0x25bb529b7870c0894eb2e9d07f65d9ddfece4be29678db2af37bc46bd975a6b2",
+        "result": {
+          "block": "12077237",
+          "gasUsed": "202020"
+        }
+      },
+      "ens:records:e1": {
+        "key": "ens:records:e1",
+        "status": "confirmed",
+        "intent": "set 3 record(s) on job-747b2106.baton.eth",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:46:29.275Z",
+        "txHash": "0x366dd05a90e17dbe7de990cad0fc49bea1d899b65da768fa0840d937b094eccc",
+        "result": {
+          "block": "12077239",
+          "gasUsed": "209411"
+        }
+      },
+      "ens:worker-active:a:e1": {
+        "key": "ens:worker-active:a:e1",
+        "status": "confirmed",
+        "intent": "set 2 record(s) on a.job-747b2106.baton.eth",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:46:50.148Z",
+        "txHash": "0xa20237087c755835168f5ec0c443e44000da5119a0d2476170cbd1407a165ac8",
+        "result": {
+          "block": "12077241",
+          "gasUsed": "75410"
+        }
+      },
+      "verify:e1": {
+        "key": "verify:e1",
+        "network": "local",
+        "intent": "verify job mapping",
+        "status": "confirmed",
+        "result": {
+          "ok": true,
+          "checks": [
+            {
+              "name": "ENS a.job-747b2106.baton.eth resolves to worker wallet",
+              "ok": true,
+              "detail": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2"
+            },
+            {
+              "name": "ENS job-747b2106.baton.eth baton.job = jobId",
+              "ok": true,
+              "detail": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720"
+            },
+            {
+              "name": "ENS active-worker points at worker name",
+              "ok": true,
+              "detail": "a.job-747b2106.baton.eth"
+            },
+            {
+              "name": "escrow authority is the job adapter",
+              "ok": true
+            },
+            {
+              "name": "JobAuthority grant for worker",
+              "ok": true
+            },
+            {
+              "name": "escrow assigned worker at epoch 1",
+              "ok": true,
+              "detail": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2@1"
+            },
+            {
+              "name": "key-service writer grant for current epoch",
+              "ok": true
+            }
+          ],
+          "at": "2026-11-06T14:46:52.223Z"
+        },
+        "updatedAt": "2026-11-06T14:46:52.223Z"
+      },
+      "escrow:accept:m1": {
+        "key": "escrow:accept:m1",
+        "status": "confirmed",
+        "intent": "accept milestone 1 from 0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:48:17.986Z",
+        "txHash": "0x772c70b9d7b9a1b59724881ca3927b0a6d6c3a9256e6380d6585a8708370fe95",
+        "result": {
+          "block": "12077248",
+          "gasUsed": "1127347"
+        }
+      },
+      "ens:checkpoint:s1": {
+        "key": "ens:checkpoint:s1",
+        "status": "confirmed",
+        "intent": "set 1 record(s) on job-747b2106.baton.eth",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:48:40.721Z",
+        "txHash": "0x6dbb1231bae650d9c6fa14badc85d91323703f7807386eb94625dec76f437337",
+        "result": {
+          "block": "12077250",
+          "gasUsed": "709463"
+        }
+      },
+      "escrow:drain:1": {
+        "key": "escrow:drain:1",
+        "status": "confirmed",
+        "intent": "drain epoch 1",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:49:16.391Z",
+        "txHash": "0x1992d90402c9b304aab1de7ee3e60fb2b73b2a1e056a509e561281c0bf213c66",
+        "result": {
+          "block": "12077253",
+          "gasUsed": "128469"
+        }
+      },
+      "ens:register-worker:b": {
+        "key": "ens:register-worker:b",
+        "status": "confirmed",
+        "intent": "register b.job-747b2106.baton.eth",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:49:52.566Z",
+        "txHash": "0xf537c97b141befe4438488667da2b5e3d05a39767c872bcd5a1774cd28d28eed",
+        "result": {
+          "block": "12077255",
+          "gasUsed": "495405"
+        }
+      },
+      "ens:worker-records:b": {
+        "key": "ens:worker-records:b",
+        "status": "confirmed",
+        "intent": "set 4 record(s) on b.job-747b2106.baton.eth",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:50:15.620Z",
+        "txHash": "0xcb0c416a4a55dd7e1edc742898989492964e5f0b3deaa016f8b4594baec38c1a",
+        "result": {
+          "block": "12077257",
+          "gasUsed": "652801"
+        }
+      },
+      "ens:grant:0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5": {
+        "key": "ens:grant:0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+        "status": "confirmed",
+        "intent": "grant job-scoped ROLE_SET_DATA to 0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:50:51.657Z",
+        "txHash": "0x66ed9e4f5042437902eedd1b102682bf8d9270c8d247e08a5b447247b0b12f7c",
+        "result": {
+          "block": "12077259",
+          "gasUsed": "159656"
+        }
+      },
+      "escrow:takeover:e2": {
+        "key": "escrow:takeover:e2",
+        "status": "confirmed",
+        "intent": "takeover to 0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5 at epoch 2",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:51:16.029Z",
+        "txHash": "0x313c96307a2bb34699269c963a4308211d648c0a1163cb0615d4354589f8e277",
+        "result": {
+          "block": "12077261",
+          "gasUsed": "234085"
+        }
+      },
+      "ens:revoke:0x432Eeff3E312f1910F3D04A6449753306fFaA5D2": {
+        "key": "ens:revoke:0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+        "status": "confirmed",
+        "intent": "revoke job-scoped ROLE_SET_DATA from 0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:51:52.512Z",
+        "txHash": "0xe6e6c6c71df207e7f9d2d35b126baeb3b57f0737e50e3946f9b5a42bd10f518b",
+        "result": {
+          "block": "12077264",
+          "gasUsed": "45860"
+        }
+      },
+      "keys:revoke:0x432Eeff3E312f1910F3D04A6449753306fFaA5D2": {
+        "key": "keys:revoke:0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+        "status": "confirmed",
+        "intent": "revoke key-service grants of 0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+        "network": "key-service",
+        "result": {
+          "removed": 1
+        },
+        "updatedAt": "2026-11-06T14:51:52.761Z"
+      },
+      "keys:writer:e2:0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5": {
+        "key": "keys:writer:e2:0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+        "status": "confirmed",
+        "intent": "grant epoch-2 writer key to 0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+        "network": "key-service",
+        "result": {
+          "keyId": "baton:747b2106c60abe44:e2"
+        },
+        "updatedAt": "2026-11-06T14:51:52.768Z"
+      },
+      "keys:recovery:0x788cf711e3f415bc145992fe8dc69561146849c46d5cc7fb7a23db3deb1987f4:0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5": {
+        "key": "keys:recovery:0x788cf711e3f415bc145992fe8dc69561146849c46d5cc7fb7a23db3deb1987f4:0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+        "status": "confirmed",
+        "intent": "grant recovery of accepted checkpoint 0x788cf711e3f415bc145992fe8dc69561146849c46d5cc7fb7a23db3deb1987f4 to 0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+        "network": "key-service",
+        "result": {
+          "keyId": "baton:747b2106c60abe44:e1",
+          "keyEpoch": 1
+        },
+        "updatedAt": "2026-11-06T14:51:52.772Z"
+      },
+      "ens:records:e2": {
+        "key": "ens:records:e2",
+        "status": "confirmed",
+        "intent": "set 2 record(s) on job-747b2106.baton.eth",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:52:25.028Z",
+        "txHash": "0xfc2443cb2adbcff9aa9564e7fb1425ed7c6dcece16b28ebddea140df23367d8c",
+        "result": {
+          "block": "12077267",
+          "gasUsed": "84688"
+        }
+      },
+      "ens:worker-replaced:a:e1": {
+        "key": "ens:worker-replaced:a:e1",
+        "status": "confirmed",
+        "intent": "set 1 record(s) on a.job-747b2106.baton.eth",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:52:52.153Z",
+        "txHash": "0x4117844ce5f2b56a0f7fd3f5caa4be50bbe105db00978f352f385558462c5bd9",
+        "result": {
+          "block": "12077269",
+          "gasUsed": "58180"
+        }
+      },
+      "ens:worker-active:b:e2": {
+        "key": "ens:worker-active:b:e2",
+        "status": "confirmed",
+        "intent": "set 2 record(s) on b.job-747b2106.baton.eth",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:53:27.923Z",
+        "txHash": "0x55756452089ced30c46f6dbfcd2e60783d7265a5eba167ffb92a566318ca9cc7",
+        "result": {
+          "block": "12077272",
+          "gasUsed": "75410"
+        }
+      },
+      "verify:e2": {
+        "key": "verify:e2",
+        "network": "local",
+        "intent": "verify takeover mapping",
+        "status": "confirmed",
+        "result": {
+          "ok": true,
+          "checks": [
+            {
+              "name": "ENS b.job-747b2106.baton.eth resolves to worker wallet",
+              "ok": true,
+              "detail": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5"
+            },
+            {
+              "name": "ENS job-747b2106.baton.eth baton.job = jobId",
+              "ok": true,
+              "detail": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720"
+            },
+            {
+              "name": "ENS active-worker points at worker name",
+              "ok": true,
+              "detail": "b.job-747b2106.baton.eth"
+            },
+            {
+              "name": "escrow authority is the job adapter",
+              "ok": true
+            },
+            {
+              "name": "JobAuthority grant for worker",
+              "ok": true
+            },
+            {
+              "name": "JobAuthority grant revoked for previous worker",
+              "ok": true
+            },
+            {
+              "name": "escrow assigned worker at epoch 2",
+              "ok": true,
+              "detail": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5@2"
+            },
+            {
+              "name": "key-service writer grant for current epoch",
+              "ok": true
+            },
+            {
+              "name": "key-service grants removed for previous worker",
+              "ok": true
+            }
+          ],
+          "at": "2026-11-06T14:53:28.907Z"
+        },
+        "updatedAt": "2026-11-06T14:53:28.907Z"
+      },
+      "escrow:accept:m2": {
+        "key": "escrow:accept:m2",
+        "status": "confirmed",
+        "intent": "accept milestone 2 from 0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:55:02.721Z",
+        "txHash": "0x4f59741717e1402ac04fda0fc2c88956af1ba645aea0f4245ca82d56f42ef8cf",
+        "result": {
+          "block": "12077280",
+          "gasUsed": "432453"
+        }
+      },
+      "ens:checkpoint:s2": {
+        "key": "ens:checkpoint:s2",
+        "status": "confirmed",
+        "intent": "set 1 record(s) on job-747b2106.baton.eth",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:55:30.600Z",
+        "txHash": "0xbbc07a6efb4666522309283a0ba67f5a62322650e0d04e10d85a78406955bca3",
+        "result": {
+          "block": "12077282",
+          "gasUsed": "112081"
+        }
+      },
+      "escrow:accept:m3": {
+        "key": "escrow:accept:m3",
+        "status": "confirmed",
+        "intent": "accept milestone 3 from 0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:57:13.248Z",
+        "txHash": "0x1989a8a577843b551865787659653e12f8244edea2ce178cf999a0c8fc7ba4c8",
+        "result": {
+          "block": "12077291",
+          "gasUsed": "322917"
+        }
+      },
+      "ens:checkpoint:s3": {
+        "key": "ens:checkpoint:s3",
+        "status": "confirmed",
+        "intent": "set 1 record(s) on job-747b2106.baton.eth",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:57:39.972Z",
+        "txHash": "0xc4b9bf713ecee655aa89879428f002285fae54e029d9b1daa84556cf2a8a98bb",
+        "result": {
+          "block": "12077293",
+          "gasUsed": "112081"
+        }
+      },
+      "ens:revoke:0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5": {
+        "key": "ens:revoke:0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+        "status": "confirmed",
+        "intent": "revoke job-scoped ROLE_SET_DATA from 0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:58:16.095Z",
+        "txHash": "0x184ae29e6dff944bd967a09b2beee86e022361a89908192433d3cc7ec900653d",
+        "result": {
+          "block": "12077295",
+          "gasUsed": "45860"
+        }
+      },
+      "keys:revoke:0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5": {
+        "key": "keys:revoke:0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+        "status": "confirmed",
+        "intent": "revoke key-service grants of 0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+        "network": "key-service",
+        "result": {
+          "removed": 2
+        },
+        "updatedAt": "2026-11-06T14:58:16.334Z"
+      },
+      "escrow:close": {
+        "key": "escrow:close",
+        "status": "confirmed",
+        "intent": "close completed job",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:58:52.152Z",
+        "txHash": "0x62d68cd4d5081e56e272467163d03bd562ebeff428f18a1edfbb3c511ddf2abc",
+        "result": {
+          "block": "12077298",
+          "gasUsed": "140981"
+        }
+      },
+      "ens:records:completed": {
+        "key": "ens:records:completed",
+        "status": "confirmed",
+        "intent": "set 2 record(s) on job-747b2106.baton.eth",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:59:14.918Z",
+        "txHash": "0xc9dfbe0c73b8e9e7f6ce2c1c8c1cae7aef18b3a9abb9ed8f320aeac14fa43892",
+        "result": {
+          "block": "12077300",
+          "gasUsed": "72449"
+        }
+      },
+      "ens:worker-completed:b": {
+        "key": "ens:worker-completed:b",
+        "status": "confirmed",
+        "intent": "set 1 record(s) on b.job-747b2106.baton.eth",
+        "network": "sepolia",
+        "updatedAt": "2026-11-06T14:59:50.206Z",
+        "txHash": "0x3189f3e8f990a1a80461a28787cccfafc6cb1f374c1ee45bc8ecdedb4f444458",
+        "result": {
+          "block": "12077303",
+          "gasUsed": "58192"
+        }
+      }
+    },
+    "takeover": {
+      "fromWorkerId": "a",
+      "toWorkerId": "b",
+      "requestedAt": "2026-11-06T14:48:56.977Z",
+      "expectedHead": "0x788cf711e3f415bc145992fe8dc69561146849c46d5cc7fb7a23db3deb1987f4",
+      "fromEpoch": 1,
+      "ackRequest": {
+        "nonce": "285200966744905636215759326980340044741",
+        "expiry": 1793987336,
+        "compatibilityReport": "0xfbfe51b31324eb3b4f9331f1829414c9b094349c2ee21abf4b3a9856cca3dfe6",
+        "servicePolicy": "0xbf1dedad997d46fc2d537cea5675c47303c28d521b35472c1254e072ca826c02",
+        "epoch": 1,
+        "expectedHead": "0x788cf711e3f415bc145992fe8dc69561146849c46d5cc7fb7a23db3deb1987f4"
+      },
+      "status": "completed",
+      "ack": {
+        "message": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "taskId": "0xfa0386584e44212cc976d4bbe854198fc44996f9b4d4eb10d5cdf7ff5221a60f",
+          "termsHash": "0xbdc662cc172263db47a8369fed0991529508627e0d57d5f726d3ff42d14db0c4",
+          "successor": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+          "epoch": "1",
+          "expectedHead": "0x788cf711e3f415bc145992fe8dc69561146849c46d5cc7fb7a23db3deb1987f4",
+          "compatibilityReport": "0xfbfe51b31324eb3b4f9331f1829414c9b094349c2ee21abf4b3a9856cca3dfe6",
+          "servicePolicy": "0xbf1dedad997d46fc2d537cea5675c47303c28d521b35472c1254e072ca826c02",
+          "nonce": "285200966744905636215759326980340044741",
+          "expiry": "1793987336"
+        },
+        "signature": "0x2129cc0720fcd98368d69112f4cb1fecb9e0d474c2d9d6ac29dec3bae8d5f1275a084b03af592237756836d79981f6847d98d389048c0c6e094b242c9bfe7da41b"
+      }
+    },
+    "contentKeys": {
+      "1": {
+        "keyId": "baton:747b2106c60abe44:e1"
+      },
+      "2": {
+        "keyId": "baton:747b2106c60abe44:e2"
+      }
+    },
+    "keyGrants": [],
+    "running": false,
+    "spec": {
+      "templateId": "incident-triage.v1",
+      "title": "Production incident log triage",
+      "milestones": [
+        {
+          "index": 1,
+          "title": "Normalize and cluster",
+          "requiredFiles": [
+            "normalized.json",
+            "clusters.json"
+          ],
+          "rewardTokens": 3
+        },
+        {
+          "index": 2,
+          "title": "Root-cause analysis",
+          "requiredFiles": [
+            "analysis.json"
+          ],
+          "rewardTokens": 3
+        },
+        {
+          "index": 3,
+          "title": "Postmortem report",
+          "requiredFiles": [
+            "remediation.json",
+            "report.md"
+          ],
+          "rewardTokens": 4
+        }
+      ]
+    }
+  },
+  "workers": [
+    {
+      "workerId": "a",
+      "wallet": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+      "codexAccount": {
+        "type": "chatgpt",
+        "planType": "plus",
+        "accountRef": "7a942ea53592e43c"
+      },
+      "smoke": {
+        "passed": true,
+        "at": "2026-11-06T14:41:15.498Z",
+        "threadId": "01a1b14e-5c13-73e1-99ad-3a8963e92011",
+        "turnId": "01a1b14e-5d94-7d91-918a-daf2c60b178f",
+        "detail": {
+          "passed": true,
+          "turnStatus": "completed",
+          "toolUsed": true,
+          "fileMatches": true,
+          "replyContainsNonce": true,
+          "threadId": "01a1b14e-5c13-73e1-99ad-3a8963e92011",
+          "turnId": "01a1b14e-5d94-7d91-918a-daf2c60b178f"
+        }
+      }
+    },
+    {
+      "workerId": "b",
+      "wallet": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+      "codexAccount": {
+        "type": "chatgpt",
+        "planType": "plus",
+        "accountRef": "a24093c254d1c361"
+      },
+      "smoke": {
+        "passed": true,
+        "at": "2026-11-06T14:16:14.761Z",
+        "threadId": "01a1b137-57b8-76d2-86c0-b3b7d15c9e5f",
+        "turnId": "01a1b137-5cc3-72f2-b553-39343dd0411b",
+        "detail": {
+          "passed": true,
+          "turnStatus": "completed",
+          "toolUsed": true,
+          "fileMatches": true,
+          "replyContainsNonce": true,
+          "threadId": "01a1b137-57b8-76d2-86c0-b3b7d15c9e5f",
+          "turnId": "01a1b137-5cc3-72f2-b553-39343dd0411b"
+        }
+      }
+    }
+  ],
+  "workerActivity": {
+    "a": [
+      {
+        "at": "2026-11-06T14:46:56.158Z",
+        "state": "job_starting",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "epoch": 1,
+          "ensName": "job-747b2106.baton.eth"
+        }
+      },
+      {
+        "at": "2026-11-06T14:46:57.433Z",
+        "state": "thread_started",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "threadId": "01a1b153-bb03-7642-8cd5-20a9edbc7a9f"
+        }
+      },
+      {
+        "at": "2026-11-06T14:46:57.438Z",
+        "state": "milestone_working",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 1,
+          "attempt": 1
+        }
+      },
+      {
+        "at": "2026-11-06T14:47:01.558Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 1,
+          "event": "agentMessage",
+          "text": "I’ll read the BATON task context, inspect the workspace, then create and validate `normalized.json` and `clusters.json` before submitting milestone 1."
+        }
+      },
+      {
+        "at": "2026-11-06T14:47:02.808Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 1,
+          "event": "command",
+          "command": "/bin/zsh -lc \"pwd; rg --files -g '\"'!node_modules'\"' -g '\"'!'\"\\\\.git'\"",
+          "exitCode": 1
+        }
+      },
+      {
+        "at": "2026-11-06T14:47:06.309Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 1,
+          "event": "toolCall",
+          "server": "baton",
+          "tool": "baton_get_task",
+          "status": "completed"
+        }
+      },
+      {
+        "at": "2026-11-06T14:47:10.602Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 1,
+          "event": "command",
+          "command": "/bin/zsh -lc 'ls -la; find . -name AGENTS.md -print'",
+          "exitCode": 0
+        }
+      },
+      {
+        "at": "2026-11-06T14:47:10.606Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 1,
+          "event": "toolCall",
+          "server": "baton",
+          "tool": "baton_get_task",
+          "status": "completed"
+        }
+      },
+      {
+        "at": "2026-11-06T14:47:14.599Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 1,
+          "event": "agentMessage",
+          "text": "The log contains 24 incidents. I’ll group them into six clusters: database pool exhaustion, reindex memory pressure, JWKS validation and refresh failures, payment HTTP 502s, payment TLS certificate expiry, and email retry backlog. I’ll keep the payment groups separate because the log does not establish a shared cause."
+        }
+      },
+      {
+        "at": "2026-11-06T14:47:27.422Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 1,
+          "event": "command",
+          "command": "/bin/zsh -lc \"python3 - <<'PY'\nimport json,re\nfrom pathlib import Path\nrows=[]\nfor line in Path('incidents.log').read_text().splitlines():\n    m=re.fullmatch(r'(INC-\\\\d+) (\\\\S+) (\\\\S+) (\\\\S+) (.+)',li",
+          "exitCode": 0
+        }
+      },
+      {
+        "at": "2026-11-06T14:47:27.513Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 1,
+          "event": "command",
+          "command": "/bin/zsh -lc \"python3 - <<'PY'\nimport json,re,collections,datetime\nfrom pathlib import Path\nrows=json.loads(Path('normalized.json').read_text())\nclusters=json.loads(Path('clusters.json').read_text())[",
+          "exitCode": 0
+        }
+      },
+      {
+        "at": "2026-11-06T14:47:57.746Z",
+        "state": "milestone_submitted",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 1,
+          "manifestDigest": "0x788cf711e3f415bc145992fe8dc69561146849c46d5cc7fb7a23db3deb1987f4",
+          "manifestRef": "0x5d6afc71dce2c99630f05790e7ca18214c15ee0f0c879732ca07eb24db8794a2",
+          "arkivTx": "0xffbec00d2ec92a4c9ae3835951808e4d27ac5a542acd25b52b5e882112816322",
+          "review": "verified_awaiting_buyer_approval"
+        }
+      },
+      {
+        "at": "2026-11-06T14:47:57.755Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 1,
+          "event": "toolCall",
+          "server": "baton",
+          "tool": "baton_submit_milestone",
+          "status": "completed"
+        }
+      },
+      {
+        "at": "2026-11-06T14:48:00.778Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 1,
+          "event": "agentMessage",
+          "text": "Created and validated `normalized.json` with all 24 log entries and `clusters.json` with six clusters, assigning every incident exactly once. Milestone 1 was submitted successfully; automated checks passed, and buyer approval is pending. Root-cause analysis and the remediation report remain for milestones 2 and 3."
+        }
+      },
+      {
+        "at": "2026-11-06T14:48:00.886Z",
+        "state": "turn_completed",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 1,
+          "status": "completed",
+          "submitted": true,
+          "toolCalls": [
+            "baton_get_task:completed",
+            "baton_get_task:completed",
+            "baton_submit_milestone:completed"
+          ],
+          "commands": 4,
+          "fileChanges": 0,
+          "summary": "Created and validated `normalized.json` with all 24 log entries and `clusters.json` with six clusters, assigning every incident exactly once. Milestone 1 was submitted successfully; automated checks passed, and buyer approval is pending. Root-cause analysis and the remediation report remain for milestones 2 and 3."
+        }
+      },
+      {
+        "at": "2026-11-06T14:48:06.203Z",
+        "state": "milestone_accepted",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 1
+        }
+      },
+      {
+        "at": "2026-11-06T14:48:07.248Z",
+        "state": "claim_submitted",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "txHash": "0x26fa905fda026dbb10f5091da6c97189a68df010ab3c9b27980eefa727a22f7a",
+          "amount": "3000000000000000000"
+        }
+      },
+      {
+        "at": "2026-11-06T14:48:29.480Z",
+        "state": "claim_confirmed",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "txHash": "0x26fa905fda026dbb10f5091da6c97189a68df010ab3c9b27980eefa727a22f7a",
+          "status": "success",
+          "amount": "3000000000000000000",
+          "block": "12077249"
+        }
+      },
+      {
+        "at": "2026-11-06T14:48:30.661Z",
+        "state": "milestone_working",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 2,
+          "attempt": 1
+        }
+      },
+      {
+        "at": "2026-11-06T14:48:34.888Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 2,
+          "event": "agentMessage",
+          "text": "I’ll read the accepted checkpoint, analyze each cluster using only the log evidence, then validate and submit `analysis.json`."
+        }
+      },
+      {
+        "at": "2026-11-06T14:48:36.024Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 2,
+          "event": "toolCall",
+          "server": "baton",
+          "tool": "baton_get_task",
+          "status": "completed"
+        }
+      },
+      {
+        "at": "2026-11-06T14:48:36.096Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 2,
+          "event": "command",
+          "command": "/bin/zsh -lc 'ls -la; cat clusters.json normalized.json'",
+          "exitCode": 0
+        }
+      }
+    ],
+    "b": [
+      {
+        "at": "2026-11-06T14:50:52.767Z",
+        "state": "takeover_ack_signed",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "epoch": 1,
+          "expectedHead": "0x788cf711e3f415bc145992fe8dc69561146849c46d5cc7fb7a23db3deb1987f4"
+        }
+      },
+      {
+        "at": "2026-11-06T14:53:32.172Z",
+        "state": "job_starting",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "epoch": 2,
+          "ensName": "job-747b2106.baton.eth"
+        }
+      },
+      {
+        "at": "2026-11-06T14:53:33.426Z",
+        "state": "recovered",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "head": "0x788cf711e3f415bc145992fe8dc69561146849c46d5cc7fb7a23db3deb1987f4",
+          "sequence": 1,
+          "fromEpoch": 1,
+          "writer": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+          "files": [
+            "normalized.json",
+            "clusters.json"
+          ]
+        }
+      },
+      {
+        "at": "2026-11-06T14:53:33.806Z",
+        "state": "thread_started",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "threadId": "01a1b159-c778-7c31-b3c0-fef9747d0e6d"
+        }
+      },
+      {
+        "at": "2026-11-06T14:53:33.812Z",
+        "state": "milestone_working",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 2,
+          "attempt": 1
+        }
+      },
+      {
+        "at": "2026-11-06T14:53:39.709Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 2,
+          "event": "agentMessage",
+          "text": "I’ll read the BATON task and recovered outputs, complete the root-cause analysis, then validate and submit `analysis.json`."
+        }
+      },
+      {
+        "at": "2026-11-06T14:53:40.944Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 2,
+          "event": "command",
+          "command": "/bin/zsh -lc \"pwd && rg --files -g '\"'!node_modules'\"' -g '\"'!vendor'\"'\"",
+          "exitCode": 0
+        }
+      },
+      {
+        "at": "2026-11-06T14:53:43.293Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 2,
+          "event": "toolCall",
+          "server": "baton",
+          "tool": "baton_get_task",
+          "status": "completed"
+        }
+      },
+      {
+        "at": "2026-11-06T14:53:46.056Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 2,
+          "event": "command",
+          "command": "/bin/zsh -lc 'ls -la && cat clusters.json && cat normalized.json'",
+          "exitCode": 0
+        }
+      },
+      {
+        "at": "2026-11-06T14:54:10.540Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 2,
+          "event": "command",
+          "command": "/bin/zsh -lc 'cat incidents.log'",
+          "exitCode": 0
+        }
+      },
+      {
+        "at": "2026-11-06T14:54:10.568Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 2,
+          "event": "fileChange",
+          "paths": [
+            "/Users/ashwera/Desktop/baton/baton-core/.baton-data/workers/b/workspace/747b2106c60a-e2/analysis.json"
+          ]
+        }
+      },
+      {
+        "at": "2026-11-06T14:54:19.566Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 2,
+          "event": "command",
+          "command": "/bin/zsh -lc \"python3 - <<'PY'\nimport json\nfrom pathlib import Path\nc=json.loads(Path('clusters.json').read_text())['clusters']\na=json.loads(Path('analysis.json').read_text())\nassert set(a)=={'analyse",
+          "exitCode": 0
+        }
+      },
+      {
+        "at": "2026-11-06T14:54:22.847Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 2,
+          "event": "agentMessage",
+          "text": "`analysis.json` passed validation with one entry for each accepted cluster and all evidence IDs correctly scoped. The analysis distinguishes observed failures from unproven causes, including the unknown cause of the email backlog. I’ll submit milestone 2 now."
+        }
+      },
+      {
+        "at": "2026-11-06T14:54:39.333Z",
+        "state": "milestone_submitted",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 2,
+          "manifestDigest": "0x1580641a8a63c495cfd61c203d3c9efd29d2fd57df7ab2780ceb52aab9726f6e",
+          "manifestRef": "0xe171b3881b463468b36656c4f531965c27f9b9ce4b60163d7cf73d509c6f4160",
+          "arkivTx": "0xad06b2b1f8753d927cc86f00ce4ffb06a0424c2b6954f46f34c08c6759286d13",
+          "review": "verified_awaiting_buyer_approval"
+        }
+      },
+      {
+        "at": "2026-11-06T14:54:39.343Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 2,
+          "event": "toolCall",
+          "server": "baton",
+          "tool": "baton_submit_milestone",
+          "status": "completed"
+        }
+      },
+      {
+        "at": "2026-11-06T14:54:43.073Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 2,
+          "event": "agentMessage",
+          "text": "Created and validated `analysis.json` for all six accepted clusters, documenting root causes, impacts, supporting evidence, and confidence levels. Accepted files remain unchanged. Milestone 2 was submitted successfully; all automated checks passed, and buyer approval is pending. Milestone 3’s remediation actions and postmortem report remain outstanding."
+        }
+      },
+      {
+        "at": "2026-11-06T14:54:43.082Z",
+        "state": "turn_completed",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 2,
+          "status": "completed",
+          "submitted": true,
+          "toolCalls": [
+            "baton_get_task:completed",
+            "baton_submit_milestone:completed"
+          ],
+          "commands": 4,
+          "fileChanges": 1,
+          "summary": "Created and validated `analysis.json` for all six accepted clusters, documenting root causes, impacts, supporting evidence, and confidence levels. Accepted files remain unchanged. Milestone 2 was submitted successfully; all automated checks passed, and buyer approval is pending. Milestone 3’s remediation actions and postmortem report remain outstanding."
+        }
+      },
+      {
+        "at": "2026-11-06T14:54:58.815Z",
+        "state": "milestone_accepted",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 2
+        }
+      },
+      {
+        "at": "2026-11-06T14:54:59.955Z",
+        "state": "claim_submitted",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "txHash": "0x86c8e0bdd82cb2e317bbf77c80f7f0dd1abb2c2e3704c58acbd186ff76592aef",
+          "amount": "3000000000000000000"
+        }
+      },
+      {
+        "at": "2026-11-06T14:55:26.182Z",
+        "state": "claim_confirmed",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "txHash": "0x86c8e0bdd82cb2e317bbf77c80f7f0dd1abb2c2e3704c58acbd186ff76592aef",
+          "status": "success",
+          "amount": "3000000000000000000",
+          "block": "12077282"
+        }
+      },
+      {
+        "at": "2026-11-06T14:55:27.072Z",
+        "state": "milestone_working",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 3,
+          "attempt": 1
+        }
+      },
+      {
+        "at": "2026-11-06T14:55:30.404Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 3,
+          "event": "agentMessage",
+          "text": "I’ll read the current BATON task and accepted outputs, then write and validate the remediation actions and postmortem report before submitting milestone 3."
+        }
+      },
+      {
+        "at": "2026-11-06T14:55:31.112Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 3,
+          "event": "toolCall",
+          "server": "baton",
+          "tool": "baton_get_task",
+          "status": "completed"
+        }
+      },
+      {
+        "at": "2026-11-06T14:55:31.187Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 3,
+          "event": "command",
+          "command": "/bin/zsh -lc 'ls -la && cat clusters.json && cat analysis.json'",
+          "exitCode": 0
+        }
+      },
+      {
+        "at": "2026-11-06T14:56:04.209Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 3,
+          "event": "command",
+          "command": "/bin/zsh -lc \"python3 - <<'PY'\nimport hashlib,json\nfrom pathlib import Path\nnames=['normalized.json','clusters.json','analysis.json']\nhashes={n:hashlib.sha256(Path(n).read_bytes()).hexdigest() for n i",
+          "exitCode": 0
+        }
+      },
+      {
+        "at": "2026-11-06T14:56:14.682Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 3,
+          "event": "command",
+          "command": "/bin/zsh -lc \"python3 - <<'PY'\nimport json,re\nfrom pathlib import Path\nc=json.loads(Path('clusters.json').read_text())['clusters']\nr=json.loads(Path('remediation.json').read_text())\nt=Path('report.md'",
+          "exitCode": 0
+        }
+      },
+      {
+        "at": "2026-11-06T14:56:19.932Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 3,
+          "event": "agentMessage",
+          "text": "Both files passed validation. They cover all six accepted clusters with nine prioritized actions and verification criteria, while preserving the analysis’s uncertainties. Accepted files remain unchanged; I’ll submit milestone 3 now."
+        }
+      },
+      {
+        "at": "2026-11-06T14:56:47.058Z",
+        "state": "milestone_submitted",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 3,
+          "manifestDigest": "0xd1907a464bea6d4f1bfad16ccbb13645e172f708d3a3fb6cf8b27bdff0bda13f",
+          "manifestRef": "0x18eb5f551cab3ad8dfd577451a1e8ee78a95adf307a3c763fbc09af266005fe2",
+          "arkivTx": "0xa625f21972bf58c854df0bd34d1a74babf73f955be5d811f9056da9537caab82",
+          "review": "verified_awaiting_buyer_approval"
+        }
+      },
+      {
+        "at": "2026-11-06T14:56:47.069Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 3,
+          "event": "toolCall",
+          "server": "baton",
+          "tool": "baton_submit_milestone",
+          "status": "completed"
+        }
+      },
+      {
+        "at": "2026-11-06T14:56:50.890Z",
+        "state": "activity",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 3,
+          "event": "agentMessage",
+          "text": "Created and validated `remediation.json` and `report.md`, covering all six clusters with nine prioritized actions and verification criteria. Accepted outputs remain unchanged. Milestone 3 was submitted successfully; all automated checks passed, and buyer approval is pending."
+        }
+      },
+      {
+        "at": "2026-11-06T14:56:50.968Z",
+        "state": "turn_completed",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 3,
+          "status": "completed",
+          "submitted": true,
+          "toolCalls": [
+            "baton_get_task:completed",
+            "baton_submit_milestone:completed"
+          ],
+          "commands": 3,
+          "fileChanges": 0,
+          "summary": "Created and validated `remediation.json` and `report.md`, covering all six clusters with nine prioritized actions and verification criteria. Accepted outputs remain unchanged. Milestone 3 was submitted successfully; all automated checks passed, and buyer approval is pending."
+        }
+      },
+      {
+        "at": "2026-11-06T14:57:06.862Z",
+        "state": "milestone_accepted",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "milestone": 3
+        }
+      },
+      {
+        "at": "2026-11-06T14:57:07.971Z",
+        "state": "claim_submitted",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "txHash": "0xa78be087c24f0efe143ef2cdbaa616a60565fb6419404d6a8ad00da1e1735358",
+          "amount": "4000000000000000000"
+        }
+      },
+      {
+        "at": "2026-11-06T14:57:25.225Z",
+        "state": "claim_confirmed",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+          "txHash": "0xa78be087c24f0efe143ef2cdbaa616a60565fb6419404d6a8ad00da1e1735358",
+          "status": "success",
+          "amount": "4000000000000000000",
+          "block": "12077292"
+        }
+      },
+      {
+        "at": "2026-11-06T14:57:25.233Z",
+        "state": "job_completed",
+        "detail": {
+          "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720"
+        }
+      }
+    ]
+  },
+  "staleCheck": {
+    "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+    "staleWorker": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+    "chainAssigned": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+    "chainEpoch": 2,
+    "results": [
+      {
+        "action": "key-service: epoch-1 writer key",
+        "refused": true,
+        "detail": "CHECKPOINT_KEY_GRANT_DENIED"
+      },
+      {
+        "action": "key-service: epoch-2 writer key",
+        "refused": true,
+        "detail": "CHECKPOINT_KEY_GRANT_DENIED"
+      },
+      {
+        "action": "key-service: accepted checkpoint 0x788cf711",
+        "refused": true,
+        "detail": "CHECKPOINT_KEY_GRANT_DENIED"
+      },
+      {
+        "action": "API: worker-context",
+        "refused": true,
+        "detail": "403 WORKER_NOT_AUTHORIZED_FOR_JOB"
+      },
+      {
+        "action": "API: submit stale milestone offer",
+        "refused": true,
+        "detail": "403 STALE_WORKER_OR_EPOCH"
+      },
+      {
+        "action": "escrow: buyer submitting A's stale offer",
+        "refused": true,
+        "detail": "StaleEpoch (expected StaleEpoch)"
+      },
+      {
+        "action": "escrow: A submitting its own offer",
+        "refused": true,
+        "detail": "NotOpen (expected NotOpen)"
+      },
+      {
+        "action": "escrow: A draining the job",
+        "refused": true,
+        "detail": "Unauthorized (expected Unauthorized)"
+      },
+      {
+        "action": "escrow: A pausing the job",
+        "refused": true,
+        "detail": "Unauthorized (expected Unauthorized)"
+      },
+      {
+        "action": "API: accept milestone without buyer token",
+        "refused": true,
+        "detail": "HTTP 401"
+      },
+      {
+        "action": "API: takeover without buyer token",
+        "refused": true,
+        "detail": "HTTP 401"
+      },
+      {
+        "action": "API: takeover with wrong buyer token",
+        "refused": true,
+        "detail": "HTTP 401"
+      },
+      {
+        "action": "API: stop worker without buyer token",
+        "refused": true,
+        "detail": "HTTP 401"
+      },
+      {
+        "action": "API: submit job without buyer token",
+        "refused": true,
+        "detail": "HTTP 401"
+      },
+      {
+        "action": "API: A impersonating worker b",
+        "refused": true,
+        "detail": "HTTP 401"
+      }
+    ],
+    "allRefused": true
+  },
+  "reconcile": {
+    "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+    "rewardPool": "10000000000000000000",
+    "unallocated": "0",
+    "outstandingCredits": "0",
+    "totalWithdrawn": "10000000000000000000",
+    "totalRefunded": "0",
+    "conserved": true,
+    "escrowTokenBalanceAllJobs": "0",
+    "workers": [
+      {
+        "workerId": "a",
+        "address": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+        "epoch": 1,
+        "credited": "3000000000000000000",
+        "withdrawn": "3000000000000000000"
+      },
+      {
+        "workerId": "b",
+        "address": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+        "epoch": 2,
+        "credited": "7000000000000000000",
+        "withdrawn": "7000000000000000000"
+      }
+    ]
+  },
+  "timeline": [
+    {
+      "at": "2026-11-06T14:41:17.508Z",
+      "step": "workers-ready",
+      "a": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+      "b": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5"
+    },
+    {
+      "at": "2026-11-06T14:41:18.112Z",
+      "step": "job-submitted",
+      "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+      "ensName": "job-747b2106.baton.eth",
+      "assignedWorker": "a",
+      "phase": "provisioning"
+    },
+    {
+      "at": "2026-11-06T14:46:54.515Z",
+      "step": "job-ready",
+      "epoch": 1
+    },
+    {
+      "at": "2026-11-06T14:47:58.592Z",
+      "step": "m1-verified",
+      "writer": "a",
+      "manifestDigest": "0x788cf711e3f415bc145992fe8dc69561146849c46d5cc7fb7a23db3deb1987f4",
+      "arkivEntity": "0x5d6afc71dce2c99630f05790e7ca18214c15ee0f0c879732ca07eb24db8794a2",
+      "arkivTx": "0xffbec00d2ec92a4c9ae3835951808e4d27ac5a542acd25b52b5e882112816322"
+    },
+    {
+      "at": "2026-11-06T14:48:40.724Z",
+      "step": "m1-accepted",
+      "milestone": 1,
+      "txHash": "0x772c70b9d7b9a1b59724881ca3927b0a6d6c3a9256e6380d6585a8708370fe95",
+      "head": "0x788cf711e3f415bc145992fe8dc69561146849c46d5cc7fb7a23db3deb1987f4"
+    },
+    {
+      "at": "2026-11-06T14:48:40.726Z",
+      "step": "a-withdrew-3"
+    },
+    {
+      "at": "2026-11-06T14:48:56.738Z",
+      "step": "a-terminated",
+      "workerId": "a",
+      "pid": 12929,
+      "mode": "kill",
+      "signalled": true,
+      "alive": false
+    },
+    {
+      "at": "2026-11-06T14:48:56.983Z",
+      "step": "takeover-requested",
+      "toWorkerId": "b"
+    },
+    {
+      "at": "2026-11-06T14:53:29.306Z",
+      "step": "takeover-completed",
+      "epoch": 2
+    },
+    {
+      "at": "2026-11-06T14:53:31.149Z",
+      "step": "stale-a-check",
+      "allRefused": true
+    },
+    {
+      "at": "2026-11-06T14:54:43.252Z",
+      "step": "m2-verified",
+      "writer": "b",
+      "recoveredFrom": {
+        "completed": [
+          "Read the objective, input log, milestone acceptance instructions, and recovery state (no recovered outputs).",
+          "Inspected workspace files and parsed incidents.log.",
+          "Created normalized.json with id, timestamp, service, severity, and message for every log line.",
+          "Created clusters.json with stable sequential cluster ids C1 through C6 and exactly one assignment per incident.",
+          "Validated both JSON files, all 24 original records, schema fields, timestamps, cluster ids, and complete nonduplicated membership."
+        ],
+        "epoch": 1,
+        "head": "0x788cf711e3f415bc145992fe8dc69561146849c46d5cc7fb7a23db3deb1987f4",
+        "sequence": 1,
+        "unfinished": [
+          "Milestone 2: reuse accepted clusters.json unchanged and create analysis.json with one evidence-supported analysis per cluster.",
+          "Milestone 3: create remediation.json with at least one action per cluster and report.md with required headings and all cluster ids."
+        ],
+        "writer": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2"
+      },
+      "manifestDigest": "0x1580641a8a63c495cfd61c203d3c9efd29d2fd57df7ab2780ceb52aab9726f6e",
+      "arkivEntity": "0xe171b3881b463468b36656c4f531965c27f9b9ce4b60163d7cf73d509c6f4160"
+    },
+    {
+      "at": "2026-11-06T14:55:30.604Z",
+      "step": "m2-accepted",
+      "milestone": 2,
+      "txHash": "0x4f59741717e1402ac04fda0fc2c88956af1ba645aea0f4245ca82d56f42ef8cf",
+      "head": "0x1580641a8a63c495cfd61c203d3c9efd29d2fd57df7ab2780ceb52aab9726f6e"
+    },
+    {
+      "at": "2026-11-06T14:55:30.605Z",
+      "step": "b-withdrew-3"
+    },
+    {
+      "at": "2026-11-06T14:56:50.720Z",
+      "step": "m3-verified",
+      "writer": "b",
+      "manifestDigest": "0xd1907a464bea6d4f1bfad16ccbb13645e172f708d3a3fb6cf8b27bdff0bda13f",
+      "arkivEntity": "0x18eb5f551cab3ad8dfd577451a1e8ee78a95adf307a3c763fbc09af266005fe2"
+    },
+    {
+      "at": "2026-11-06T14:57:39.981Z",
+      "step": "m3-accepted",
+      "milestone": 3,
+      "txHash": "0x1989a8a577843b551865787659653e12f8244edea2ce178cf999a0c8fc7ba4c8",
+      "head": "0xd1907a464bea6d4f1bfad16ccbb13645e172f708d3a3fb6cf8b27bdff0bda13f"
+    },
+    {
+      "at": "2026-11-06T14:59:52.184Z",
+      "step": "b-withdrew-4"
+    },
+    {
+      "at": "2026-11-06T14:59:53.016Z",
+      "step": "reconciled",
+      "ok": true,
+      "jobId": "0x747b2106c60abe4461eaedb1ba86e06473979d0505d5fddbc6938c4bf545d720",
+      "rewardPool": "10000000000000000000",
+      "unallocated": "0",
+      "outstandingCredits": "0",
+      "totalWithdrawn": "10000000000000000000",
+      "totalRefunded": "0",
+      "conserved": true,
+      "escrowTokenBalanceAllJobs": "0",
+      "workers": [
+        {
+          "workerId": "a",
+          "address": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+          "epoch": 1,
+          "credited": "3000000000000000000",
+          "withdrawn": "3000000000000000000"
+        },
+        {
+          "workerId": "b",
+          "address": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
+          "epoch": 2,
+          "credited": "7000000000000000000",
+          "withdrawn": "7000000000000000000"
+        }
+      ]
+    }
+  ]
+}

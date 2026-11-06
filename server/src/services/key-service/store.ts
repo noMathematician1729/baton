@@ -105,6 +105,19 @@ export class CheckpointKeyGrantStore {
     );
   }
 
+  /** Buyer revocation: removes every grant a worker holds for a job (future key access only). */
+  public revokeWorkerGrants(jobId: string, workerAddress: string): number {
+    const result = this.db.prepare("DELETE FROM checkpoint_key_grants WHERE job_id = ? AND worker_address = ?")
+      .run(jobId, normalizeWorker(workerAddress).toLowerCase());
+    return Number(result.changes);
+  }
+
+  public listGrants(jobId: string): Array<{ worker: string; keyId: string; manifestDigest: string }> {
+    return this.db.prepare(
+      "SELECT worker_address AS worker, key_id AS keyId, manifest_digest AS manifestDigest FROM checkpoint_key_grants WHERE job_id = ? ORDER BY created_at",
+    ).all(jobId) as Array<{ worker: string; keyId: string; manifestDigest: string }>;
+  }
+
   public resolve(token: string, request: CheckpointKeyGrantRequest): EncryptedCheckpointKeyGrant {
     const worker = normalizeWorker(request.worker);
     const row = this.db.prepare(`

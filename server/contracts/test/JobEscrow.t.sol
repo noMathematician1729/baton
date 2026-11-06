@@ -9,6 +9,10 @@ interface Vm {
     function prank(address sender) external;
     function expectRevert(bytes4 selector) external;
     function warp(uint256 timestamp) external;
+    function readFile(string calldata path) external view returns (string memory);
+    function parseJsonBytes32(string calldata json, string calldata key) external pure returns (bytes32);
+    function parseJsonString(string calldata json, string calldata key) external pure returns (string memory);
+    function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);
 }
 
 contract EscrowTestToken {
@@ -232,6 +236,34 @@ contract JobEscrowTest {
         escrow.acceptMilestone(JOB_ID, offer, signature);
     }
 
+    function testSharedCheckpointBoundaryFixtureCommitsItsHeadAndLocator() public {
+        string memory fixture = vm.readFile("test/fixtures/checkpoint-boundary.json");
+        require(vm.parseJsonBytes32(fixture, ".chain.jobId") == JOB_ID, "fixture job mismatch");
+        require(vm.parseJsonBytes32(fixture, ".chain.taskId") == TASK_ID, "fixture task mismatch");
+        require(vm.parseJsonBytes32(fixture, ".chain.termsHash") == TERMS_HASH, "fixture terms mismatch");
+        require(vm.parseJsonBytes32(fixture, ".chain.acceptanceSpecHash") == SPEC_A, "fixture rules mismatch");
+
+        bytes32 head = vm.parseJsonBytes32(fixture, ".chain.newHead");
+        string memory locator = vm.parseJsonString(fixture, ".chain.manifestRef");
+        uint64 sequence = uint64(vm.parseJsonUint(fixture, ".chain.sequence"));
+        (JobEscrow.MilestoneOffer memory offer, bytes memory signature) = _offer(
+            WORKER_A_KEY,
+            workerA,
+            0,
+            SPEC_A,
+            vm.parseJsonBytes32(fixture, ".chain.expectedHead"),
+            head,
+            locator,
+            sequence
+        );
+        escrow.acceptMilestone(JOB_ID, offer, signature);
+
+        (bytes32 acceptedHead, uint64 acceptedSequence, string memory acceptedLocator) = escrow.acceptedCheckpoint(JOB_ID);
+        require(acceptedHead == head, "accepted head mismatch");
+        require(acceptedSequence == sequence, "accepted sequence mismatch");
+        require(keccak256(bytes(acceptedLocator)) == keccak256(bytes(locator)), "accepted locator mismatch");
+    }
+
     function testPauseBlocksNewAcceptanceButKeepsEarnedCreditClaimable() public {
         bytes32 headOne = sha256("checkpoint accepted before pause");
         _accept(WORKER_A_KEY, workerA, 0, SPEC_A, bytes32(0), headOne, "arkiv://checkpoint/before-pause", 1);
@@ -264,6 +296,53 @@ contract JobEscrowTest {
 
         (JobEscrow.TakeoverAck memory validAck, bytes memory validSignature) = _takeoverAck();
         escrow.takeover(JOB_ID, validAck, validSignature);
+    }
+
+    function testBuyerCanCancelAnOpenDrain() public {
+        escrow.drainTask(JOB_ID);
+        escrow.cancelDrain(JOB_ID);
+        (,,,,,,,,,,,,, bool paused, bool drained,,,,) = escrow.jobs(JOB_ID);
+        require(!paused && !drained, "cancelled drain must reopen the same assignment");
+
+        bytes32 head = sha256("checkpoint after cancelled drain");
+        _accept(WORKER_A_KEY, workerA, 0, SPEC_A, bytes32(0), head, "arkiv://checkpoint/cancel-drain", 1);
+    }
+
+    function testOnlyBuyerCanCancelDrain() public {
+        escrow.drainTask(JOB_ID);
+        vm.expectRevert(JobEscrow.Unauthorized.selector);
+        vm.prank(workerA);
+        escrow.cancelDrain(JOB_ID);
+        (,,,,,,,,,,,,, bool paused, bool drained,,,,) = escrow.jobs(JOB_ID);
+        require(!paused && drained, "unauthorized cancellation must preserve the drain");
+    }
+
+    function testCannotCancelDrainWhenUndrainedPausedOrExpired() public {
+        vm.expectRevert(JobEscrow.NotDrained.selector);
+        escrow.cancelDrain(JOB_ID);
+
+        escrow.drainTask(JOB_ID);
+        escrow.pause(JOB_ID);
+        vm.expectRevert(JobEscrow.NotOpen.selector);
+        escrow.cancelDrain(JOB_ID);
+        escrow.resume(JOB_ID);
+
+        vm.warp(block.timestamp + 1 days);
+        vm.expectRevert(JobEscrow.NotOpen.selector);
+        escrow.cancelDrain(JOB_ID);
+    }
+
+    function testStaleWorkerOfferIsRejectedAfterTakeover() public {
+        escrow.drainTask(JOB_ID);
+        (JobEscrow.TakeoverAck memory ack, bytes memory signature) = _takeoverAck();
+        escrow.takeover(JOB_ID, ack, signature);
+
+        (JobEscrow.MilestoneOffer memory staleOffer, bytes memory staleSignature) = _offer(
+            WORKER_A_KEY, workerA, 0, SPEC_A, bytes32(0), sha256("stale A checkpoint"), "arkiv://checkpoint/stale-a", 1
+        );
+        vm.expectRevert(JobEscrow.StaleEpoch.selector);
+        escrow.acceptMilestone(JOB_ID, staleOffer, staleSignature);
+        require(escrow.credits(JOB_ID, workerA) == 0, "stale A must not earn credit");
     }
 
     function testInitialAssignmentIsBuyerOnlyAndRequiresJobScopedGrant() public {

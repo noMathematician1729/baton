@@ -22,6 +22,7 @@ const escrowAbi = parseAbi([
   "function assignTask(bytes32 jobId, address worker)",
   "function acceptMilestone(bytes32 jobId, (bytes32 jobId, bytes32 taskId, bytes32 termsHash, address producer, uint64 epoch, uint32 milestone, bytes32 acceptanceSpecHash, bytes32 expectedHead, bytes32 newHead, string manifestRef, uint64 sequence, uint256 nonce, uint64 expiry) offer, bytes signature)",
   "function drainTask(bytes32 jobId)",
+  "function cancelDrain(bytes32 jobId)",
   "function takeover(bytes32 jobId, (bytes32 jobId, bytes32 taskId, bytes32 termsHash, address successor, uint64 epoch, bytes32 expectedHead, bytes32 compatibilityReport, bytes32 servicePolicy, uint256 nonce, uint64 expiry) ack, bytes signature)",
   "function pause(bytes32 jobId)",
   "function resume(bytes32 jobId)",
@@ -52,6 +53,7 @@ export interface EscrowMutationWriter {
   assign(job: JobSnapshot, worker: Hex): Promise<void>;
   acceptMilestone(job: JobSnapshot, offer: MilestoneOffer, signature: Hex): Promise<void>;
   drain(job: JobSnapshot): Promise<void>;
+  cancelDrain(job: JobSnapshot): Promise<void>;
   takeover(job: JobSnapshot, ack: TakeoverAck, signature: Hex): Promise<void>;
   pause(job: JobSnapshot): Promise<void>;
   resume(job: JobSnapshot): Promise<void>;
@@ -116,6 +118,11 @@ export class SepoliaEscrowWriter implements EscrowMutationWriter {
   public async drain(job: JobSnapshot): Promise<void> {
     this.requireBuyer(job);
     await this.send(this.buyer, "drainTask", [this.jobId(job)]);
+  }
+
+  public async cancelDrain(job: JobSnapshot): Promise<void> {
+    this.requireBuyer(job);
+    await this.send(this.buyer, "cancelDrain", [this.jobId(job)]);
   }
 
   public async takeover(job: JobSnapshot, ack: TakeoverAck, signature: Hex): Promise<void> {

@@ -1,5 +1,11 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { CheckpointManifestSchema, EncryptedEnvelopeSchema, type CheckpointManifest, type EncryptedEnvelope } from "./schema.js";
+import {
+  MAX_CIPHERTEXT_CHUNK_BYTES,
+  MAX_ENCRYPTED_MANIFEST_BYTES,
+  MAX_MANIFEST_PLAINTEXT_BYTES,
+  MAX_PLAINTEXT_CHUNK_BYTES,
+} from "./limits.js";
 
 function canonicalValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalValue);
@@ -22,7 +28,9 @@ export function canonicalJson(value: unknown): Buffer {
 
 /** Exact UTF-8 bytes committed by the on-chain checkpoint head. */
 export function serializeEncryptedEnvelope(input: EncryptedEnvelope): Buffer {
-  return canonicalJson(EncryptedEnvelopeSchema.parse(input));
+  const serialized = canonicalJson(EncryptedEnvelopeSchema.parse(input));
+  if (serialized.byteLength > MAX_ENCRYPTED_MANIFEST_BYTES) throw new Error("CHECKPOINT_MANIFEST_ENTITY_SIZE_LIMIT_EXCEEDED");
+  return serialized;
 }
 
 /** SHA-256 of the serialized outer envelope; distinct from envelope.ciphertextDigest. */
@@ -35,7 +43,7 @@ export function artifactManifestDigest(input: Pick<CheckpointManifest, "artifact
   return "0x" + createHash("sha256").update(canonicalJson(input.artifacts)).digest("hex");
 }
 
-export const MAX_PLAINTEXT_CHUNK_BYTES = 96 * 1024 - 29;
+export { MAX_PLAINTEXT_CHUNK_BYTES };
 
 export function encryptChunk(plaintext: Uint8Array, keyHex: string, associatedData: string): {
   bytes: Uint8Array;
@@ -47,7 +55,7 @@ export function encryptChunk(plaintext: Uint8Array, keyHex: string, associatedDa
   cipher.setAAD(Buffer.from(associatedData, "utf8"));
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const payload = Buffer.concat([Buffer.from([1]), nonce, ciphertext, cipher.getAuthTag()]);
-  if (payload.byteLength > 96 * 1024) throw new Error("Encrypted chunk exceeds the Arkiv-safe chunk target");
+  if (payload.byteLength > MAX_CIPHERTEXT_CHUNK_BYTES) throw new Error("Encrypted chunk exceeds the Arkiv-safe chunk target");
   return {
     bytes: payload,
     digest: "0x" + createHash("sha256").update(payload).digest("hex"),
@@ -91,6 +99,7 @@ export function encryptManifest(input: CheckpointManifest, keyHex: string, keyId
   const cipher = createCipheriv("aes-256-gcm", key, nonce);
   cipher.setAAD(aadFor(manifest));
   const plaintext = canonicalJson(manifest);
+  if (plaintext.byteLength > MAX_MANIFEST_PLAINTEXT_BYTES) throw new Error("CHECKPOINT_MANIFEST_SIZE_LIMIT_EXCEEDED");
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const tag = cipher.getAuthTag();
   return EncryptedEnvelopeSchema.parse({
@@ -119,6 +128,7 @@ export function decryptManifest(input: EncryptedEnvelope, keyHex: string): Check
   decipher.setAAD(aadFor(envelope));
   decipher.setAuthTag(tag);
   const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  if (plaintext.byteLength > MAX_MANIFEST_PLAINTEXT_BYTES) throw new Error("CHECKPOINT_MANIFEST_SIZE_LIMIT_EXCEEDED");
   const manifest = CheckpointManifestSchema.parse(JSON.parse(plaintext.toString("utf8")));
   if (manifest.jobId !== envelope.jobId || manifest.taskId !== envelope.taskId || manifest.schemaVersion !== envelope.schemaVersion) {
     throw new Error("Checkpoint identity does not match authenticated envelope");

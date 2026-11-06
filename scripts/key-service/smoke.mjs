@@ -1,10 +1,12 @@
-import { createPrivateKey, createPublicKey } from "node:crypto";
+import { createPrivateKey, createPublicKey, randomBytes } from "node:crypto";
+import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "dotenv";
 import { HttpCheckpointKeyGrantResolver } from "../../server/packages/storage/src/httpKeyGrantResolver.ts";
-import { CheckpointKeyGrantStore, KeyServiceError } from "../../server/src/services/key-service/store.ts";
+import { CheckpointKeyGrantStore } from "../../server/src/services/key-service/store.ts";
+import { createCheckpointKeyServiceApp } from "../../server/src/services/key-service/app.ts";
 import { batchOneCheckpoint } from "../../server/packages/checkpoint/src/fixtures.ts";
 import { decryptManifest, encryptManifest, encryptedEnvelopeDigest } from "../../server/packages/checkpoint/src/index.ts";
 
@@ -25,8 +27,18 @@ if (!workerAEnv.CHECKPOINT_KEY_SERVICE_TOKEN || !workerBEnv.CHECKPOINT_KEY_SERVI
   || !workerBEnv.CHECKPOINT_KEY_SERVICE_DECRYPTION_PRIVATE_KEY) {
   throw new Error("Worker key-service credentials have not been provisioned");
 }
+if (workerAEnv.WORKER_ADDRESS?.toLowerCase() !== workerA.toLowerCase()
+  || workerBEnv.WORKER_ADDRESS?.toLowerCase() !== workerB.toLowerCase()) {
+  throw new Error("Worker env addresses do not match the configured worker identities");
+}
 
-const store = new CheckpointKeyGrantStore(":memory:", serviceEnv.CHECKPOINT_KEY_SERVICE_STORAGE_KEY || "");
+const ephemeralStorageKey = "0x" + randomBytes(32).toString("hex");
+const store = new CheckpointKeyGrantStore(":memory:", serviceEnv.CHECKPOINT_KEY_SERVICE_STORAGE_KEY || ephemeralStorageKey);
+const server = createCheckpointKeyServiceApp(store).listen(0, "127.0.0.1");
+await once(server, "listening");
+const address = server.address();
+if (!address || typeof address === "string") throw new Error("KEY_SERVICE_TEST_SERVER_ADDRESS_UNAVAILABLE");
+const endpoint = `http://127.0.0.1:${address.port}/v1/resolve`;
 try {
   store.replaceWorkerToken(workerA, workerAEnv.CHECKPOINT_KEY_SERVICE_TOKEN, recipientPublicKey(workerAEnv.CHECKPOINT_KEY_SERVICE_DECRYPTION_PRIVATE_KEY));
   store.replaceWorkerToken(workerB, workerBEnv.CHECKPOINT_KEY_SERVICE_TOKEN, recipientPublicKey(workerBEnv.CHECKPOINT_KEY_SERVICE_DECRYPTION_PRIVATE_KEY));
@@ -45,25 +57,10 @@ try {
   };
   store.grantKey(request, checkpointKey);
 
-  const serviceFetch = async (_input, init) => {
-    const header = new Headers(init?.headers).get("authorization") || "";
-    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
-    try {
-      return new Response(JSON.stringify(store.resolve(token, JSON.parse(String(init?.body)))), { status: 200 });
-    } catch (error) {
-      if (error instanceof KeyServiceError) {
-        return new Response(JSON.stringify({ error: "KEY_GRANT_DENIED" }), {
-          status: error.code === "UNAUTHORIZED" ? 401 : 403,
-        });
-      }
-      return new Response(JSON.stringify({ error: "KEY_GRANT_REQUEST_INVALID" }), { status: 400 });
-    }
-  };
   const bResolver = new HttpCheckpointKeyGrantResolver(
-    workerBEnv.CHECKPOINT_KEY_SERVICE_URL,
+    endpoint,
     workerBEnv.CHECKPOINT_KEY_SERVICE_TOKEN,
     workerBEnv.CHECKPOINT_KEY_SERVICE_DECRYPTION_PRIVATE_KEY,
-    serviceFetch,
   );
   const keyForB = await bResolver.resolveGrantedKey(request);
   const recovered = decryptManifest(envelope, keyForB);
@@ -72,10 +69,9 @@ try {
   }
 
   const aResolver = new HttpCheckpointKeyGrantResolver(
-    workerAEnv.CHECKPOINT_KEY_SERVICE_URL,
+    endpoint,
     workerAEnv.CHECKPOINT_KEY_SERVICE_TOKEN,
     workerAEnv.CHECKPOINT_KEY_SERVICE_DECRYPTION_PRIVATE_KEY,
-    serviceFetch,
   );
   let unauthorizedDenied = false;
   try {
@@ -95,12 +91,15 @@ try {
 
   process.stdout.write(JSON.stringify({
     result: "verified",
+    mode: "in-memory-http-key-service",
     workerBDecryptsExactFixtureCheckpoint: true,
     workerADenied: true,
     workerIdentitySpoofDenied: true,
     secretValuesPrinted: false,
   }) + "\n");
 } finally {
+  server.closeAllConnections();
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   store.close();
 }
 

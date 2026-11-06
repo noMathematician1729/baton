@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { keccak256, stringToHex, type Hex } from "viem";
+import { encodeFunctionData, keccak256, parseAbi, stringToHex, type Hex } from "viem";
 import { SepoliaAuthorityReader, type ChainAdmission } from "./sepoliaAuthority.js";
 import { JobStore } from "../domain/jobs/jobStore.js";
 import { EMPTY_HEAD, type JobSnapshot } from "../protocol/v1.js";
@@ -18,6 +18,12 @@ const acceptedHead = digest("4");
 const manifestRef = "arkiv://accepted-head-1";
 const blockHash = digest("5");
 const blockNumber = 100n;
+const claimHash = digest("9");
+const claimCalldata = encodeFunctionData({
+  abi: parseAbi(["function claim(bytes32 jobId)"]),
+  functionName: "claim",
+  args: [chainJobId],
+});
 
 test("authority reader evaluates all job bindings at one confirmed block and records its hash", async () => {
   const calls: Array<{ functionName: string; blockNumber?: bigint }> = [];
@@ -274,6 +280,158 @@ test("authority reader validates a local accepted-head snapshot before key admin
   await assert.rejects(staleReader.assertSnapshotCurrent(snapshot), /ONCHAIN_HEAD_MISMATCH/);
 });
 
+test("authority reader distinguishes an unsubmitted assignment from its exact confirmed retry", async () => {
+  const snapshot = importSnapshot();
+  const unassigned = new SepoliaAuthorityReader({
+    escrowAddress: escrow,
+    adapterAddress: adapter,
+    client: fakeClient({
+      buyer: snapshot.terms.buyer,
+      termsHash: snapshot.terms.termsHash,
+      taskId: snapshot.chainTaskId,
+      epoch: 0n,
+      nextMilestone: 0n,
+      assignedWorker: address("0"),
+      acceptedHead: EMPTY_HEAD as Hex,
+      acceptedSequence: 0n,
+      acceptedManifestRef: "",
+      totalCredited: 0n,
+    }),
+  });
+  assert.equal(await unassigned.assertAssignmentTransition(snapshot, worker), false);
+
+  const assigned = new SepoliaAuthorityReader({
+    escrowAddress: escrow,
+    adapterAddress: adapter,
+    client: fakeClient({
+      buyer: snapshot.terms.buyer,
+      termsHash: snapshot.terms.termsHash,
+      taskId: snapshot.chainTaskId,
+      epoch: 1n,
+      nextMilestone: 0n,
+      assignedWorker: worker,
+      acceptedHead: EMPTY_HEAD as Hex,
+      acceptedSequence: 0n,
+      acceptedManifestRef: "",
+      totalCredited: 0n,
+    }),
+  });
+  assert.equal(await assigned.assertAssignmentTransition(snapshot, worker), true);
+
+  const assignedToOther = new SepoliaAuthorityReader({
+    escrowAddress: escrow,
+    adapterAddress: adapter,
+    client: fakeClient({
+      buyer: snapshot.terms.buyer,
+      termsHash: snapshot.terms.termsHash,
+      taskId: snapshot.chainTaskId,
+      epoch: 1n,
+      nextMilestone: 0n,
+      assignedWorker: address("7"),
+      acceptedHead: EMPTY_HEAD as Hex,
+      acceptedSequence: 0n,
+      acceptedManifestRef: "",
+      totalCredited: 0n,
+    }),
+  });
+  await assert.rejects(assignedToOther.assertAssignmentTransition(snapshot, worker), /ONCHAIN_ASSIGNMENT_STATE_MISMATCH/);
+});
+
+test("authority reader accepts only the exact checkpoint pre-state or confirmed post-state", async () => {
+  const snapshot = importSnapshot();
+  snapshot.task.assignedWorker = worker;
+  snapshot.task.epoch = 1;
+  const input = {
+    worker,
+    epoch: 1,
+    acceptanceSpecHash: snapshot.terms.task.milestones[0]!.acceptanceSpecHash,
+    expectedHead: EMPTY_HEAD as Hex,
+    newHead: { manifestDigest: digest("a"), manifestRef: "arkiv://accepted", sequence: 1 },
+  };
+  const base = {
+    buyer: snapshot.terms.buyer,
+    termsHash: snapshot.terms.termsHash,
+    taskId: snapshot.chainTaskId,
+    epoch: 1n,
+    nextMilestone: 0n,
+    assignedWorker: worker,
+    acceptedHead: EMPTY_HEAD as Hex,
+    acceptedSequence: 0n,
+    acceptedManifestRef: "",
+    unallocated: 7n,
+    totalCredited: 0n,
+  };
+  const ready = new SepoliaAuthorityReader({ escrowAddress: escrow, adapterAddress: adapter, client: fakeClient(base) });
+  assert.equal(await ready.assertMilestoneTransition(snapshot, input), false);
+
+  const committed = new SepoliaAuthorityReader({
+    escrowAddress: escrow,
+    adapterAddress: adapter,
+    client: fakeClient({
+      ...base,
+      nextMilestone: 1n,
+      acceptedHead: input.newHead.manifestDigest,
+      acceptedSequence: 1n,
+      acceptedManifestRef: input.newHead.manifestRef,
+      unallocated: 4n,
+      totalCredited: 3n,
+    }),
+  });
+  assert.equal(await committed.assertMilestoneTransition(snapshot, input), true);
+  await committed.assertMilestoneAccepted(snapshot, {
+    worker,
+    epoch: 1,
+    newHead: input.newHead,
+    nextMilestone: 1,
+    totalCredited: 3n,
+  });
+
+  const inconsistent = new SepoliaAuthorityReader({
+    escrowAddress: escrow,
+    adapterAddress: adapter,
+    client: fakeClient({
+      ...base,
+      nextMilestone: 1n,
+      acceptedHead: input.newHead.manifestDigest,
+      acceptedSequence: 1n,
+      acceptedManifestRef: input.newHead.manifestRef,
+      totalCredited: 4n,
+    }),
+  });
+  await assert.rejects(inconsistent.assertMilestoneTransition(snapshot, input), /ONCHAIN_MILESTONE_STATE_MISMATCH/);
+});
+
+test("confirmed claim evidence is worker-signed, targets this escrow, and is reflected in confirmed accounting", async () => {
+  const snapshot = importSnapshot();
+  snapshot.credits.push({ id: "credit-claim", worker, milestoneId: "milestone-1", amount: 3n, claimed: false });
+  const options = {
+    buyer: snapshot.terms.buyer,
+    termsHash: snapshot.terms.termsHash,
+    taskId: snapshot.chainTaskId,
+    creditBalance: 3n,
+    withdrawnBalance: 3n,
+  };
+  const reader = new SepoliaAuthorityReader({ escrowAddress: escrow, adapterAddress: adapter, client: fakeClient(options) });
+  assert.deepEqual(await reader.confirmWorkerClaim(snapshot, worker, claimHash), {
+    credits: 3n,
+    withdrawnCredits: 3n,
+  });
+
+  const wrongSigner = new SepoliaAuthorityReader({
+    escrowAddress: escrow,
+    adapterAddress: adapter,
+    client: fakeClient({ ...options, claimFrom: address("7") }),
+  });
+  await assert.rejects(wrongSigner.confirmWorkerClaim(snapshot, worker, claimHash), /CLAIM_TRANSACTION_INVALID/);
+
+  const unconfirmed = new SepoliaAuthorityReader({
+    escrowAddress: escrow,
+    adapterAddress: adapter,
+    client: fakeClient({ ...options, claimBlockNumber: blockNumber + 1n }),
+  });
+  await assert.rejects(unconfirmed.confirmWorkerClaim(snapshot, worker, claimHash), /CLAIM_TRANSACTION_INVALID/);
+});
+
 function fakeClient(options: {
   calls?: Array<{ functionName: string; blockNumber?: bigint }>;
   afterHash?: Hex;
@@ -298,6 +456,16 @@ function fakeClient(options: {
   totalCredited?: bigint;
   totalWithdrawn?: bigint;
   totalRefunded?: bigint;
+  paused?: boolean;
+  drained?: boolean;
+  closed?: boolean;
+  creditBalance?: bigint;
+  withdrawnBalance?: bigint;
+  claimFrom?: Hex;
+  claimInput?: Hex;
+  claimBlockNumber?: bigint;
+  claimBlockHash?: Hex;
+  claimStatus?: "success" | "reverted";
   blockHash?: Hex;
   latestBlock?: bigint;
 } = {}) {
@@ -314,6 +482,21 @@ function fakeClient(options: {
       return {
         hash: blockReads > 1 ? (options.afterHash ?? options.blockHash ?? blockHash) : (options.blockHash ?? blockHash),
         timestamp: options.blockTimestamp ?? 1_800_000_000n,
+      };
+    },
+    async getTransaction() {
+      return {
+        from: options.claimFrom ?? worker,
+        to: escrow,
+        input: options.claimInput ?? claimCalldata,
+      };
+    },
+    async getTransactionReceipt() {
+      return {
+        status: options.claimStatus ?? "success",
+        transactionHash: claimHash,
+        blockNumber: options.claimBlockNumber ?? blockNumber - 1n,
+        blockHash: options.claimBlockHash ?? options.blockHash ?? blockHash,
       };
     },
     async readContract(input: { functionName: string; blockNumber?: bigint }) {
@@ -336,9 +519,9 @@ function fakeClient(options: {
             options.assignedWorker ?? worker,
             options.acceptedHead ?? acceptedHead,
             options.unallocated ?? 7n,
-            false,
-            false,
-            false,
+            options.paused ?? false,
+            options.drained ?? false,
+            options.closed ?? false,
             options.totalCredited ?? 3n,
             options.totalWithdrawn ?? 0n,
             options.totalRefunded ?? 0n,
@@ -349,6 +532,10 @@ function fakeClient(options: {
           return options.granted ?? true;
         case "milestoneCount":
           return options.milestoneCount ?? 0n;
+        case "credits":
+          return options.creditBalance ?? 0n;
+        case "withdrawnCredits":
+          return options.withdrawnBalance ?? 0n;
         default:
           throw new Error(`UNEXPECTED_CONTRACT_READ:${input.functionName}`);
       }

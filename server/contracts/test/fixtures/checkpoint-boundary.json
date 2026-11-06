@@ -1,0 +1,60 @@
+{
+  "chain": {
+    "jobId": "0x84512c3e0861525085f2f909477cb08bb0fcdc6944b475b81d70368b5b017747",
+    "taskId": "0xdf90901622226be5e6406504af06919b4f83e8a11e52d8cd1ec6a102e937aa22",
+    "termsHash": "0x915ac63cc6e92de8cd8b0f71a0851ac58fbdd5265efc82124220e6bd04018781",
+    "acceptanceSpecHash": "0x647cb4a03035e471f3bd4e527fa2f04cbfce37dc024223dca2b2db1639e8cbf9",
+    "expectedHead": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "newHead": "0x2d1325ab05397c1d9a846d3cf1be1e910ac01513e6ab66d20ce89c4ee664faa4",
+    "manifestRef": "0x4444444444444444444444444444444444444444444444444444444444444444",
+    "sequence": 1
+  },
+  "manifest": {
+    "schemaVersion": "checkpoint.v1",
+    "jobId": "incremental-claims-job",
+    "taskId": "incremental-claims-task",
+    "epoch": 1,
+    "sequence": 1,
+    "previousAcceptedHead": null,
+    "createdAt": "2026-11-06T00:00:00.000Z",
+    "adapter": {
+      "id": "baton.deterministic-batch",
+      "version": "1.0.0",
+      "stateSchemaVersion": "1"
+    },
+    "work": {
+      "objective": "Preserve the accepted runtime boundary.",
+      "constraints": [
+        "Fixture only."
+      ],
+      "completed": [
+        {
+          "id": "fixture-step",
+          "summary": "Fixture checkpoint accepted.",
+          "evidence": []
+        }
+      ],
+      "decisions": [],
+      "unresolved": [],
+      "nextActions": [
+        "Continue after takeover."
+      ]
+    },
+    "artifacts": [],
+    "tools": [],
+    "externalOperations": []
+  },
+  "envelope": {
+    "format": "baton-encrypted-v1",
+    "jobId": "incremental-claims-job",
+    "taskId": "incremental-claims-task",
+    "schemaVersion": "checkpoint.v1",
+    "keyId": "checkpoint-boundary-test-key",
+    "algorithm": "AES-256-GCM",
+    "nonce": "5D7w6mqwagTznspE",
+    "ciphertext": "njtehCHKwgZbGhnek2NErKDmdj1ky_PfYps7VmTyW3zIcPnhBYl34iDSd0i7QXe_zsoP4KGzmtib2_e2YEtZ8QwEqYKfU9jorLBE22j264syLL3T23XEDPMvxkMi560digjp26vjP1a8B79jpTNBJFKWsghKaN1Bsnal6VGyGZqnzc3gHF-jlKnvu1tEQURHS5Xx5DZTRWViAh4QEm4WXjmycryvNlGDZPUjGVLJWI1dYqZgy3Nf0Wco87xiQClfxWzxqB2urANmWvRpRRwUtBFIe9f78UVHK-V7q8oDyt24EgOYG-VyvWHUsAo-xR4CQnFN3nuJyQDL5ap7fnzgp76t5mWWm6VVyqmHVFlbgJpYGqnnG7ztpzXYPKVhWmrHHLPAvlOBHr7PDZewIsEWZANRxztN6DjG0Wd3ng8laO5UPhI08dcKvbcT1EXSA66nLD3RZo8XKV4gv-BIxJMcBCwlMFE00I317gkr5D_SvVIjdzScJW-eil2GgeX7BdOxiMeNKlyOE28Q-Vu7iPaDF7cKCHrSlQTgEyZ8Bl_x9Npwq1evNyFlRzCq1jgfTBNSeinq56-9bU-lAr8Me0a76ZeYhr1b6GFSTsxUDvInlXKNMHRbTy8fyB_JsbgS84_Y5K2fBo4eOrkvgvwl7ZzbQ_d_3VwUwwpZT8PlOEW4QxfqD39CwOO8iQhx-3pueJjGvU1MmdzT2DPAiJkwpoWFvc3EyYIxYpNWAZqpGfWDHPVLhalHUZfqZFgFHf6vLVSPFcdFbZbEVCTjNDVLnA",
+    "tag": "j2f3J7FAA8z_ZOQ4tR7h8A",
+    "ciphertextDigest": "0x7cd1a3b22f956cf5732d6ad8fd926d0b7aea72756c578cc5c9548c4b061eefe2"
+  },
+  "artifactManifestDigest": "0x4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+}

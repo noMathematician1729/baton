@@ -310,6 +310,19 @@
         "internalType": "bytes32",
         "name": "jobId",
         "type": "bytes32"
+      }
+    ],
+    "name": "TaskDrainCancelled",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "jobId",
+        "type": "bytes32"
       },
       {
         "indexed": true,
@@ -569,6 +582,19 @@
       }
     ],
     "name": "assignTask",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "jobId",
+        "type": "bytes32"
+      }
+    ],
+    "name": "cancelDrain",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

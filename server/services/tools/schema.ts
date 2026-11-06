@@ -28,6 +28,7 @@ export const ToolProbeResultSchema = z.object({
   schemaVersion: z.string().min(1),
   passed: z.boolean(),
   latencyMs: z.number().nonnegative(),
+  schemaDigest: digest.optional(),
   inputDigest: digest,
   outputDigest: digest.optional(),
   errorCode: z.enum(["MISSING_SCOPE", "SCHEMA_MISMATCH", "TIMEOUT", "TOOL_ERROR"]).optional(),

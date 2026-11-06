@@ -9,6 +9,7 @@ import { Gateway, LocalPaymentProvider } from "./services/gateway/gateway.js";
 import { SepoliaAuthorityReader } from "./chain/sepoliaAuthority.js";
 import { authorizeSignedGatewayAction } from "./chain/gatewayActionAuth.js";
 import { serialise, type CheckpointHead, type Hex, type JobSnapshot } from "./protocol/v1.js";
+import { importInitialChainJob } from "./chain/chainJobImporter.js";
 
 export function createServices() {
   const dataDirectory = isAbsolute(env.BATON_DATA_DIR)
@@ -98,7 +99,11 @@ export function createApp(services = createServices()) {
     }
     next();
   };
-  app.use("/api/jobs", localFixtureOnly);
+  app.use("/api/jobs", (request, response, next) => {
+    if (env.NODE_ENV !== "production") return next();
+    if (gateway.requiresChainAuthority && request.method === "POST" && request.path === "/import") return next();
+    response.status(503).json({ error: "LOCAL_FIXTURE_DISABLED" });
+  });
   app.use("/api/services", localFixtureOnly);
 
   app.get("/api/jobs", async (_request, response) => {
@@ -119,13 +124,28 @@ export function createApp(services = createServices()) {
     });
   }
 
+  app.post("/api/jobs/import", async (request, response) => {
+    if (!gateway.requiresChainAuthority) throw new Error("CHAIN_AUTHORITY_REQUIRED");
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const result = await importInitialChainJob({
+      snapshot: body.snapshot,
+      authorizationBody: body,
+      chainId: env.SEPOLIA_CHAIN_ID,
+      verifyingContract: env.BATON_ESCROW_ADDRESS,
+      nonceStore: ledger,
+      jobs,
+      ledger,
+      authority: { assertImportableJob: (job) => gateway.assertImportableJob(job) },
+    });
+    response.status(result.created ? 201 : 200).json(serialise(result.job));
+  });
+
   app.post("/api/jobs", async (request, response) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
-    if (gateway.requiresChainAuthority) throw new Error("CHAIN_JOB_IMPORT_NOT_IMPLEMENTED");
+    if (gateway.requiresChainAuthority) throw new Error("CHAIN_JOB_IMPORT_REQUIRED");
     const chainJobId = optionalChainJobId(body.chainJobId);
     const chainTaskId = optionalChainJobId(body.chainTaskId);
     const termsHash = optionalChainJobId(body.termsHash);
-    if (gateway.requiresChainAuthority && (!chainJobId || !chainTaskId || !termsHash)) throw new Error("CHAIN_JOB_BINDING_REQUIRED");
     const job = jobs.prepareCreate({
       chainJobId,
       chainTaskId,

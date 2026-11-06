@@ -30,7 +30,7 @@ node --import tsx --test \
   server/src/services/*/*.test.ts
 ```
 
-The current G0–G4 candidate passed this command with 35 tests. That includes signed gateway-action verifier cases for replay, expiry, wrong signer/deployment/task/action/payload, mocked authority-reader checks for confirmed-block consistency/reorg/grant/chain ID, offline recovery and key-grant-client fakes, policy-bound operation fingerprints, cross-store job/budget crash recovery, output-state recovery after a SQLite write failure, and checkpoint deadline/parent checks; it does not exercise HTTP route dispatch, the Arkiv network, provider, or Sepolia.
+The current G0–G4 candidate passed this command with 40 tests. That includes buyer-signed/idempotent chain-job import, signed-action verifier cases for replay, expiry, wrong signer/deployment/task/action/payload, mocked authority-reader checks for confirmed-block consistency/reorg/grant/chain ID, offline recovery and key-grant-client fakes, policy-bound operation fingerprints, cross-store job/budget crash recovery, output-state recovery after a SQLite write failure, and checkpoint deadline/parent checks; it does not exercise HTTP route dispatch, the Arkiv network, provider, or Sepolia.
 
 ## Gateway authority and payment recovery
 

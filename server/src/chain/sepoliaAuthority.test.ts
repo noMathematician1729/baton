@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { keccak256, stringToHex, type Hex } from "viem";
 import { SepoliaAuthorityReader, type ChainAdmission } from "./sepoliaAuthority.js";
+import { JobStore } from "../domain/jobs/jobStore.js";
+import { EMPTY_HEAD, type JobSnapshot } from "../protocol/v1.js";
 
 const buyer = address("1");
 const token = address("2");
@@ -79,12 +81,93 @@ test("authority reader rejects a non-Sepolia chain before reading escrow state",
   assert.deepEqual(calls, []);
 });
 
+test("authority reader imports only a pristine funded job at one confirmed block", async () => {
+  const snapshot = importSnapshot();
+  const calls: Array<{ functionName: string; blockNumber?: bigint }> = [];
+  const cutoff = BigInt(snapshot.terms.cutoff);
+  const timestamp = BigInt(Math.floor(Date.now() / 1000));
+  const client = fakeClient({
+    calls,
+    buyer: snapshot.terms.buyer as Hex,
+    rewardToken: snapshot.terms.rewardToken as Hex,
+    verifier: snapshot.terms.verifier as Hex,
+    termsHash: snapshot.terms.termsHash,
+    taskId: snapshot.chainTaskId,
+    rewardPool: 7n,
+    cutoff,
+    epoch: 0n,
+    nextMilestone: 0n,
+    assignedWorker: address("0"),
+    acceptedHead: EMPTY_HEAD as Hex,
+    acceptedSequence: 0n,
+    acceptedManifestRef: "",
+    unallocated: 7n,
+    milestoneCount: 2n,
+    blockTimestamp: timestamp,
+    totalCredited: 0n,
+  });
+  const reader = new SepoliaAuthorityReader({ escrowAddress: escrow, adapterAddress: adapter, confirmationBlocks: 1, client });
+
+  await reader.assertImportableJob(snapshot);
+
+  assert.deepEqual(calls.map((call) => call.functionName).sort(), [
+    "PROTOCOL_VERSION",
+    "acceptedCheckpoint",
+    "jobs",
+    "milestoneCount",
+  ].sort());
+  assert(calls.every((call) => call.blockNumber === blockNumber - 1n));
+
+  const alreadyAssignedReader = new SepoliaAuthorityReader({
+    escrowAddress: escrow,
+    adapterAddress: adapter,
+    client: fakeClient({
+      buyer: snapshot.terms.buyer as Hex,
+      rewardToken: snapshot.terms.rewardToken as Hex,
+      verifier: snapshot.terms.verifier as Hex,
+      termsHash: snapshot.terms.termsHash,
+      taskId: snapshot.chainTaskId,
+      rewardPool: 7n,
+      cutoff,
+      epoch: 1n,
+      nextMilestone: 0n,
+      assignedWorker: worker,
+      acceptedHead: EMPTY_HEAD as Hex,
+      acceptedSequence: 0n,
+      acceptedManifestRef: "",
+      unallocated: 7n,
+      milestoneCount: 2n,
+      blockTimestamp: timestamp,
+      totalCredited: 0n,
+    }),
+  });
+  await assert.rejects(alreadyAssignedReader.assertImportableJob(snapshot), /ONCHAIN_JOB_NOT_IMPORTABLE/);
+});
+
 function fakeClient(options: {
   calls?: Array<{ functionName: string; blockNumber?: bigint }>;
   afterHash?: Hex;
   taskId?: Hex;
   granted?: boolean;
   chainId?: number;
+  buyer?: Hex;
+  rewardToken?: Hex;
+  verifier?: Hex;
+  termsHash?: Hex;
+  rewardPool?: bigint;
+  cutoff?: bigint;
+  epoch?: bigint;
+  nextMilestone?: bigint;
+  assignedWorker?: Hex;
+  acceptedHead?: Hex;
+  acceptedSequence?: bigint;
+  acceptedManifestRef?: string;
+  unallocated?: bigint;
+  milestoneCount?: bigint;
+  blockTimestamp?: bigint;
+  totalCredited?: bigint;
+  totalWithdrawn?: bigint;
+  totalRefunded?: bigint;
 } = {}) {
   let blockReads = 0;
   return {
@@ -98,7 +181,7 @@ function fakeClient(options: {
       blockReads += 1;
       return {
         hash: blockReads > 1 ? (options.afterHash ?? blockHash) : blockHash,
-        timestamp: 1_800_000_000n,
+        timestamp: options.blockTimestamp ?? 1_800_000_000n,
       };
     },
     async readContract(input: { functionName: string; blockNumber?: bigint }) {
@@ -108,30 +191,32 @@ function fakeClient(options: {
           return keccak256(stringToHex("BATON_JOB_ESCROW_V2"));
         case "jobs":
           return [
-            buyer,
-            token,
+            options.buyer ?? buyer,
+            options.rewardToken ?? token,
             adapter,
-            verifier,
-            termsHash,
+            options.verifier ?? verifier,
+            options.termsHash ?? termsHash,
             options.taskId ?? chainTaskId,
-            10n,
-            1_900_000_000n,
-            2n,
-            1,
-            worker,
-            acceptedHead,
-            7n,
+            options.rewardPool ?? 10n,
+            options.cutoff ?? 1_900_000_000n,
+            options.epoch ?? 2n,
+            options.nextMilestone ?? 1n,
+            options.assignedWorker ?? worker,
+            options.acceptedHead ?? acceptedHead,
+            options.unallocated ?? 7n,
             false,
             false,
             false,
-            3n,
-            0n,
-            0n,
+            options.totalCredited ?? 3n,
+            options.totalWithdrawn ?? 0n,
+            options.totalRefunded ?? 0n,
           ];
         case "acceptedCheckpoint":
-          return [acceptedHead, 1n, manifestRef];
+          return [options.acceptedHead ?? acceptedHead, options.acceptedSequence ?? 1n, options.acceptedManifestRef ?? manifestRef];
         case "hasWorkerGrant":
           return options.granted ?? true;
+        case "milestoneCount":
+          return options.milestoneCount ?? 0n;
         default:
           throw new Error(`UNEXPECTED_CONTRACT_READ:${input.functionName}`);
       }
@@ -159,4 +244,22 @@ function address(character: string): Hex {
 
 function digest(character: string): Hex {
   return `0x${character.repeat(64)}`;
+}
+
+function importSnapshot(): JobSnapshot {
+  const now = Math.floor(Date.now() / 1000);
+  const snapshot = new JobStore("unused.json").prepareCreate({
+    buyer,
+    rewardToken: token,
+    verifier,
+    rewards: [3n, 4n],
+    serviceBudget: 5n,
+    serviceAsset: "HBAR",
+    approvedServices: ["batch-data-v1"],
+    perRequestCap: 3n,
+    cutoff: now + 600,
+  });
+  snapshot.chainJobId = chainJobId;
+  snapshot.chainTaskId = chainTaskId;
+  return snapshot;
 }

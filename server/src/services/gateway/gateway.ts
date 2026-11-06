@@ -79,6 +79,11 @@ export class Gateway {
     return this.authority !== undefined;
   }
 
+  public async assertImportableJob(job: JobSnapshot): Promise<void> {
+    if (!this.authority?.assertImportableJob) throw new Error("CHAIN_JOB_IMPORT_NOT_IMPLEMENTED");
+    await this.authority.assertImportableJob(job);
+  }
+
   public get lastConfirmedRead(): { blockNumber: bigint; blockHash: Hex; confirmationBlocks: number } | undefined {
     return this.authority?.lastConfirmedRead;
   }

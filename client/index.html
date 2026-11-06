@@ -3,9 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#101a17" />
-    <meta name="description" content="BATON coordinates funded work across independent operators." />
-    <title>BATON — Buyer Console</title>
+    <meta name="theme-color" content="#f4efe5" />
+    <meta name="description" content="BATON — resumable, verifiable handoff for agent work. ENS identity, Arkiv memory, escrowed rewards." />
+    <title>BATON — Work that outlives its worker</title>
+    <script>
+      try {
+        var t = localStorage.getItem("baton-theme");
+        if (!t) t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

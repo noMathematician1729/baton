@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { digest, type CheckpointHead, type GatewayOperation, type Hex, type JobSnapshot } from "../../protocol/v1.js";
+import { digest, paymentIntentFingerprint, type CheckpointHead, type GatewayOperation, type Hex, type JobSnapshot } from "../../protocol/v1.js";
 import type { ChainAdmission, JobAuthorityReader } from "../../chain/sepoliaAuthority.js";
 import { OperationLedger, type LedgerBalance } from "../ledger/operationLedger.js";
 import { JobStore } from "../../domain/jobs/jobStore.js";
@@ -16,6 +16,9 @@ export type PaymentRequest = {
   asset: string;
 };
 
+export type ProviderPaymentRequest = PaymentRequest & Pick<GatewayOperation,
+  "providerId" | "network" | "payee" | "policyVersion" | "approvedPolicyHash">;
+
 export type PaymentResult = {
   providerReceipt: string;
   outputDigest: Hex;
@@ -28,10 +31,9 @@ export type PaymentReconciliation =
   | { status: "unknown" };
 
 export interface PaymentProvider {
-  submit(request: PaymentRequest): Promise<PaymentResult>;
+  submit(request: ProviderPaymentRequest): Promise<PaymentResult>;
   reconcile(operation: GatewayOperation): Promise<PaymentReconciliation>;
 }
-
 export interface CheckpointAcceptanceVerifier {
   verifyCandidate(input: {
     job: JobSnapshot;
@@ -44,7 +46,7 @@ export interface CheckpointAcceptanceVerifier {
 export class LocalPaymentProvider implements PaymentProvider {
   private readonly settled = new Map<string, PaymentResult>();
 
-  public async submit(request: PaymentRequest): Promise<PaymentResult> {
+  public async submit(request: ProviderPaymentRequest): Promise<PaymentResult> {
     const existing = this.settled.get(request.operationId);
     if (existing) return existing;
     const result = {
@@ -96,26 +98,27 @@ export class Gateway {
       const job = await this.requireJob(request.jobId);
       this.assertTaskId(job, request.taskId);
       await this.assertAdmission(job, request.worker, request.epoch);
-      const fingerprint = paymentFingerprint(request);
+      const providerRequest = withPaymentPolicy(request, job);
+      const fingerprint = paymentIntentFingerprint(providerRequest);
       const operation = await this.ledger.reserve({
-        ...request,
+        ...providerRequest,
         requestFingerprint: fingerprint,
         nonce: randomUUID(),
       });
 
-      if (operation.state !== "RESERVED") return this.reuseOrReconcile(operation, request);
+      if (operation.state !== "RESERVED") return this.reuseOrReconcile(operation, providerRequest);
 
       try {
         await this.ledger.transition(operation.operationId, "SUBMITTED");
       } catch (error) {
         const current = await this.ledger.getOperation(operation.operationId);
-        if (current && current.state !== "RESERVED") return this.reuseOrReconcile(current, request);
+        if (current && current.state !== "RESERVED") return this.reuseOrReconcile(current, providerRequest);
         throw error;
       }
 
       let result: PaymentResult;
       try {
-        result = await this.provider.submit(request);
+        result = await this.provider.submit(providerRequest);
       } catch {
         const latest = await this.ledger.getOperation(operation.operationId);
         if (latest?.state === "SUBMITTED") {
@@ -130,13 +133,13 @@ export class Gateway {
 
       let current = await this.ledger.getOperation(operation.operationId);
       if (!current) throw new Error("OPERATION_NOT_FOUND");
-      if (current.state === "OUTPUT_AVAILABLE") return this.recordAuthorizedReuse(current, request);
+      if (current.state === "OUTPUT_AVAILABLE") return this.recordAuthorizedReuse(current, providerRequest);
       if (current.state === "SETTLED") {
         const available = await this.ledger.transition(operation.operationId, "OUTPUT_AVAILABLE", {
           outputDigest: result.outputDigest,
           outputRef: result.outputRef,
         });
-        return this.recordAuthorizedReuse(available, request);
+        return this.recordAuthorizedReuse(available, providerRequest);
       }
       if (current.state !== "SUBMITTED" && current.state !== "UNKNOWN") {
         throw new Error(`PAYMENT_STATE_UNEXPECTED: ${current.state}`);
@@ -146,7 +149,7 @@ export class Gateway {
         await this.ledger.transition(operation.operationId, "SETTLED", { providerReceipt: result.providerReceipt });
       } catch (error) {
         current = await this.ledger.getOperation(operation.operationId);
-        if (current?.state === "OUTPUT_AVAILABLE") return this.recordAuthorizedReuse(current, request);
+        if (current?.state === "OUTPUT_AVAILABLE") return this.recordAuthorizedReuse(current, providerRequest);
         if (current?.state !== "SETTLED") {
           if (current?.state === "SUBMITTED") {
             await this.ledger.transition(operation.operationId, "UNKNOWN", {
@@ -158,13 +161,13 @@ export class Gateway {
       }
 
       current = await this.ledger.getOperation(operation.operationId);
-      if (current?.state === "OUTPUT_AVAILABLE") return this.recordAuthorizedReuse(current, request);
+      if (current?.state === "OUTPUT_AVAILABLE") return this.recordAuthorizedReuse(current, providerRequest);
       if (current?.state !== "SETTLED") throw new Error("PAYMENT_UNKNOWN: settlement state is not durable");
       const available = await this.ledger.transition(operation.operationId, "OUTPUT_AVAILABLE", {
         outputDigest: result.outputDigest,
         outputRef: result.outputRef,
       });
-      return this.recordAuthorizedReuse(available, request);
+      return this.recordAuthorizedReuse(available, providerRequest);
     });
   }
 
@@ -249,7 +252,7 @@ export class Gateway {
     });
   }
 
-  private async reuseOrReconcile(operation: GatewayOperation, request: PaymentRequest): Promise<GatewayOperation> {
+  private async reuseOrReconcile(operation: GatewayOperation, request: ProviderPaymentRequest): Promise<GatewayOperation> {
     if (operation.state === "OUTPUT_AVAILABLE") return this.recordAuthorizedReuse(operation, request);
     if (operation.state === "FAILED") throw new Error("PAYMENT_FAILED: operation is terminal");
     if (operation.state !== "SUBMITTED" && operation.state !== "UNKNOWN" && operation.state !== "SETTLED") {
@@ -294,7 +297,7 @@ export class Gateway {
     return this.recordAuthorizedReuse(available, request);
   }
 
-  private async recordAuthorizedReuse(operation: GatewayOperation, request: PaymentRequest): Promise<GatewayOperation> {
+  private async recordAuthorizedReuse(operation: GatewayOperation, request: ProviderPaymentRequest): Promise<GatewayOperation> {
     if (operation.worker.toLowerCase() === request.worker.toLowerCase() && operation.epoch === request.epoch) return operation;
     return this.ledger.recordReuse(operation.operationId, request.worker, request.epoch);
   }
@@ -354,13 +357,14 @@ export class Gateway {
   }
 }
 
-function paymentFingerprint(request: PaymentRequest): Hex {
-  return digest({
-    jobId: request.jobId,
-    taskId: request.taskId,
-    service: request.service,
-    inputDigest: request.inputDigest,
-    amount: request.amount.toString(),
-    asset: request.asset,
-  });
+function withPaymentPolicy(request: PaymentRequest, job: JobSnapshot): ProviderPaymentRequest {
+  const policy = job.servicePolicy;
+  return {
+    ...request,
+    providerId: policy.providerId,
+    network: policy.network,
+    payee: policy.payee,
+    policyVersion: policy.policyVersion,
+    approvedPolicyHash: digest(policy),
+  };
 }

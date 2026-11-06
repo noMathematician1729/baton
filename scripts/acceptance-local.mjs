@@ -41,14 +41,14 @@ try {
   const spec = job.terms.task.acceptanceSpecHash;
 
   await gateway.assign(job.terms.jobId, A);
-  await expectError(() => gateway.acceptMilestone({ jobId: job.terms.jobId, taskId, worker: A, epoch: 1, acceptanceSpecHash: WRONG_SPEC, expectedHead: EMPTY, newHead: { manifestDigest: HEAD_1, manifestRef: "arkiv://wrong-spec", artifactManifestDigest: INPUT_1, schemaVersion: "checkpoint.v1", sequence: 1 } }), "ACCEPTANCE_SPEC_MISMATCH");
-  await expectError(() => gateway.acceptMilestone({ jobId: job.terms.jobId, taskId, worker: A, epoch: 1, acceptanceSpecHash: spec, expectedHead: EMPTY, newHead: { manifestDigest: HEAD_1, manifestRef: "arkiv://wrong-sequence", artifactManifestDigest: INPUT_1, schemaVersion: "checkpoint.v1", sequence: 2 } }), "CHECKPOINT_SEQUENCE_INVALID");
+  await expectError(() => gateway.acceptMilestone({ jobId: job.terms.jobId, taskId, worker: A, epoch: 1, acceptanceSpecHash: WRONG_SPEC, expectedHead: EMPTY, newHead: { manifestDigest: HEAD_1, manifestRef: "arkiv://wrong-spec", artifactManifestDigest: INPUT_1, schemaVersion: "checkpoint.v1", sequence: 1, previousAcceptedHead: null } }), "ACCEPTANCE_SPEC_MISMATCH");
+  await expectError(() => gateway.acceptMilestone({ jobId: job.terms.jobId, taskId, worker: A, epoch: 1, acceptanceSpecHash: spec, expectedHead: EMPTY, newHead: { manifestDigest: HEAD_1, manifestRef: "arkiv://wrong-sequence", artifactManifestDigest: INPUT_1, schemaVersion: "checkpoint.v1", sequence: 2, previousAcceptedHead: null } }), "CHECKPOINT_SEQUENCE_INVALID");
   await expectError(() => gateway.execute({ operationId: "op-wrong-task", jobId: job.terms.jobId, taskId: "another-task", worker: A, epoch: 1, service: "batch-data-v1", inputDigest: INPUT_1, amount: 1n, asset: "HBAR" }), "TASK_ID_MISMATCH");
   assert(!(await ledger.getOperation("op-wrong-task")), "wrong-task request must fail before reserving or purchasing");
   const firstPayment = await gateway.execute({ operationId: "op-1", jobId: job.terms.jobId, taskId, worker: A, epoch: 1, service: "batch-data-v1", inputDigest: INPUT_1, amount: 2n, asset: "HBAR" });
   const duplicatePayment = await gateway.execute({ operationId: "op-1", jobId: job.terms.jobId, taskId, worker: A, epoch: 1, service: "batch-data-v1", inputDigest: INPUT_1, amount: 2n, asset: "HBAR" });
   assert(firstPayment.providerReceipt === duplicatePayment.providerReceipt, "stable operation ID returned a new receipt");
-  await gateway.acceptMilestone({ jobId: job.terms.jobId, taskId, worker: A, epoch: 1, acceptanceSpecHash: spec, expectedHead: EMPTY, newHead: { manifestDigest: HEAD_1, manifestRef: "arkiv://1", artifactManifestDigest: INPUT_1, schemaVersion: "checkpoint.v1", sequence: 1 } });
+  await gateway.acceptMilestone({ jobId: job.terms.jobId, taskId, worker: A, epoch: 1, acceptanceSpecHash: spec, expectedHead: EMPTY, newHead: { manifestDigest: HEAD_1, manifestRef: "arkiv://1", artifactManifestDigest: INPUT_1, schemaVersion: "checkpoint.v1", sequence: 1, previousAcceptedHead: null } });
 
   await gateway.drain(job.terms.jobId);
   await expectError(() => gateway.execute({ operationId: "op-stale", jobId: job.terms.jobId, taskId, worker: A, epoch: 1, service: "batch-data-v1", inputDigest: INPUT_2, amount: 1n, asset: "HBAR" }), "GATEWAY_DRAINED");
@@ -56,9 +56,9 @@ try {
   await expectError(() => gateway.execute({ operationId: "op-old", jobId: job.terms.jobId, taskId, worker: A, epoch: 1, service: "batch-data-v1", inputDigest: INPUT_2, amount: 1n, asset: "HBAR" }), "WORKER_NOT_ASSIGNED");
 
   await gateway.execute({ operationId: "op-2", jobId: job.terms.jobId, taskId, worker: B, epoch: 2, service: "batch-data-v1", inputDigest: INPUT_2, amount: 2n, asset: "HBAR" });
-  await gateway.acceptMilestone({ jobId: job.terms.jobId, taskId, worker: B, epoch: 2, acceptanceSpecHash: spec, expectedHead: HEAD_1, newHead: { manifestDigest: HEAD_2, manifestRef: "arkiv://2", artifactManifestDigest: INPUT_2, schemaVersion: "checkpoint.v1", sequence: 2 } });
+  await gateway.acceptMilestone({ jobId: job.terms.jobId, taskId, worker: B, epoch: 2, acceptanceSpecHash: spec, expectedHead: HEAD_1, newHead: { manifestDigest: HEAD_2, manifestRef: "arkiv://2", artifactManifestDigest: INPUT_2, schemaVersion: "checkpoint.v1", sequence: 2, previousAcceptedHead: HEAD_1 } });
   await gateway.execute({ operationId: "op-3", jobId: job.terms.jobId, taskId, worker: B, epoch: 2, service: "batch-data-v1", inputDigest: INPUT_3, amount: 2n, asset: "HBAR" });
-  const completed = await gateway.acceptMilestone({ jobId: job.terms.jobId, taskId, worker: B, epoch: 2, acceptanceSpecHash: spec, expectedHead: HEAD_2, newHead: { manifestDigest: HEAD_3, manifestRef: "arkiv://3", artifactManifestDigest: INPUT_3, schemaVersion: "checkpoint.v1", sequence: 3 } });
+  const completed = await gateway.acceptMilestone({ jobId: job.terms.jobId, taskId, worker: B, epoch: 2, acceptanceSpecHash: spec, expectedHead: HEAD_2, newHead: { manifestDigest: HEAD_3, manifestRef: "arkiv://3", artifactManifestDigest: INPUT_3, schemaVersion: "checkpoint.v1", sequence: 3, previousAcceptedHead: HEAD_2 } });
   const claimA = await jobs.claim(job.terms.jobId, A);
   const claimB = await jobs.claim(job.terms.jobId, B);
   assert(claimA.amount === 3n && claimB.amount === 7n, "worker credits were not conserved");
@@ -180,7 +180,7 @@ try {
   await guardedGateway.assign(guardedJob.terms.jobId, A);
   chainState.worker = B;
   chainState.epoch = 2;
-  await expectError(() => guardedGateway.acceptMilestone({ jobId: guardedJob.terms.jobId, taskId: guardedJob.task.taskId, worker: A, epoch: 1, acceptanceSpecHash: guardedJob.terms.task.acceptanceSpecHash, expectedHead: EMPTY, newHead: { manifestDigest: HEAD_1, manifestRef: "arkiv://stale", artifactManifestDigest: INPUT_1, schemaVersion: "checkpoint.v1", sequence: 1 } }), "WORKER_NOT_ASSIGNED");
+  await expectError(() => guardedGateway.acceptMilestone({ jobId: guardedJob.terms.jobId, taskId: guardedJob.task.taskId, worker: A, epoch: 1, acceptanceSpecHash: guardedJob.terms.task.acceptanceSpecHash, expectedHead: EMPTY, newHead: { manifestDigest: HEAD_1, manifestRef: "arkiv://stale", artifactManifestDigest: INPUT_1, schemaVersion: "checkpoint.v1", sequence: 1, previousAcceptedHead: null } }), "WORKER_NOT_ASSIGNED");
   assert((await guardedJobs.get(guardedJob.terms.jobId))?.task.nextMilestone === 0, "stale on-chain worker accepted a local checkpoint");
   chainState.worker = A;
   chainState.epoch = 1;

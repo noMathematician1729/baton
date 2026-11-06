@@ -1,6 +1,6 @@
 {
   "owner": "D1",
-  "updatedAt": "2026-11-06T07:13:46+05:30",
+  "updatedAt": "2026-11-06T08:07:59+05:30",
   "elapsedHours": 0.75,
   "currentTask": "G0-G4 audit remediation and buyer-controlled checkpoint key service implemented on build/audit-g0-g4; local verification recorded and live integrations remain pending",
   "completedFeatures": [
@@ -31,11 +31,14 @@
     "G2 candidate adds action-scoped EIP-712 signatures, durable nonce replay checks, task binding, and coherent confirmed-block authority reads",
     "G3 candidate adds bounded accepted-head recovery validation, storage owner/expiry checks, and an authenticated scoped key-grant HTTP client; only local fakes tested",
     "G4 candidate separates settlement from output availability, models settled/not-settled/unknown reconciliation, checks per-operation accounting, and rolls back JobStore memory on disk failure",
-    "Current candidate: typecheck/build pass, 26 non-HTTP tests pass, local acceptance and signing vector pass, nine Foundry tests pass using solc 0.8.38 wrapper",
-    "User ran node --import tsx --test server/src/app.integration.test.ts on Mac: API SQLite payment-ledger restart recovery passed 1/1",
+    "Current candidate: typecheck/build pass, 29 non-HTTP tests pass, local acceptance and signing vector pass, nine Foundry tests pass using solc 0.8.38 wrapper",
+    "G4 stable payment fingerprints bind provider, network, payee, service policy version and approved policy hash while excluding worker/epoch for authorized reuse",
+    "G4 SQLite job-provisioning journal repairs crashes before or after the JSON job write and commits job/budget completion idempotently",
+    "G1 JobStore rejects expired cutoffs and checkpoint parent mismatches before advancing accepted state",
+    "Earlier API SQLite payment-ledger restart check passed 1/1 on the user's Mac; latest job-provisioning journal path still needs a local rerun",
     "Buyer-host checkpoint key service implemented with encrypted SQLite key storage, worker-bound bearer tokens and X25519 response encryption",
     "Ignored mode-0600 service/A/B env files provisioned locally; B-only fixture decrypt, A denial and worker-identity spoof denial pass",
-    "Current candidate: 26 non-HTTP tests, local payment acceptance, signing vector, typecheck/build, contract compile and nine Foundry tests pass",
+    "Current candidate: 29 non-HTTP tests, local payment acceptance, signing vector, typecheck/build, contract compile and nine Foundry tests pass",
     "Safely merged D2 runtime/recovery with D1 gateway authority, SQLite payment ledger, payment-crash acceptance, and public Sepolia evidence",
     "Merged-tree client/server typecheck and builds, contract compile, signing vector, D1 acceptance, and 15 non-HTTP tests pass",
     "Configured Sepolia RPC in ignored local .env and verified chain ID 11155111",
@@ -54,6 +57,7 @@
     "Root .env is ignored and mode 0600; ARKIV_ACCESS_KEY and CHECKPOINT_ENCRYPTION_KEY are configured, while ARKIV_RPC_URL and ARKIV_SIGNER_PRIVATE_KEY are missing",
     "Key-service URLs are loopback for same-laptop use; D2 has not confirmed whether B is cross-host, and no grant exists for a real accepted checkpoint",
     "The service process is not left running by this execution shell; start it on the buyer host. A temporary tunnel is conditional on D2 confirming cross-host workers",
+    "Latest API integration rerun for job provisioning is unverified because this sandbox denies loopback listeners with EPERM",
     "No live Arkiv write/read, buyer-owned renewal, real x402 settlement/output lookup, or B-host recovery has been demonstrated",
     "Chain-mode job import and checkpoint candidate verifier remain unimplemented; revised V2 escrow is not deployed"
   ],

@@ -7,6 +7,9 @@ import { digest } from "../../protocol/v1.js";
 import { OperationLedger, type ReserveRequest } from "./operationLedger.js";
 
 const policy = {
+  providerId: "local-fixture",
+  network: "hedera:testnet",
+  payee: ("0x" + "00".repeat(20)) as `0x${string}`,
   asset: "HBAR",
   budget: 10n,
   perRequestCap: 5n,
@@ -64,9 +67,10 @@ test("settlement is an immutable one-time fact and output cannot bypass it", asy
   const root = await mkdtemp(join(tmpdir(), "baton-ledger-settlement-"));
   const ledger = new OperationLedger(join(root, "payment-ledger.sqlite"));
   try {
-    await ledger.configureBudget("job-1", { ...policy, budget: 10n, perRequestCap: 10n });
-    await ledger.reserve(reserveRequest("op-paid", "nonce-paid", 3n));
-    await ledger.reserve(reserveRequest("op-uncertain", "nonce-uncertain", 4n));
+    const settlementPolicy = { ...policy, budget: 10n, perRequestCap: 10n };
+    await ledger.configureBudget("job-1", settlementPolicy);
+    await ledger.reserve(reserveRequest("op-paid", "nonce-paid", 3n, settlementPolicy));
+    await ledger.reserve(reserveRequest("op-uncertain", "nonce-uncertain", 4n, settlementPolicy));
     await ledger.transition("op-paid", "SUBMITTED");
     await ledger.transition("op-paid", "SETTLED", { providerReceipt: "receipt-paid" });
 
@@ -115,10 +119,11 @@ test("SQLite transaction prevents concurrent reservations from exceeding the bud
   const first = new OperationLedger(filePath);
   const second = new OperationLedger(filePath);
   try {
-    await first.configureBudget("job-1", { ...policy, perRequestCap: 10n });
+    const concurrencyPolicy = { ...policy, perRequestCap: 10n };
+    await first.configureBudget("job-1", concurrencyPolicy);
     const results = await Promise.allSettled([
-      first.reserve(reserveRequest("op-a", "nonce-a", 6n)),
-      second.reserve(reserveRequest("op-b", "nonce-b", 6n)),
+      first.reserve(reserveRequest("op-a", "nonce-a", 6n, concurrencyPolicy)),
+      second.reserve(reserveRequest("op-b", "nonce-b", 6n, concurrencyPolicy)),
     ]);
     assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
     const rejected = results.find((result) => result.status === "rejected");
@@ -175,6 +180,33 @@ test("operation IDs reject different request fingerprints and budgets stay immut
   }
 });
 
+test("stable operation identity binds provider, network, payee, and the approved policy hash", async () => {
+  const root = await mkdtemp(join(tmpdir(), "baton-ledger-payment-context-"));
+  const ledger = new OperationLedger(join(root, "payment-ledger.sqlite"));
+  try {
+    await ledger.configureBudget("job-1", policy);
+    const request = reserveRequest("op-context", "nonce-context", 2n);
+    await ledger.reserve(request);
+
+    await assert.rejects(
+      ledger.reserve({ ...request, network: "hedera:mainnet", nonce: "nonce-wrong-network" }),
+      /PAYMENT_POLICY_CONTEXT_MISMATCH/,
+    );
+    await assert.rejects(
+      ledger.reserve({ ...request, payee: ("0x" + "9".repeat(40)) as `0x${string}`, nonce: "nonce-wrong-payee" }),
+      /PAYMENT_POLICY_CONTEXT_MISMATCH/,
+    );
+    await assert.rejects(
+      ledger.configureBudget("job-1", { ...policy, providerId: "different-provider" }),
+      /BUDGET_IMMUTABLE/,
+    );
+    assert.equal((await ledger.listOperations("job-1")).length, 1);
+  } finally {
+    ledger.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("legacy worker-scoped fingerprints migrate to stable handoff fingerprints", async () => {
   const root = await mkdtemp(join(tmpdir(), "baton-ledger-migration-"));
   const ledger = new OperationLedger(join(root, "payment-ledger.sqlite"));
@@ -197,10 +229,15 @@ test("legacy worker-scoped fingerprints migrate to stable handoff fingerprints",
     const stableFingerprint = digest({
       jobId: legacy.jobId,
       taskId: legacy.taskId,
+      providerId: legacy.providerId,
+      network: legacy.network,
       service: legacy.service,
       inputDigest: legacy.inputDigest,
       amount: legacy.amount.toString(),
       asset: legacy.asset,
+      payee: legacy.payee.toLowerCase(),
+      policyVersion: legacy.policyVersion,
+      approvedPolicyHash: legacy.approvedPolicyHash,
     });
     const reused = await ledger.reserve({
       ...legacy,
@@ -225,8 +262,9 @@ test("legacy worker-scoped fingerprints migrate to stable handoff fingerprints",
   }
 });
 
-function reserveRequest(operationId: string, nonce: string, amount: bigint): ReserveRequest {
-  const digest = "0x" + "1".repeat(64) as `0x${string}`;
+function reserveRequest(operationId: string, nonce: string, amount: bigint, requestPolicy = policy): ReserveRequest {
+  const inputDigest = "0x" + "1".repeat(64) as `0x${string}`;
+  const approvedPolicyHash = digest(requestPolicy);
   return {
     operationId,
     jobId: "job-1",
@@ -234,8 +272,13 @@ function reserveRequest(operationId: string, nonce: string, amount: bigint): Res
     worker: "0x" + "a".repeat(40),
     epoch: 1,
     service: "batch-data-v1",
-    inputDigest: digest,
-    requestFingerprint: digest,
+    inputDigest,
+    requestFingerprint: inputDigest,
+    providerId: requestPolicy.providerId,
+    network: requestPolicy.network,
+    payee: requestPolicy.payee,
+    policyVersion: requestPolicy.policyVersion,
+    approvedPolicyHash,
     amount,
     asset: "HBAR",
     nonce,

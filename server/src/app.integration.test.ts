@@ -93,7 +93,7 @@ test("HTTP API uses and recovers the SQLite payment ledger across app restart", 
     });
   } finally {
     services.ledger.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 });
     restoreEnvironment("BATON_DATA_DIR", previousDataDirectory);
     restoreEnvironment("PAYMENT_LEDGER_PATH", previousLedgerPath);
   }

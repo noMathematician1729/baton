@@ -40,11 +40,15 @@ export function createServices() {
 export function createApp(services = createServices()) {
   const app = express();
   const { jobs, ledger, gateway } = services;
+  const ready = recoverPendingJobProvisions(jobs, ledger);
 
   app.disable("x-powered-by");
   app.use(helmet());
   app.use(cors({ origin: env.CLIENT_ORIGIN }));
   app.use(express.json({ limit: "1mb" }));
+  app.use((_request, _response, next) => {
+    void ready.then(() => next(), next);
+  });
 
   app.get("/api/health", (_request, response) => {
     response.json({
@@ -123,7 +127,7 @@ export function createApp(services = createServices()) {
     const chainTaskId = optionalChainJobId(body.chainTaskId);
     const termsHash = optionalChainJobId(body.termsHash);
     if (gateway.requiresChainAuthority && (!chainJobId || !chainTaskId || !termsHash)) throw new Error("CHAIN_JOB_BINDING_REQUIRED");
-    const job = await jobs.create({
+    const job = jobs.prepareCreate({
       chainJobId,
       chainTaskId,
       termsHash,
@@ -135,9 +139,27 @@ export function createApp(services = createServices()) {
       serviceAsset: stringValue(body.serviceAsset, "HBAR"),
       approvedServices: stringArray(body.approvedServices, ["batch-data-v1"]),
       perRequestCap: bigintValue(body.perRequestCap, 5n),
+      paymentProviderId: stringValue(body.paymentProviderId, "local-fixture"),
+      paymentNetwork: stringValue(body.paymentNetwork, "hedera:testnet"),
+      paymentPayee: address(body.paymentPayee, fallbackAddress("0")),
       cutoff: body.cutoff === undefined ? undefined : Number(body.cutoff),
     });
-    await ledger.configureBudget(job.terms.jobId, job.servicePolicy);
+    await ledger.beginJobProvision(job);
+    try {
+      await jobs.importInitial(job);
+      await ledger.completeJobProvision(job);
+    } catch (error) {
+      try {
+        await finishPendingJobProvisions(jobs, ledger);
+        if (await jobs.get(job.terms.jobId) && await ledger.getBalance(job.terms.jobId)) {
+          response.status(201).json(serialise(job));
+          return;
+        }
+      } catch {
+        // Leave the durable pending record for startup recovery.
+      }
+      throw error;
+    }
     response.status(201).json(serialise(job));
   });
 
@@ -168,6 +190,9 @@ export function createApp(services = createServices()) {
       artifactManifestDigest: digestValue(body.artifactManifestDigest, "artifactManifestDigest"),
       schemaVersion: stringValue(body.schemaVersion, "checkpoint.v1"),
       sequence: Number(body.sequence ?? 1),
+      previousAcceptedHead: body.previousAcceptedHead === null
+        ? null
+        : digestValue(body.previousAcceptedHead, "previousAcceptedHead"),
     };
     const taskId = stringValue(body.taskId, "taskId");
     const worker = requiredAddress(body.worker, "WORKER");
@@ -309,6 +334,19 @@ export function createApp(services = createServices()) {
   });
 
   return app;
+}
+
+export async function recoverPendingJobProvisions(jobs: JobStore, ledger: OperationLedger): Promise<void> {
+  await jobs.init();
+  await ledger.init();
+  await finishPendingJobProvisions(jobs, ledger);
+}
+
+async function finishPendingJobProvisions(jobs: JobStore, ledger: OperationLedger): Promise<void> {
+  for (const provision of await ledger.pendingJobProvisions()) {
+    await jobs.importInitial(provision.job);
+    await ledger.completeJobProvision(provision.job);
+  }
 }
 
 function stringValue(value: unknown, fallback: string): string {

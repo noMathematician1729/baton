@@ -45,6 +45,27 @@ test("failed JSON persistence does not publish mutated job state in memory or on
   }
 });
 
+test("JobStore rejects already-expired job cutoffs before creating a snapshot", async () => {
+  const root = await mkdtemp(join(tmpdir(), "baton-job-cutoff-"));
+  const store = new JobStore(join(root, "jobs.json"));
+  try {
+    await assert.rejects(store.create({
+      buyer: ("0x" + "1".repeat(40)) as `0x${string}`,
+      rewardToken: ("0x" + "2".repeat(40)) as `0x${string}`,
+      verifier: ("0x" + "3".repeat(40)) as `0x${string}`,
+      rewards: [1n],
+      serviceBudget: 2n,
+      serviceAsset: "HBAR",
+      approvedServices: ["batch-data-v1"],
+      perRequestCap: 1n,
+      cutoff: Math.floor(Date.now() / 1000) - 1,
+    }), /JOB_CUTOFF_INVALID/);
+    assert.deepEqual(await store.list(), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("JobStore rejects invalid checkpoint bindings without advancing the head or milestone", async () => {
   const root = await mkdtemp(join(tmpdir(), "baton-job-checkpoint-"));
   const store = new JobStore(join(root, "jobs.json"));
@@ -75,6 +96,7 @@ test("JobStore rejects invalid checkpoint bindings without advancing the head or
         artifactManifestDigest: ("0x" + "b".repeat(64)) as `0x${string}`,
         schemaVersion: "checkpoint.v1",
         sequence: 1,
+        previousAcceptedHead: null,
       },
     };
     const invalid = [
@@ -82,6 +104,7 @@ test("JobStore rejects invalid checkpoint bindings without advancing the head or
       { input: { ...base, newHead: { ...base.newHead, manifestDigest: "bad" as `0x${string}` } }, error: /CHECKPOINT_DIGEST_INVALID/ },
       { input: { ...base, newHead: { ...base.newHead, schemaVersion: "checkpoint.v2" } }, error: /CHECKPOINT_SCHEMA_UNSUPPORTED/ },
       { input: { ...base, newHead: { ...base.newHead, sequence: 2 } }, error: /CHECKPOINT_SEQUENCE_INVALID/ },
+      { input: { ...base, newHead: { ...base.newHead, previousAcceptedHead: ("0x" + "f".repeat(64)) as `0x${string}` } }, error: /CHECKPOINT_PARENT_MISMATCH/ },
       { input: { ...base, newHead: { ...base.newHead, manifestRef: "   " } }, error: /CHECKPOINT_LOCATOR_REQUIRED/ },
     ];
     for (const candidate of invalid) {

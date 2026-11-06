@@ -16,7 +16,7 @@ npm run test:local
 npm run verify
 ```
 
-`npm test` runs the checkpoint, storage, runtime, worker, tools, admission, SQLite ledger, and HTTP restart suites. `npm run verify` adds typechecking, production builds, Solidity compilation, the signing vector, and local gateway acceptance, including the payment-crash recovery scenario. The HTTP restart test passed 1/1 on the user's Mac with `node --import tsx --test server/src/app.integration.test.ts`. The execution sandbox itself still rejects `listen(127.0.0.1)` with `EPERM`.
+`npm test` runs the checkpoint, storage, runtime, worker, tools, admission, SQLite ledger, and HTTP restart suites. `npm run verify` adds typechecking, production builds, Solidity compilation, the signing vector, and local gateway acceptance, including the payment-crash recovery scenario. An earlier revision of the HTTP restart test passed 1/1 on the user's Mac before the job-provisioning journal change. The latest path needs a local rerun: this execution sandbox rejects `listen(127.0.0.1)` with `EPERM`.
 
 For the non-HTTP suites in this sandbox, bypass the `tsx --test` IPC launcher and run the source tests directly:
 
@@ -30,7 +30,7 @@ node --import tsx --test \
   server/src/services/ledger/*.test.ts
 ```
 
-The current G0–G4 candidate passed this command with 26 tests. That includes the offline recovery and key-grant-client fakes; it does not exercise the Arkiv network, provider, or Sepolia.
+The current G0–G4 candidate passed this command with 29 tests. That includes the offline recovery and key-grant-client fakes, policy-bound operation fingerprints, cross-store job/budget crash recovery, and checkpoint deadline/parent checks; it does not exercise the Arkiv network, provider, or Sepolia.
 
 ## Gateway authority and payment recovery
 

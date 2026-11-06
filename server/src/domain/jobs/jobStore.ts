@@ -7,12 +7,16 @@ import {
   EMPTY_HEAD,
   newId,
   nowSeconds,
+  DEFAULT_PAYMENT_NETWORK,
+  DEFAULT_PAYMENT_PAYEE,
+  DEFAULT_PAYMENT_PROVIDER_ID,
   type CheckpointHead,
   type Hex,
   type JobSnapshot,
   type JobStatus,
   type JobTerms,
   type RewardCredit,
+  normalizeServicePolicy,
   serialise,
 } from "../../protocol/v1.js";
 
@@ -32,6 +36,9 @@ export type CreateJobInput = {
   serviceAsset: string;
   approvedServices: string[];
   perRequestCap: bigint;
+  paymentProviderId?: string;
+  paymentNetwork?: string;
+  paymentPayee?: Hex;
   cutoff?: number;
 };
 
@@ -50,7 +57,7 @@ export class JobStore {
   public async init(): Promise<void> {
     await mkdir(dirname(this.filePath), { recursive: true });
     try {
-      this.state = deserialise<StoreFile>(await JSON.parse(await readFile(this.filePath, "utf8")));
+      this.state = normalizeStorePolicies(deserialise<StoreFile>(await JSON.parse(await readFile(this.filePath, "utf8"))));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       const initial: StoreFile = { version: 1, jobs: {} };
@@ -64,63 +71,81 @@ export class JobStore {
   }
 
   public async create(input: CreateJobInput): Promise<JobSnapshot> {
-    return this.mutate((state) => {
-      if (input.rewards.length === 0) throw new Error("MILESTONES_REQUIRED");
-      if (input.rewards.some((amount) => amount <= 0n)) throw new Error("REWARD_MUST_BE_POSITIVE");
-      if (input.serviceBudget < 0n || input.perRequestCap <= 0n) throw new Error("INVALID_SERVICE_POLICY");
-      const jobId = newId("job");
-      const taskId = newId("task");
-      const acceptanceSpecHash = digest({ taskId, rule: "output digest must match reference batch" });
-      const milestones = input.rewards.map((reward, index) => ({
-        id: `milestone-${index + 1}`,
-        reward,
-        acceptanceSpecHash,
-        progressPercent: Math.round(((index + 1) / input.rewards.length) * 100),
-      }));
-      const task: JobTerms["task"] = {
+    return this.importInitial(this.prepareCreate(input));
+  }
+
+  public prepareCreate(input: CreateJobInput): JobSnapshot {
+    if (input.rewards.length === 0) throw new Error("MILESTONES_REQUIRED");
+    if (input.rewards.some((amount) => amount <= 0n)) throw new Error("REWARD_MUST_BE_POSITIVE");
+    if (input.serviceBudget < 0n || input.perRequestCap <= 0n) throw new Error("INVALID_SERVICE_POLICY");
+    const cutoff = input.cutoff ?? nowSeconds() + 86_400;
+    if (!Number.isSafeInteger(cutoff) || cutoff <= nowSeconds()) throw new Error("JOB_CUTOFF_INVALID");
+    const jobId = newId("job");
+    const taskId = newId("task");
+    const acceptanceSpecHash = digest({ taskId, rule: "output digest must match reference batch" });
+    const milestones = input.rewards.map((reward, index) => ({
+      id: `milestone-${index + 1}`,
+      reward,
+      acceptanceSpecHash,
+      progressPercent: Math.round(((index + 1) / input.rewards.length) * 100),
+    }));
+    const task: JobTerms["task"] = {
+      taskId,
+      requiredCapabilitiesHash: digest(["deterministic-batch-v1"]),
+      acceptanceSpecHash,
+      deadline: cutoff,
+      milestones,
+    };
+    const terms: JobTerms = {
+      jobId,
+      buyer: input.buyer,
+      rewardToken: input.rewardToken,
+      termsHash: input.termsHash ?? digest({ buyer: input.buyer, rewardToken: input.rewardToken, task, serviceBudget: input.serviceBudget }),
+      taskGraphHash: digest({ taskId, dependencies: [] }),
+      cutoff,
+      verifier: input.verifier,
+      serviceBudget: input.serviceBudget,
+      serviceAsset: input.serviceAsset,
+      task,
+    };
+    return {
+      chainJobId: input.chainJobId,
+      chainTaskId: input.chainTaskId,
+      terms,
+      task: {
         taskId,
-        requiredCapabilitiesHash: digest(["deterministic-batch-v1"]),
-        acceptanceSpecHash,
-        deadline: input.cutoff ?? nowSeconds() + 86_400,
-        milestones,
-      };
-      const terms: JobTerms = {
-        jobId,
-        buyer: input.buyer,
-        rewardToken: input.rewardToken,
-        termsHash: input.termsHash ?? digest({ buyer: input.buyer, rewardToken: input.rewardToken, task, serviceBudget: input.serviceBudget }),
-        taskGraphHash: digest({ taskId, dependencies: [] }),
-        cutoff: input.cutoff ?? nowSeconds() + 86_400,
-        verifier: input.verifier,
-        serviceBudget: input.serviceBudget,
-        serviceAsset: input.serviceAsset,
-        task,
-      };
-      const snapshot: JobSnapshot = {
-        chainJobId: input.chainJobId,
-        chainTaskId: input.chainTaskId,
-        terms,
-        task: {
-          taskId,
-          assignedWorker: null,
-          epoch: 0,
-          acceptedHead: emptyHead(),
-          nextMilestone: 0,
-          status: "FUNDED",
-          drained: false,
-        },
-        credits: [],
-        servicePolicy: {
-          asset: input.serviceAsset,
-          budget: input.serviceBudget,
-          perRequestCap: input.perRequestCap,
-          approvedServices: [...new Set(input.approvedServices)],
-          policyVersion: "service-policy.v1",
-        },
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      state.jobs[jobId] = snapshot;
+        assignedWorker: null,
+        epoch: 0,
+        acceptedHead: emptyHead(),
+        nextMilestone: 0,
+        status: "FUNDED",
+        drained: false,
+      },
+      credits: [],
+      servicePolicy: normalizeServicePolicy({
+        providerId: input.paymentProviderId,
+        network: input.paymentNetwork,
+        payee: input.paymentPayee,
+        asset: input.serviceAsset,
+        budget: input.serviceBudget,
+        perRequestCap: input.perRequestCap,
+        approvedServices: [...new Set(input.approvedServices)],
+        policyVersion: "service-policy.v2",
+      }),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  public async importInitial(snapshot: JobSnapshot): Promise<JobSnapshot> {
+    return this.mutate((state) => {
+      const jobId = snapshot.terms.jobId;
+      const existing = state.jobs[jobId];
+      if (existing) {
+        if (digest(existing) !== digest(snapshot)) throw new Error("JOB_PROVISIONING_CONFLICT");
+        return existing;
+      }
+      state.jobs[jobId] = structuredClone(snapshot);
       return snapshot;
     });
   }
@@ -139,6 +164,7 @@ export class JobStore {
   public async assign(jobId: string, worker: Hex): Promise<JobSnapshot> {
     return this.mutate((state) => {
       const job = requireJob(state, jobId);
+      if (nowSeconds() >= job.terms.cutoff) throw new Error("JOB_DEADLINE_PASSED");
       if (job.task.status !== "FUNDED" || job.task.assignedWorker) throw new Error("TASK_NOT_ASSIGNABLE");
       job.task.assignedWorker = worker;
       job.task.epoch = 1;
@@ -160,6 +186,7 @@ export class JobStore {
       const job = requireJob(state, input.jobId);
       if (job.terms.task.taskId !== input.taskId) throw new Error("TASK_ID_MISMATCH");
       assertWorker(job, input.worker, input.epoch);
+      if (nowSeconds() >= Math.min(job.terms.cutoff, job.terms.task.deadline)) throw new Error("JOB_DEADLINE_PASSED");
       if (job.task.drained || job.task.status !== "FUNDED") throw new Error("TASK_NOT_OPEN");
       if (job.task.acceptedHead.manifestDigest !== input.expectedHead) throw new Error("STALE_HEAD");
       const milestone = job.terms.task.milestones[job.task.nextMilestone];
@@ -173,6 +200,11 @@ export class JobStore {
       if (input.newHead.schemaVersion !== "checkpoint.v1") throw new Error("CHECKPOINT_SCHEMA_UNSUPPORTED");
       if (!Number.isSafeInteger(input.newHead.sequence) || input.newHead.sequence !== job.task.acceptedHead.sequence + 1) {
         throw new Error("CHECKPOINT_SEQUENCE_INVALID");
+      }
+      const expectedParent = input.expectedHead.toLowerCase() === EMPTY_HEAD ? null : input.expectedHead.toLowerCase();
+      const candidateParent = input.newHead.previousAcceptedHead?.toLowerCase() ?? null;
+      if (input.newHead.previousAcceptedHead === undefined || candidateParent !== expectedParent) {
+        throw new Error("CHECKPOINT_PARENT_MISMATCH");
       }
       const credit: RewardCredit = {
         id: newId("credit"),
@@ -286,6 +318,13 @@ async function persistAtomicJson(filePath: string, contents: string): Promise<vo
   await rename(temporary, filePath);
 }
 
+function normalizeStorePolicies(state: StoreFile): StoreFile {
+  for (const job of Object.values(state.jobs)) {
+    job.servicePolicy = normalizeServicePolicy(job.servicePolicy);
+  }
+  return state;
+}
+
 function requireJob(state: StoreFile, jobId: string): JobSnapshot {
   const job = state.jobs[jobId];
   if (!job) throw new Error("JOB_NOT_FOUND");
@@ -308,6 +347,7 @@ function emptyHead(): CheckpointHead {
     artifactManifestDigest: EMPTY_HEAD as Hex,
     schemaVersion: CHECKPOINT_SCHEMA_VERSION,
     sequence: 0,
+    previousAcceptedHead: null,
   };
 }
 

@@ -4,8 +4,11 @@ import { DatabaseSync } from "node:sqlite";
 import {
   deserialise,
   digest,
+  normalizeServicePolicy,
+  paymentIntentFingerprint,
   type GatewayOperation,
   type Hex,
+  type JobSnapshot,
   type OperationState,
   serialise,
   type ServicePolicy,
@@ -28,9 +31,19 @@ export type ReserveRequest = {
   service: string;
   inputDigest: Hex;
   requestFingerprint: Hex;
+  providerId: string;
+  network: string;
+  payee: Hex;
+  policyVersion: string;
+  approvedPolicyHash: Hex;
   amount: bigint;
   asset: string;
   nonce: string;
+};
+
+export type PendingJobProvision = {
+  job: JobSnapshot;
+  state: "PENDING";
 };
 
 type BudgetRow = {
@@ -62,7 +75,7 @@ export class OperationLedger {
 
   public async reset(): Promise<void> {
     this.transaction((db) => {
-      db.exec("DELETE FROM operations; DELETE FROM budgets; DELETE FROM auth_nonces;");
+      db.exec("DELETE FROM operations; DELETE FROM job_provisioning; DELETE FROM budgets; DELETE FROM auth_nonces;");
     });
   }
 
@@ -80,29 +93,47 @@ export class OperationLedger {
   }
 
   public async configureBudget(jobId: string, policy: ServicePolicy): Promise<LedgerBalance> {
-    return this.transaction((db) => {
-      const policyJson = json(policy);
-      const existing = db.prepare("SELECT policy_json FROM budgets WHERE job_id = ?").get(jobId) as
-        | { policy_json: string }
+    return this.transaction((db) => this.ensureBudget(db, jobId, policy));
+  }
+
+  /** Durable first phase for creating the JSON job and its SQLite budget as one recoverable operation. */
+  public async beginJobProvision(job: JobSnapshot): Promise<void> {
+    this.transaction((db) => {
+      const jobId = job.terms.jobId;
+      const snapshotJson = json(job);
+      const existing = db.prepare("SELECT snapshot_json FROM job_provisioning WHERE job_id = ?").get(jobId) as
+        | { snapshot_json: string }
         | undefined;
       if (existing) {
-        if (existing.policy_json !== policyJson) {
-          throw new Error("BUDGET_IMMUTABLE: service policy cannot be rewritten after funding");
-        }
-        return balanceFromRow(this.budgetRow(db, jobId));
+        if (existing.snapshot_json !== snapshotJson) throw new Error("JOB_PROVISIONING_CONFLICT");
+        return;
       }
-
-      const balance: LedgerBalance = {
-        deposits: policy.budget,
-        available: policy.budget,
-        reserved: 0n,
-        settledSpend: 0n,
-        returnedFunds: 0n,
-      };
+      const timestamp = new Date().toISOString();
       db.prepare(`
-        INSERT INTO budgets (job_id, policy_json, deposits, available, reserved, settled_spend, returned_funds)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(jobId, policyJson, ...balanceValues(balance));
+        INSERT INTO job_provisioning (job_id, snapshot_json, state, created_at, updated_at)
+        VALUES (?, ?, 'PENDING', ?, ?)
+      `).run(jobId, snapshotJson, timestamp, timestamp);
+    });
+  }
+
+  public async pendingJobProvisions(): Promise<PendingJobProvision[]> {
+    const rows = this.database().prepare(`
+      SELECT snapshot_json FROM job_provisioning WHERE state = 'PENDING' ORDER BY created_at, job_id
+    `).all() as Array<{ snapshot_json: string }>;
+    return rows.map((row) => ({ job: parseJson<JobSnapshot>(row.snapshot_json), state: "PENDING" }));
+  }
+
+  /** Commits the budget and journal completion together, after the JSON snapshot is durable. */
+  public async completeJobProvision(job: JobSnapshot): Promise<LedgerBalance> {
+    return this.transaction((db) => {
+      const jobId = job.terms.jobId;
+      const record = db.prepare("SELECT snapshot_json, state FROM job_provisioning WHERE job_id = ?").get(jobId) as
+        | { snapshot_json: string; state: string }
+        | undefined;
+      if (!record || record.snapshot_json !== json(job)) throw new Error("JOB_PROVISIONING_RECORD_MISSING");
+      const balance = this.ensureBudget(db, jobId, job.servicePolicy);
+      db.prepare("UPDATE job_provisioning SET state = 'COMPLETE', updated_at = ? WHERE job_id = ?")
+        .run(new Date().toISOString(), jobId);
       return balance;
     });
   }
@@ -114,25 +145,47 @@ export class OperationLedger {
         | undefined;
       if (existing) {
         const operation = parseJson<GatewayOperation>(existing.operation_json);
+        if (operation.jobId !== request.jobId) {
+          throw new Error("OPERATION_KEY_REUSED: operation ID belongs to a different job");
+        }
+        const budget = db.prepare("SELECT policy_json FROM budgets WHERE job_id = ?").get(operation.jobId) as
+          | { policy_json: string }
+          | undefined;
+        if (!budget) throw new Error("BUDGET_NOT_CONFIGURED");
+        let changed = false;
         if (operation.requestFingerprint !== request.requestFingerprint) {
-          // Migrate records written by the previous gateway fingerprint, which
-          // included worker and epoch. New records require the stable intent
-          // fingerprint and reject arbitrary operation-key reuse.
+          // Migrate legacy worker-scoped and context-free stable fingerprints
+          // only when the immutable budget policy still matches this request.
           if (!samePaymentIntent(operation, request)
-            || operation.requestFingerprint !== legacyGatewayFingerprint(operation)
+            || (operation.requestFingerprint !== legacyGatewayFingerprint(operation)
+              && operation.requestFingerprint !== previousStablePaymentFingerprint(operation))
             || request.requestFingerprint !== stablePaymentFingerprint(request)) {
             throw new Error("OPERATION_KEY_REUSED: operation ID has a different request fingerprint");
           }
           operation.requestFingerprint = request.requestFingerprint;
-          operation.updatedAt = new Date().toISOString();
-          db.prepare("UPDATE operations SET request_fingerprint = ?, operation_json = ?, updated_at = ? WHERE operation_id = ?")
-            .run(operation.requestFingerprint, json(operation), operation.updatedAt, operation.operationId);
+          changed = true;
         }
+        assertRequestPolicyContext(normalizeServicePolicy(parseJson<Partial<ServicePolicy>>(budget.policy_json)), request);
+        changed ||= operation.providerId !== request.providerId
+          || operation.network !== request.network
+          || operation.payee?.toLowerCase() !== request.payee.toLowerCase()
+          || operation.policyVersion !== request.policyVersion
+          || operation.approvedPolicyHash !== request.approvedPolicyHash;
+        if (!changed) return operation;
+        operation.providerId = request.providerId;
+        operation.network = request.network;
+        operation.payee = request.payee;
+        operation.policyVersion = request.policyVersion;
+        operation.approvedPolicyHash = request.approvedPolicyHash;
+        operation.updatedAt = new Date().toISOString();
+        db.prepare("UPDATE operations SET request_fingerprint = ?, operation_json = ?, updated_at = ? WHERE operation_id = ?")
+          .run(operation.requestFingerprint, json(operation), operation.updatedAt, operation.operationId);
         return operation;
       }
 
       const row = this.budgetRow(db, request.jobId);
-      const policy = parseJson<ServicePolicy>(row.policy_json);
+      const policy = normalizeServicePolicy(parseJson<Partial<ServicePolicy>>(row.policy_json));
+      assertRequestPolicyContext(policy, request);
       const balance = balanceFromRow(row);
       if (policy.asset !== request.asset) throw new Error("ASSET_NOT_APPROVED");
       if (!policy.approvedServices.includes(request.service)) throw new Error("SERVICE_NOT_APPROVED");
@@ -276,7 +329,7 @@ export class OperationLedger {
     const row = this.database().prepare("SELECT policy_json FROM budgets WHERE job_id = ?").get(jobId) as
       | { policy_json: string }
       | undefined;
-    return row ? parseJson<ServicePolicy>(row.policy_json) : undefined;
+    return row ? normalizeServicePolicy(parseJson<Partial<ServicePolicy>>(row.policy_json)) : undefined;
   }
 
   private database(): DatabaseSync {
@@ -325,6 +378,13 @@ export class OperationLedger {
           created_at TEXT NOT NULL,
           PRIMARY KEY (scope, nonce)
         ) STRICT, WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS job_provisioning (
+          job_id TEXT PRIMARY KEY,
+          snapshot_json TEXT NOT NULL,
+          state TEXT NOT NULL CHECK (state IN ('PENDING', 'COMPLETE')),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT;
       `);
       this.db = db;
       return db;
@@ -354,6 +414,33 @@ export class OperationLedger {
     `).get(jobId) as BudgetRow | undefined;
     if (!row) throw new Error("BUDGET_NOT_CONFIGURED");
     return row;
+  }
+
+  private ensureBudget(db: DatabaseSync, jobId: string, policyInput: ServicePolicy): LedgerBalance {
+    const policy = normalizeServicePolicy(policyInput);
+    const policyJson = json(policy);
+    const existing = db.prepare("SELECT policy_json FROM budgets WHERE job_id = ?").get(jobId) as
+      | { policy_json: string }
+      | undefined;
+    if (existing) {
+      if (json(normalizeServicePolicy(parseJson<Partial<ServicePolicy>>(existing.policy_json))) !== policyJson) {
+        throw new Error("BUDGET_IMMUTABLE: service policy cannot be rewritten after funding");
+      }
+      return balanceFromRow(this.budgetRow(db, jobId));
+    }
+
+    const balance: LedgerBalance = {
+      deposits: policy.budget,
+      available: policy.budget,
+      reserved: 0n,
+      settledSpend: 0n,
+      returnedFunds: 0n,
+    };
+    db.prepare(`
+      INSERT INTO budgets (job_id, policy_json, deposits, available, reserved, settled_spend, returned_funds)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(jobId, policyJson, ...balanceValues(balance));
+    return balance;
   }
 
   private writeBalance(db: DatabaseSync, jobId: string, balance: LedgerBalance): void {
@@ -409,17 +496,26 @@ function samePaymentIntent(existing: GatewayOperation, request: ReserveRequest):
     && existing.service === request.service
     && existing.inputDigest === request.inputDigest
     && existing.amount === request.amount
-    && existing.asset === request.asset;
+    && existing.asset === request.asset
+    && (existing.providerId === undefined || existing.providerId === request.providerId)
+    && (existing.network === undefined || existing.network === request.network)
+    && (existing.payee === undefined || existing.payee.toLowerCase() === request.payee.toLowerCase())
+    && (existing.policyVersion === undefined || existing.policyVersion === request.policyVersion)
+    && (existing.approvedPolicyHash === undefined || existing.approvedPolicyHash === request.approvedPolicyHash);
 }
 
 function stablePaymentFingerprint(request: ReserveRequest): Hex {
+  return paymentIntentFingerprint(request);
+}
+
+function previousStablePaymentFingerprint(operation: GatewayOperation): Hex {
   return digest({
-    jobId: request.jobId,
-    taskId: request.taskId,
-    service: request.service,
-    inputDigest: request.inputDigest,
-    amount: request.amount.toString(),
-    asset: request.asset,
+    jobId: operation.jobId,
+    taskId: operation.taskId,
+    service: operation.service,
+    inputDigest: operation.inputDigest,
+    amount: operation.amount.toString(),
+    asset: operation.asset,
   });
 }
 
@@ -435,6 +531,16 @@ function legacyGatewayFingerprint(operation: GatewayOperation): Hex {
     amount: operation.amount.toString(),
     asset: operation.asset,
   });
+}
+
+function assertRequestPolicyContext(policy: ServicePolicy, request: ReserveRequest): void {
+  if (request.providerId !== policy.providerId
+    || request.network !== policy.network
+    || request.payee.toLowerCase() !== policy.payee.toLowerCase()
+    || request.policyVersion !== policy.policyVersion
+    || request.approvedPolicyHash.toLowerCase() !== digest(policy).toLowerCase()) {
+    throw new Error("PAYMENT_POLICY_CONTEXT_MISMATCH");
+  }
 }
 
 const transitions: Record<OperationState, OperationState[]> = {

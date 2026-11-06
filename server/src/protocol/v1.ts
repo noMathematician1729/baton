@@ -53,6 +53,8 @@ export type CheckpointHead = {
   artifactManifestDigest: Hex;
   schemaVersion: string;
   sequence: number;
+  /** Previous accepted manifest digest, null only before the first accepted checkpoint. */
+  previousAcceptedHead: Hex | null;
 };
 
 export const CHECKPOINT_SCHEMA_VERSION = "checkpoint.v1" as const;
@@ -76,12 +78,32 @@ export type RewardCredit = {
 };
 
 export type ServicePolicy = {
+  providerId: string;
+  network: string;
+  payee: Hex;
   asset: string;
   budget: bigint;
   perRequestCap: bigint;
   approvedServices: string[];
   policyVersion: string;
 };
+
+export const DEFAULT_PAYMENT_PROVIDER_ID = "local-fixture";
+export const DEFAULT_PAYMENT_NETWORK = "hedera:testnet";
+export const DEFAULT_PAYMENT_PAYEE = ("0x" + "00".repeat(20)) as Hex;
+
+export function normalizeServicePolicy(policy: Partial<ServicePolicy>): ServicePolicy {
+  return {
+    providerId: policy.providerId ?? DEFAULT_PAYMENT_PROVIDER_ID,
+    network: policy.network ?? DEFAULT_PAYMENT_NETWORK,
+    payee: policy.payee ?? DEFAULT_PAYMENT_PAYEE,
+    asset: policy.asset ?? "HBAR",
+    budget: policy.budget ?? 0n,
+    perRequestCap: policy.perRequestCap ?? 0n,
+    approvedServices: policy.approvedServices ?? [],
+    policyVersion: policy.policyVersion ?? "service-policy.v1",
+  };
+}
 
 export type GatewayOperation = {
   operationId: string;
@@ -92,6 +114,11 @@ export type GatewayOperation = {
   service: string;
   inputDigest: Hex;
   requestFingerprint: Hex;
+  providerId: string;
+  network: string;
+  payee: Hex;
+  policyVersion: string;
+  approvedPolicyHash: Hex;
   amount: bigint;
   asset: string;
   state: OperationState;
@@ -132,6 +159,37 @@ export function canonicalJson(value: unknown): string {
 export function digest(value: unknown): Hex {
   const bytes = typeof value === "string" ? value : canonicalJson(value);
   return `0x${createHash(DIGEST_ALGORITHM).update(bytes).digest("hex")}`;
+}
+
+export type PaymentIntentFingerprintInput = {
+  jobId: string;
+  taskId: string;
+  providerId: string;
+  network: string;
+  service: string;
+  inputDigest: Hex;
+  amount: bigint;
+  asset: string;
+  payee: Hex;
+  policyVersion: string;
+  approvedPolicyHash: Hex;
+};
+
+/** Worker and epoch are intentionally excluded so an authorized successor can reuse a purchase. */
+export function paymentIntentFingerprint(input: PaymentIntentFingerprintInput): Hex {
+  return digest({
+    jobId: input.jobId,
+    taskId: input.taskId,
+    providerId: input.providerId,
+    network: input.network,
+    service: input.service,
+    inputDigest: input.inputDigest,
+    amount: input.amount.toString(),
+    asset: input.asset,
+    payee: input.payee.toLowerCase(),
+    policyVersion: input.policyVersion,
+    approvedPolicyHash: input.approvedPolicyHash,
+  });
 }
 
 export function newId(prefix: string): string {

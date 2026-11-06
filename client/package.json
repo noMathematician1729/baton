@@ -11,10 +11,14 @@
   },
   "dependencies": {
     "@ensdomains/ensjs": "^5.2.12",
+    "@react-three/drei": "^10.7.9",
+    "@react-three/fiber": "^9.8.2",
+    "@xyflow/react": "^12.12.1",
     "framer-motion": "^12.4.10",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router-dom": "^7.1.5",
+    "three": "^0.187.0",
     "viem": "^2.57.16"
   },
   "devDependencies": {

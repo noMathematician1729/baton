@@ -28,6 +28,7 @@ export function CreationHero({ sections }: { sections: RailSection[] }) {
   const outroRef = useRef<HTMLDivElement>(null);
   const batonRef = useRef<HTMLDivElement>(null);
   const railRef = useRef<HTMLDivElement>(null);
+  const railTrackRef = useRef<HTMLDivElement>(null);
   const railFillRef = useRef<HTMLDivElement>(null);
   const captionRefs = useRef<(HTMLParagraphElement | null)[]>([]);
 
@@ -124,7 +125,8 @@ export function CreationHero({ sections }: { sections: RailSection[] }) {
       const gapX = fr.left + fr.width * GAP_X;
       const gapY = fr.top + fr.height * GAP_Y;
       const wide = vw >= 1280;
-      const railX = Math.max(0, (vw - 1180) / 2) + 44;
+      const railTrack = railTrackRef.current?.getBoundingClientRect();
+      const railX = railTrack ? railTrack.left - 26 : Math.max(0, (vw - 1280) / 2) + 17;
       const railTop = vh * 0.24;
       const railLen = vh * 0.52;
 
@@ -228,7 +230,7 @@ export function CreationHero({ sections }: { sections: RailSection[] }) {
       </div>
 
       <nav ref={railRef} className="baton-rail" aria-label="Page sections">
-        <div className="rail-track"><div ref={railFillRef} className="rail-fill" /></div>
+        <div ref={railTrackRef} className="rail-track"><div ref={railFillRef} className="rail-fill" /></div>
         <ol>
           {sections.map((s, i) => (
             <li key={s.id}>

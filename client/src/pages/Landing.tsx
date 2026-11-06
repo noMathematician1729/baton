@@ -1,11 +1,14 @@
 import { motion, useReducedMotion, useScroll, useTransform } from "framer-motion";
 import type { MotionValue } from "framer-motion";
-import { useRef } from "react";
+import { BaseEdge, Handle, Position, ReactFlow, useEdgesState, useNodesState, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react";
+import { lazy, Suspense, useRef } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { CreationHero, type RailSection } from "./landing/CreationHero";
 import { SiteFooter } from "../components/SiteFooter";
 import { Baton } from "../components/Baton";
+
+const ProtocolScene = lazy(() => import("../components/ProtocolScene").then(({ ProtocolScene: Scene }) => ({ default: Scene })));
 
 const sections: RailSection[] = [
   { id: "problem", label: "Problem" },
@@ -72,7 +75,6 @@ export function Landing() {
               <Reveal key={item.t} delay={i * 0.14} className="problem-card">
                 <div className="problem-meta">
                   <span className="problem-icon"><ProblemGlyph kind={item.kind} /></span>
-                  <span className="problem-num">0{i + 1}</span>
                 </div>
                 <span className="problem-category">{item.label}</span>
                 <h3>{item.t}</h3>
@@ -87,7 +89,7 @@ export function Landing() {
             index="02"
             eyebrow="The protocol"
             title={<>A checkpoint moves forward only when <em>escrow accepts it.</em></>}
-            intro="Worker A proposes encrypted work. The buyer accepts one exact head. Worker B recovers that head, then takes authority through an acknowledged handoff."
+            intro="Worker A stores a checkpoint in Arkiv. Escrow records the accepted transaction, then Worker B recovers that checkpoint from Arkiv."
           />
           <Lifecycle />
         </section>
@@ -125,11 +127,12 @@ export function Landing() {
               title={<>Checkpoints that <em>expire on purpose.</em></>}
               intro="A worker renews a short-lived Arkiv claim while it is active. When the claim expires, a watcher notices it is absent; the successor then recovers from the last checkpoint the escrow accepted."
             />
-            <Reveal className="bullets">
+            <Reveal className="arkiv-principles">
               <ul>
-                <li><b>Expiry is polled.</b> Arkiv emits no expiry event; the job watcher checks for an expired or missing claim.</li>
-                <li><b>Recovery has an anchor.</b> The successor reads the accepted head from escrow, then fetches its encrypted manifest and chunks.</li>
-                <li><b>Artifacts have a TTL too.</b> An entity can live up to about 182.5 days; its owner must renew it before expiry unless permissionless extension is enabled.</li>
+                <li><b>Queryable</b><span>Find checkpoints by job and milestone—no indexer.</span></li>
+                <li><b>Time-scoped</b><span>Expire stale claims; renew active workers only.</span></li>
+                <li><b>Tamper-evident</b><span>Verify digests before the successor resumes.</span></li>
+                <li><b>Wallet-owned</b><span>Only the owner wallet can update or renew it.</span></li>
               </ul>
             </Reveal>
           </div>
@@ -186,30 +189,13 @@ function ProblemGlyph({ kind }: { kind: string }) {
 function Lifecycle() {
   return (
     <div className="protocol-wrap">
-      <div className="protocol-flow" role="group" aria-label="Worker A proposes encrypted work, escrow accepts the checkpoint, and Worker B recovers it and takes over">
-        <div className="protocol-party">
-          <span className="protocol-orbit protocol-orbit-a" aria-hidden="true"><b>A</b></span>
-          <span className="protocol-caption">Current worker</span>
-          <strong>Worker A</strong>
-          <span className="protocol-detail">Stages encrypted work</span>
-        </div>
-        <span className="protocol-link" aria-hidden="true"><i /></span>
-        <div className="protocol-record">
-          <span className="protocol-record-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3.5h8l4 4v13H6zM14 3.5v4h4M9 12h6M9 15.5h3" /><path d="m15.2 16.2 1.4 1.4 2.8-3" /></svg></span>
-          <span className="protocol-caption">Canonical record</span>
-          <strong>Accepted checkpoint</strong>
-          <span className="protocol-detail">The escrow head recovery must follow</span>
-          <span className="protocol-proof">Encrypted · verified · credited</span>
-        </div>
-        <span className="protocol-link" aria-hidden="true"><i /></span>
-        <div className="protocol-party">
-          <span className="protocol-orbit protocol-orbit-b" aria-hidden="true"><b>B</b></span>
-          <span className="protocol-caption">Successor</span>
-          <strong>Worker B</strong>
-          <span className="protocol-detail">Recovers and takes over</span>
-        </div>
+      <div className="protocol-flow" role="group" aria-label="Worker A stores a checkpoint in Arkiv, escrow records the transaction, and Worker B recovers the checkpoint from Arkiv">
+        <span className="sr-only">Worker A stores in Arkiv. Escrow records the accepted transaction. Worker B takes the checkpoint from Arkiv.</span>
+        <Suspense fallback={null}>
+          <ProtocolScene />
+        </Suspense>
       </div>
-      <p className="protocol-note">A writes the manifest and chunks to Arkiv, then signs a milestone offer. The buyer checks the live ENS grant, epoch, previous head and signature before accepting it. B verifies the accepted artifacts and acknowledges the exact head; escrow increments the epoch and fences A. An unaccepted upload leaves the previous head in effect.</p>
+      <p className="protocol-note">A stores the checkpoint in Arkiv. Escrow records acceptance and credits the worker. B recovers the accepted checkpoint from Arkiv.</p>
     </div>
   );
 }
@@ -259,40 +245,86 @@ function GuaranteeStop({ x, index, total, progress }: { x: number; index: number
   );
 }
 
+type EnsNodeState = "job" | "dead" | "live" | "alias";
+type EnsNodeData = { label: string; sub: string; state: EnsNodeState };
+type EnsGraphNode = Node<EnsNodeData, "ens">;
+
+const ensNode = (id: string, x: number, y: number, width: number, height: number, label: string, sub: string, state: EnsNodeState): EnsGraphNode => ({
+  id,
+  type: "ens",
+  position: { x, y },
+  style: { width, height },
+  data: { label, sub, state },
+});
+
+const ensFlowNodes: EnsGraphNode[] = [
+  ensNode("job", 164, 33, 172, 44, "baton.eth", "Job namespace", "job"),
+  ensNode("agent-a", 65, 125, 160, 44, "agent-a", "Revoked · subregistry", "dead"),
+  ensNode("agent-b", 275, 125, 160, 44, "agent-b", "Active · subregistry", "live"),
+  ensNode("fetch-a", 31, 216, 108, 44, "fetch", "agent-a", "dead"),
+  ensNode("compute-a", 151, 216, 108, 44, "compute", "agent-a", "dead"),
+  ensNode("fetch-b", 241, 216, 108, 44, "fetch", "agent-b", "live"),
+  ensNode("compute-b", 361, 216, 108, 44, "compute", "agent-b", "live"),
+  ensNode("active-alias", 137, 306, 226, 40, "active.baton.eth", "Resolves to agent-b", "alias"),
+];
+
+const ensFlowEdges: Edge[] = [
+  { id: "job-agent-a", source: "job", sourceHandle: "tree-source", target: "agent-a", targetHandle: "tree-target", type: "smoothstep", className: "ens-edge" },
+  { id: "job-agent-b", source: "job", sourceHandle: "tree-source", target: "agent-b", targetHandle: "tree-target", type: "smoothstep", className: "ens-edge" },
+  { id: "agent-a-fetch", source: "agent-a", sourceHandle: "tree-source", target: "fetch-a", targetHandle: "tree-target", type: "smoothstep", className: "ens-edge ens-edge-dead" },
+  { id: "agent-a-compute", source: "agent-a", sourceHandle: "tree-source", target: "compute-a", targetHandle: "tree-target", type: "smoothstep", className: "ens-edge ens-edge-dead" },
+  { id: "agent-b-fetch", source: "agent-b", sourceHandle: "tree-source", target: "fetch-b", targetHandle: "tree-target", type: "smoothstep", className: "ens-edge" },
+  { id: "agent-b-compute", source: "agent-b", sourceHandle: "tree-source", target: "compute-b", targetHandle: "tree-target", type: "smoothstep", className: "ens-edge" },
+  { id: "agent-b-alias", source: "agent-b", sourceHandle: "alias-source", target: "active-alias", targetHandle: "alias-target", type: "alias", className: "ens-edge ens-edge-alias" },
+];
+
+const ensNodeTypes = { ens: EnsGraphNodeView };
+const ensEdgeTypes = { alias: EnsAliasEdge };
+const ensFitViewOptions = { padding: 0.06 };
+
+function EnsGraphNodeView({ data }: NodeProps<EnsGraphNode>) {
+  return (
+    <div className={`ens-flow-node ${data.state}`}>
+      <Handle type="target" position={Position.Top} id="tree-target" />
+      <Handle type="source" position={Position.Bottom} id="tree-source" />
+      {data.state === "live" && <Handle type="source" position={Position.Right} id="alias-source" />}
+      {data.state === "alias" && <Handle type="target" position={Position.Right} id="alias-target" />}
+      <span>{data.label}</span>
+      <small>{data.sub}</small>
+    </div>
+  );
+}
+
+function EnsAliasEdge({ id, sourceX, sourceY, targetX, targetY, style, markerEnd }: EdgeProps) {
+  const laneX = Math.max(sourceX, targetX) + 47;
+  const path = `M ${sourceX} ${sourceY} H ${laneX} V ${targetY} H ${targetX}`;
+  return <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} />;
+}
+
 function EnsMini() {
-  const nodes = [
-    { x: 250, y: 55, w: 172, label: "baton.eth", sub: "Job namespace", state: "job" },
-    { x: 145, y: 147, w: 160, label: "agent-a", sub: "Revoked · subregistry", state: "dead" },
-    { x: 355, y: 147, w: 160, label: "agent-b", sub: "Active · subregistry", state: "live" },
-    { x: 85, y: 238, w: 108, label: "fetch", sub: "agent-a", state: "dead" },
-    { x: 205, y: 238, w: 108, label: "compute", sub: "agent-a", state: "dead" },
-    { x: 295, y: 238, w: 108, label: "fetch", sub: "agent-b", state: "live" },
-    { x: 415, y: 238, w: 108, label: "compute", sub: "agent-b", state: "live" },
-  ];
+  const [nodes, , onNodesChange] = useNodesState(ensFlowNodes);
+  const [edges, , onEdgesChange] = useEdgesState(ensFlowEdges);
+
   return (
     <div className="ens-diagram">
       <div className="ens-diagram-head"><span>ENSv2 · Job tree</span><span className="mono">baton.eth</span></div>
-      <svg viewBox="0 0 500 374" className="mini-svg" role="img" aria-label="A job registry with a revoked worker branch and an active successor branch">
-        <g className="mini-links" fill="none" strokeWidth="1.5">
-          <path d="M250 77 V102 H145 V125" />
-          <path d="M250 102 H355 V125" />
-          <path className="dead" d="M145 169 V190 H85 V216 M145 190 H205 V216" />
-          <path d="M355 169 V190 H295 V216 M355 190 H415 V216" />
-          <path className="alias-link" d="M355 169 V278 H250 V295" />
-        </g>
-        {nodes.map((node) => (
-          <g key={`${node.x}-${node.label}`} className={`mini-node ${node.state}`} transform={`translate(${node.x},${node.y})`}>
-            <rect x={-node.w / 2} y="-22" width={node.w} height="44" rx="10" />
-            <text y="-2" textAnchor="middle">{node.label}</text>
-            <text className="mini-node-sub" y="13" textAnchor="middle">{node.sub}</text>
-          </g>
-        ))}
-        <g className="mini-alias" transform="translate(250,326)">
-          <rect x="-113" y="-20" width="226" height="40" rx="12" />
-          <text y="-1" textAnchor="middle">active.baton.eth</text>
-          <text className="mini-node-sub" y="13" textAnchor="middle">Resolves to agent-b</text>
-        </g>
-      </svg>
+      <div className="ens-flow-canvas" role="group" aria-label="A job registry with a revoked worker branch and an active successor branch">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          nodeTypes={ensNodeTypes}
+          edgeTypes={ensEdgeTypes}
+          fitView
+          fitViewOptions={ensFitViewOptions}
+          nodesConnectable={false}
+          elementsSelectable={false}
+          attributionPosition="top-right"
+          zoomOnScroll={false}
+          zoomOnDoubleClick={false}
+        />
+      </div>
       <div className="ens-diagram-foot"><span><i className="ens-key live-key" />active name</span><span><i className="ens-key dead-key" />revoked history</span></div>
     </div>
   );

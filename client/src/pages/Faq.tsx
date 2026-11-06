@@ -3,7 +3,6 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { SiteFooter } from "../components/SiteFooter";
 import { Baton } from "../components/Baton";
-import { SignalField } from "../components/SignalField";
 
 const faqs: { cat: string; q: string; a: string }[] = [
   { cat: "Basics", q: "What exactly gets handed over?", a: "Accepted work and explicit resumable state: objective and constraints, completed work and evidence, decisions and assumptions, open issues, next actions, artifact references and digests, tool requirements and service receipts. Not hidden reasoning or a full live context window." },
@@ -16,7 +15,7 @@ const faqs: { cat: string; q: string; a: string }[] = [
   { cat: "Arkiv", q: "What if Arkiv content is missing?", a: "Recovery fails closed. If a manifest or chunk is missing, expired or doesn't match its digest, B stops instead of continuing from partial state. There is no fallback mirror." },
   { cat: "Payments", q: "How are workers paid?", a: "Each milestone has a fixed reward agreed before funding. When the buyer accepts a milestone, the producing worker is credited in the escrow, and that credit can't be reassigned. Workers withdraw their own credits." },
   { cat: "Payments", q: "What stops paying twice for the same API call?", a: "The backend ledger tracks stable operation IDs, reconciles uncertain operations, and supports output reuse. This checkout uses a local payment fixture; live provider settlement and output retrieval are not configured." },
-  { cat: "Status", q: "Is this live?", a: "The funded Sepolia lifecycle and ENS grant checks are live-verified. Live Arkiv write/readback, x402 settlement and separate-host recovery are still in progress. The console on this site is a clearly labeled browser simulation." },
+  { cat: "Status", q: "Is this live?", a: "The funded Sepolia lifecycle and ENS grant checks are live-verified. The /console page reads the configured buyer core API, and /jobs reads the protocol job API; live chain actions still depend on backend configuration. Arkiv write/readback, x402 settlement, and separate-host recovery remain in progress. The separate /demo route is a browser simulation and makes no external calls." },
 ];
 
 const cats = ["All", "Basics", "ENS", "Arkiv", "Payments", "Status"];
@@ -41,7 +40,6 @@ export function Faq() {
   return (
     <div className="page">
       <header className="page-hero">
-        <SignalField className="signal-page" />
         <p className="eyebrow">FAQ</p>
         <h1>Questions, <em>answered.</em></h1>
         <p className="lede">Clear answers about worker handoffs, checkpoint recovery, authority, and what BATON has verified so far.</p>

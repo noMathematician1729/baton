@@ -17,13 +17,21 @@ const PHASE_LABEL: Record<SimState["phase"], string> = {
   setup: "Not started", running: "Running", takeover: "Takeover in progress", halted: "Paused · no standby", complete: "Complete",
 };
 
-export function Console() {
+export function BrowserDemo() {
   const sim = useSim();
   const s = sim.state;
   const selected = s.selected ? s.nodes.find((n) => n.id === s.selected) : undefined;
 
   return (
     <div className="console">
+      <header className="console-intro">
+        <div>
+          <p className="eyebrow"><span className="hero-signal" aria-hidden="true" />Interactive demo</p>
+          <h1>Handoff simulation</h1>
+          <p>Configure a job, stop its worker, and follow the successor through checkpoint recovery. This browser demo makes no chain, Arkiv, or x402 calls.</p>
+        </div>
+        <span className="console-intro-mark mono">LOCAL MODEL<br />NO EXTERNAL WRITES</span>
+      </header>
       <div className="console-bar">
         <div className="cb-left">
           <span className={`phase-pill p-${s.phase}`}><i />{PHASE_LABEL[s.phase]}</span>

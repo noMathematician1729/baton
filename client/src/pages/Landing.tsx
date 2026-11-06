@@ -1,20 +1,18 @@
 import { motion, useReducedMotion, useScroll, useTransform } from "framer-motion";
 import type { MotionValue } from "framer-motion";
-import { Handle, Position, ReactFlow, useEdgesState, useNodesState, type Edge, type Node, type NodeProps } from "@xyflow/react";
 import { useRef } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { CreationHero, type RailSection } from "./landing/CreationHero";
 import { SiteFooter } from "../components/SiteFooter";
 import { Baton } from "../components/Baton";
-import { SignalField } from "../components/SignalField";
 
 const sections: RailSection[] = [
   { id: "problem", label: "Problem" },
   { id: "protocol", label: "Protocol" },
   { id: "identity", label: "Identity · ENS" },
   { id: "memory", label: "Memory · Arkiv" },
-  { id: "money", label: "Rewards & spend" },
+  { id: "money", label: "Rewards · service spend" },
   { id: "guarantees", label: "Guarantees" },
 ];
 
@@ -49,7 +47,7 @@ const guarantees = [
   { t: "Recovery fails closed", d: "Missing bytes, a digest mismatch or no key means stop. No partial-state guesses.", layer: "Worker · Recovery" },
   { t: "Checkpoints stay encrypted", d: "Arkiv stores ciphertext. Buyer-held keys remain outside public storage.", layer: "Arkiv · Buyer keys" },
   { t: "Rewards stay with producers", d: "Credits stay with the worker who earned each accepted milestone.", layer: "Sepolia · Escrow" },
-  { t: "Paid calls reconcile", d: "Stable request IDs help a successor avoid paying twice after an uncertain response.", layer: "Gateway · Ledger" },
+  { t: "Paid calls reconcile", d: "Stable request IDs help a successor reconcile uncertain service operations.", layer: "Buyer API · Gateway" },
 ];
 
 export function Landing() {
@@ -74,6 +72,7 @@ export function Landing() {
               <Reveal key={item.t} delay={i * 0.14} className="problem-card">
                 <div className="problem-meta">
                   <span className="problem-icon"><ProblemGlyph kind={item.kind} /></span>
+                  <span className="problem-num">0{i + 1}</span>
                 </div>
                 <span className="problem-category">{item.label}</span>
                 <h3>{item.t}</h3>
@@ -88,7 +87,7 @@ export function Landing() {
             index="02"
             eyebrow="The protocol"
             title={<>A checkpoint moves forward only when <em>escrow accepts it.</em></>}
-            intro="Worker A stores a checkpoint in Arkiv. Escrow records the accepted transaction, then Worker B recovers that checkpoint from Arkiv."
+            intro="Worker A proposes encrypted work. The buyer accepts one exact head. Worker B recovers that head, then takes authority through an acknowledged handoff."
           />
           <Lifecycle />
         </section>
@@ -98,15 +97,15 @@ export function Landing() {
             <SectionHead
               index="03"
               eyebrow="Identity · ENSv2"
-              title={<>One job resource. <em>Scoped worker grants.</em></>}
-              intro="ENSv2 stores a permission for the job resource. Escrow checks the assigned worker’s live grant before accepting work or moving authority."
+              title={<>Every worker is <em>a name</em> you can revoke.</>}
+              intro="A job name can own its own ENSv2 namespace. Give each worker a scoped branch, then point a stable alias at whoever is active."
             />
             <Reveal className="bullets">
               <ul>
-                <li><b>Grant scoped to the job.</b> The resolver checks the job-key resource. A broad resolver-wide role does not authorize a worker.</li>
-                <li><b>Escrow moves assignment.</b> Takeover changes the assigned worker and epoch; offers signed by a stale worker are rejected.</li>
-                <li><b>Revocation takes effect.</b> Escrow checks the current ENS grant before accepting a milestone or successor acknowledgement.</li>
-                <li><b>Credentials stay separate.</b> An ENS grant authorizes protocol actions; it does not transfer a worker&rsquo;s private keys or service credentials.</li>
+                <li><b>Natural delegation.</b> <code>baton.eth</code> can own a subregistry; a worker can manage its own child names without controlling its siblings.</li>
+                <li><b>Names follow the job.</b> Repoint <code>active.baton.eth</code> to the live worker. Keep a revoked worker&rsquo;s old name in the tree for history.</li>
+                <li><b>No extra name price.</b> BATON can set its registrar&rsquo;s subname price to zero. Registry setup and onchain writes still use gas.</li>
+                <li><b>Authority stays scoped.</b> The contract checks the current worker grant when it accepts work; a name never transfers private credentials.</li>
               </ul>
             </Reveal>
           </div>
@@ -126,12 +125,11 @@ export function Landing() {
               title={<>Checkpoints that <em>expire on purpose.</em></>}
               intro="A worker renews a short-lived Arkiv claim while it is active. When the claim expires, a watcher notices it is absent; the successor then recovers from the last checkpoint the escrow accepted."
             />
-            <Reveal className="arkiv-principles">
+            <Reveal className="bullets">
               <ul>
-                <li><b>Queryable</b><span>Find checkpoints by job and milestone—no indexer.</span></li>
-                <li><b>Time-scoped</b><span>Expire stale claims; renew active workers only.</span></li>
-                <li><b>Tamper-evident</b><span>Verify digests before the successor resumes.</span></li>
-                <li><b>Wallet-owned</b><span>Only the owner wallet can update or renew it.</span></li>
+                <li><b>Expiry is polled.</b> Arkiv emits no expiry event; the job watcher checks for an expired or missing claim.</li>
+                <li><b>Recovery has an anchor.</b> The successor reads the accepted head from escrow, then fetches its encrypted manifest and chunks.</li>
+                <li><b>Artifacts have a TTL too.</b> An entity can live up to about 182.5 days; its owner must renew it before expiry unless permissionless extension is enabled.</li>
               </ul>
             </Reveal>
           </div>
@@ -142,7 +140,7 @@ export function Landing() {
             index="05"
             eyebrow="Rewards & services"
             title={<>Two ledgers that <em>never get mixed up.</em></>}
-            intro="Sepolia tracks what each worker earns. A buyer-controlled gateway tracks external service spend separately, with durable receipts for uncertain calls."
+            intro="Sepolia tracks what each worker earns. The buyer API tracks external service spend separately. Live provider settlement is still unconfigured in this checkout."
           />
           <div className="money-grid">
             <Reveal className="money-card">
@@ -153,21 +151,43 @@ export function Landing() {
             <Reveal className="money-card" delay={0.08}>
               <div className="money-head"><span className="chip">Service gateway</span><span className="money-big">≤ cap</span></div>
               <h3>External service budget</h3>
-              <p>The backend implements per-operation budgets, a durable ledger, and reconciliation. This checkout uses a local payment fixture; live provider settlement is not configured.</p>
+              <p>The backend applies per-operation budgets and keeps a durable ledger. This checkout uses a local payment fixture; live x402 settlement and paid-output retrieval are not configured.</p>
             </Reveal>
           </div>
-          <p className="ledger-note">Worker rewards and service spend use separate budgets and records. Live service settlement remains unconfigured in this checkout.</p>
+          <p className="ledger-note">Separate chains and balances. There is no shared balance or atomic settlement between these ledgers.</p>
+
+        <aside className="status-strip" aria-labelledby="status-title">
+          <div className="status-intro">
+            <p className="eyebrow">Integration status</p>
+            <h2 id="status-title">A clear view of what’s ready.</h2>
+            <p>Live checks, in-progress integrations, and the local demo are identified separately.</p>
+            <Link to="/faq" className="status-link">Read the current status <span aria-hidden="true">↗</span></Link>
+          </div>
+          <div className="status-grid">
+            <div className="status-item">
+              <span className="status-label"><i className="status-dot is-verified" />Verified</span>
+              <p>Historical Sepolia lifecycle and ENS grant checks.</p>
+            </div>
+            <div className="status-item">
+              <span className="status-label"><i className="status-dot is-progress" />In progress</span>
+              <p>Live Arkiv write/readback, x402 settlement, and separate-host recovery.</p>
+            </div>
+            <div className="status-item">
+              <span className="status-label"><i className="status-dot" />Browser demo</span>
+              <p>Simulation only; it makes no chain, Arkiv, or x402 calls.</p>
+            </div>
+          </div>
+        </aside>
         </section>
 
         <GuaranteeSection />
 
         <section className="final-cta">
-          <SignalField className="signal-cta" />
           <Reveal>
             <Baton width={136} className="final-baton" />
             <h2>Kill an agent. <em>Watch the job keep going.</em></h2>
-            <p className="section-intro">Open the console, start a job under an ENS name, and see Arkiv answer every query the replacement worker makes.</p>
-            <Link to="/demo" className="btn btn-primary btn-lg">Launch the browser demo</Link>
+            <p className="section-intro">Start a browser simulation, stop a worker, and follow how its successor recovers the last checkpoint the buyer accepted.</p>
+            <Link to="/demo" className="btn btn-primary btn-lg">Run browser demo <span aria-hidden="true">↗</span></Link>
           </Reveal>
         </section>
       </div>
@@ -187,46 +207,32 @@ function ProblemGlyph({ kind }: { kind: string }) {
 }
 
 function Lifecycle() {
-  const storyRef = useRef<HTMLDivElement>(null);
-  const { scrollYProgress } = useScroll({ target: storyRef, offset: ["start start", "end end"] });
-  const packetX = useTransform(scrollYProgress, [0.08, 0.72], ["0%", "calc(100% - 34px)"]);
-  const packetOpacity = useTransform(scrollYProgress, [0.04, 0.12, 0.65, 0.76], [0, 1, 1, 0]);
-  const copyY = useTransform(scrollYProgress, [0.68, 0.9], [22, 0]);
-  const copyOpacity = useTransform(scrollYProgress, [0.68, 0.88], [0, 1]);
-  const reduceMotion = useReducedMotion();
   return (
-    <div className="protocol-story" ref={storyRef}>
-      <div className="protocol-sticky">
-        <div className="protocol-screens" role="group" aria-label="Worker A passes an accepted checkpoint to Worker B">
-          <article className="worker-screen screen-a">
-            <div className="screen-top"><span className="screen-dots"><i /><i /><i /></span><span>BATON / WORKER A</span><span className="screen-live"><i /> ACTIVE</span></div>
-            <div className="screen-body">
-              <div className="screen-kicker">01 / STAGE CHECKPOINT</div>
-              <h3>Worker A</h3>
-              <p>Encrypted state is stored and verified before a milestone is offered.</p>
-              <div className="screen-record"><span>CHECKPOINT</span><b>job / milestone-01</b><code>manifest · digest verified</code></div>
-              <div className="screen-status"><i /> CHECKPOINT STAGED</div>
-            </div>
-          </article>
-          <div className="screen-bridge" aria-hidden="true">
-            <div className="bridge-line"><motion.span className="bridge-packet" style={reduceMotion ? { opacity: 0 } : { x: packetX, opacity: packetOpacity }} /></div>
-            <span className="bridge-label">ESCROW ACCEPTS HEAD</span>
-          </div>
-          <article className="worker-screen screen-b">
-            <div className="screen-top"><span className="screen-dots"><i /><i /><i /></span><span>BATON / WORKER B</span><span className="screen-live"><i /> READY</span></div>
-            <div className="screen-body">
-              <div className="screen-kicker">02 / RECOVER ACCEPTED STATE</div>
-              <h3>Worker B</h3>
-              <p>The successor verifies the accepted head before authority moves.</p>
-              <div className="screen-record"><span>RECOVERY SOURCE</span><b>escrow / accepted-head</b><code>arkiv · ciphertext verified</code></div>
-              <div className="screen-status"><i /> READY TO RESUME</div>
-            </div>
-          </article>
+    <div className="protocol-wrap">
+      <div className="protocol-flow" role="group" aria-label="Worker A proposes encrypted work, escrow accepts the checkpoint, and Worker B recovers it and takes over">
+        <div className="protocol-party">
+          <span className="protocol-orbit protocol-orbit-a" aria-hidden="true"><b>A</b></span>
+          <span className="protocol-caption">Current worker</span>
+          <strong>Worker A</strong>
+          <span className="protocol-detail">Stages encrypted work</span>
         </div>
-        <motion.p className="protocol-note protocol-reveal" style={reduceMotion ? { opacity: 1, y: 0 } : { opacity: copyOpacity, y: copyY }}>
-          A stages encrypted work. Escrow accepts one checkpoint. B verifies that exact checkpoint before taking over.
-        </motion.p>
+        <span className="protocol-link" aria-hidden="true"><i /></span>
+        <div className="protocol-record">
+          <span className="protocol-record-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3.5h8l4 4v13H6zM14 3.5v4h4M9 12h6M9 15.5h3" /><path d="m15.2 16.2 1.4 1.4 2.8-3" /></svg></span>
+          <span className="protocol-caption">Canonical record</span>
+          <strong>Accepted checkpoint</strong>
+          <span className="protocol-detail">The escrow head recovery must follow</span>
+          <span className="protocol-proof">Encrypted · verified · credited</span>
+        </div>
+        <span className="protocol-link" aria-hidden="true"><i /></span>
+        <div className="protocol-party">
+          <span className="protocol-orbit protocol-orbit-b" aria-hidden="true"><b>B</b></span>
+          <span className="protocol-caption">Successor</span>
+          <strong>Worker B</strong>
+          <span className="protocol-detail">Recovers and takes over</span>
+        </div>
       </div>
+      <p className="protocol-note">A writes the manifest and chunks to Arkiv, then signs a milestone offer. The buyer checks the live ENS grant, epoch, previous head and signature before accepting it. B verifies the accepted artifacts and acknowledges the exact head; escrow increments the epoch and fences A. An unaccepted upload leaves the previous head in effect.</p>
     </div>
   );
 }
@@ -276,66 +282,40 @@ function GuaranteeStop({ x, index, total, progress }: { x: number; index: number
   );
 }
 
-type EnsNodeState = "job" | "dead" | "live";
-type EnsNodeData = { label: string; sub: string; state: EnsNodeState };
-type EnsGraphNode = Node<EnsNodeData, "ens">;
-
-const ensNode = (id: string, x: number, y: number, width: number, height: number, label: string, sub: string, state: EnsNodeState): EnsGraphNode => ({
-  id,
-  type: "ens",
-  position: { x, y },
-  style: { width, height },
-  data: { label, sub, state },
-});
-
-const ensFlowNodes: EnsGraphNode[] = [
-  ensNode("job", 182, 30, 136, 48, "baton.eth", "Job resource", "job"),
-  ensNode("agent-a", 8, 220, 220, 58, "worker-a", "Grant revoked", "dead"),
-  ensNode("agent-b", 272, 220, 220, 58, "worker-b", "Grant active", "live"),
-];
-
-const ensFlowEdges: Edge[] = [
-  { id: "job-worker-a", source: "job", sourceHandle: "tree-source", target: "agent-a", targetHandle: "tree-target", type: "smoothstep", className: "ens-edge ens-edge-dead" },
-  { id: "job-worker-b", source: "job", sourceHandle: "tree-source", target: "agent-b", targetHandle: "tree-target", type: "smoothstep", className: "ens-edge" },
-];
-
-const ensNodeTypes = { ens: EnsGraphNodeView };
-const ensFitViewOptions = { padding: 0.015, maxZoom: 1.2 };
-
-function EnsGraphNodeView({ data }: NodeProps<EnsGraphNode>) {
-  return (
-    <div className={`ens-flow-node ${data.state}`}>
-      <Handle type="target" position={Position.Top} id="tree-target" />
-      <Handle type="source" position={Position.Bottom} id="tree-source" />
-      <span>{data.label}</span>
-      <small>{data.sub}</small>
-    </div>
-  );
-}
-
 function EnsMini() {
-  const [nodes, , onNodesChange] = useNodesState(ensFlowNodes);
-  const [edges, , onEdgesChange] = useEdgesState(ensFlowEdges);
-
+  const nodes = [
+    { x: 250, y: 55, w: 172, label: "baton.eth", sub: "Job namespace", state: "job" },
+    { x: 145, y: 147, w: 160, label: "agent-a", sub: "Revoked · subregistry", state: "dead" },
+    { x: 355, y: 147, w: 160, label: "agent-b", sub: "Active · subregistry", state: "live" },
+    { x: 85, y: 238, w: 108, label: "fetch", sub: "agent-a", state: "dead" },
+    { x: 205, y: 238, w: 108, label: "compute", sub: "agent-a", state: "dead" },
+    { x: 295, y: 238, w: 108, label: "fetch", sub: "agent-b", state: "live" },
+    { x: 415, y: 238, w: 108, label: "compute", sub: "agent-b", state: "live" },
+  ];
   return (
     <div className="ens-diagram">
-      <div className="ens-diagram-head"><span>ENSv2 · Job grant</span><span className="mono">baton.eth</span></div>
-      <div className="ens-flow-canvas" role="group" aria-label="A job resource with one revoked worker grant and one active worker grant">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          nodeTypes={ensNodeTypes}
-          fitView
-          fitViewOptions={ensFitViewOptions}
-          nodesConnectable={false}
-          elementsSelectable={false}
-          attributionPosition="top-right"
-          zoomOnScroll={false}
-          zoomOnDoubleClick={false}
-        />
-      </div>
+      <div className="ens-diagram-head"><span>ENSv2 · Job tree</span><span className="mono">baton.eth</span></div>
+      <svg viewBox="0 0 500 374" className="mini-svg" role="img" aria-label="A job registry with a revoked worker branch and an active successor branch">
+        <g className="mini-links" fill="none" strokeWidth="1.5">
+          <path d="M250 77 V102 H145 V125" />
+          <path d="M250 102 H355 V125" />
+          <path className="dead" d="M145 169 V190 H85 V216 M145 190 H205 V216" />
+          <path d="M355 169 V190 H295 V216 M355 190 H415 V216" />
+          <path className="alias-link" d="M355 169 V278 H250 V295" />
+        </g>
+        {nodes.map((node) => (
+          <g key={`${node.x}-${node.label}`} className={`mini-node ${node.state}`} transform={`translate(${node.x},${node.y})`}>
+            <rect x={-node.w / 2} y="-22" width={node.w} height="44" rx="10" />
+            <text y="-2" textAnchor="middle">{node.label}</text>
+            <text className="mini-node-sub" y="13" textAnchor="middle">{node.sub}</text>
+          </g>
+        ))}
+        <g className="mini-alias" transform="translate(250,326)">
+          <rect x="-113" y="-20" width="226" height="40" rx="12" />
+          <text y="-1" textAnchor="middle">active.baton.eth</text>
+          <text className="mini-node-sub" y="13" textAnchor="middle">Resolves to agent-b</text>
+        </g>
+      </svg>
       <div className="ens-diagram-foot"><span><i className="ens-key live-key" />active name</span><span><i className="ens-key dead-key" />revoked history</span></div>
     </div>
   );

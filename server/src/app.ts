@@ -156,6 +156,7 @@ export function createApp(services: AppServices = createServices()) {
         arkiv: arkivConfigured,
         sepolia: Boolean(env.SEPOLIA_RPC_URL && env.BATON_ESCROW_ADDRESS && env.BATON_AUTHORITY_ADAPTER_ADDRESS),
         sepoliaMutations: Boolean(mutationWriter),
+        takeoverPolicyEnabled: Boolean(takeoverPolicy),
         ens: Boolean(env.ENS_JOB_NAME && env.ENS_RESOLVER_ADDRESS),
         hederaX402: !gateway.usesLocalPaymentProvider,
       },
@@ -177,6 +178,10 @@ export function createApp(services: AppServices = createServices()) {
       digest: "sha256",
       emptyHead: "0x" + "00".repeat(32),
       confirmationBlocks: env.CONFIRMATION_BLOCKS,
+      gatewayAuth: {
+        chainId: env.SEPOLIA_CHAIN_ID,
+        verifyingContract: env.BATON_ESCROW_ADDRESS || null,
+      },
       networkMode: gateway.requiresChainAuthority
         ? "testnet-configured"
         : "local-fixture",

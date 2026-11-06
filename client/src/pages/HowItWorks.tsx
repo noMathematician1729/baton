@@ -2,7 +2,6 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { SiteFooter } from "../components/SiteFooter";
-import { SignalField } from "../components/SignalField";
 
 const flow = [
   {
@@ -54,7 +53,6 @@ export function HowItWorks() {
   return (
     <div className="page">
       <header className="page-hero how-hero">
-        <SignalField className="signal-page" />
         <p className="eyebrow">How it works</p>
         <h1>A relay race with <em>receipts.</em></h1>
         <p className="lede">Three moments make a worker handoff verifiable: stage the work, accept one head, then recover it before authority moves.</p>
@@ -150,10 +148,19 @@ export function HowItWorks() {
           <p className="eyebrow">Watch the handoff</p>
           <h2>See the job <em>keep going.</em></h2>
           <p className="section-intro">Start a browser simulation. Kill a worker, watch its ENS branch turn inactive, and see its successor recover the last accepted checkpoint.</p>
-          <div className="how-cta-steps" aria-label="Handoff in three steps">
-            {["Stage encrypted work", "Accept one checkpoint", "Recover before takeover"].map((step, i) => <a key={step} href={`#phase-${i + 1}`}><span>{String(i + 1).padStart(2, "0")}</span>{step}<b aria-hidden="true">↗</b></a>)}
+          <div className="cta-flow" aria-label="BATON handoff sequence">
+            <div className="cta-flow-head">
+              <span>Handoff sequence</span>
+              <span className="mono">CHECKPOINT BOUND · BUYER CONTROLLED</span>
+            </div>
+            <ol className="cta-flow-steps">
+              <li><span className="cta-flow-number">01</span><span><b>Stage</b><small>Encrypted state is stored</small></span></li>
+              <li><span className="cta-flow-number">02</span><span><b>Accept</b><small>Buyer anchors one head</small></span></li>
+              <li><span className="cta-flow-number">03</span><span><b>Recover</b><small>Successor verifies that head</small></span></li>
+              <li><span className="cta-flow-number">04</span><span><b>Assign</b><small>Authority moves after ACK</small></span></li>
+            </ol>
           </div>
-          <Link className="btn btn-primary btn-lg" to="/demo">Open the browser demo <span aria-hidden="true">↗</span></Link>
+          <Link className="btn btn-primary btn-lg" to="/demo">Preview a handoff <span aria-hidden="true">↗</span></Link>
         </motion.section>
       </div>
       <SiteFooter />

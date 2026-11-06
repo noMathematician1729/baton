@@ -162,6 +162,7 @@ export function CoreConsole() {
               <i />{apiError ? "Core unavailable" : loading ? "Connecting" : "API connected"}
             </span>
             <button className="btn btn-ghost btn-sm" onClick={() => void refresh()} disabled={pending === "refresh"}>Refresh</button>
+            <Link className="btn btn-ghost btn-sm" to="/jobs">Protocol jobs</Link>
             <Link className="btn btn-ghost btn-sm" to="/demo">Browser demo</Link>
           </div>
         </header>

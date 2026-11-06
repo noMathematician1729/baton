@@ -13,6 +13,7 @@ export function SiteFooter() {
           <div>
             <h4>Product</h4>
             <Link to="/console">Live console</Link>
+            <Link to="/jobs">Protocol jobs</Link>
             <Link to="/demo">Browser demo</Link>
             <Link to="/how-it-works">How it works</Link>
             <Link to="/faq">FAQ</Link>
@@ -22,6 +23,10 @@ export function SiteFooter() {
             <span>ENSv2 · Sepolia</span>
             <span>Arkiv</span>
             <span>Buyer-controlled service gateway</span>
+          </div>
+          <div>
+            <h4>Source</h4>
+            <a href="https://github.com/ashwera/baton" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
           </div>
         </div>
       </div>

@@ -1,20 +1,5 @@
-export const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:4000";
+import { api, type RuntimeStatus } from "./client";
 
-export type RuntimeStatus = {
-  api: "ready";
-  contentStore: "arkiv" | "unconfigured";
-  configuration: {
-    arkiv: boolean;
-    sepolia: boolean;
-    ens: boolean;
-    hederaX402: boolean;
-  };
-  paymentLedger: { backend: "sqlite"; implementation: "node:sqlite" };
-  paymentProvider: "local-fixture";
-};
-
-export async function getRuntimeStatus(signal?: AbortSignal): Promise<RuntimeStatus> {
-  const response = await fetch(API_URL + "/api/status", { signal });
-  if (!response.ok) throw new Error("API returned " + response.status);
-  return response.json() as Promise<RuntimeStatus>;
-}
+export { API_URL } from "./client";
+export type { RuntimeStatus };
+export const getRuntimeStatus = api.status;

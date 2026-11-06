@@ -1,6 +1,16 @@
 .core-page { min-height: 100vh; padding: calc(var(--nav-height) + 42px) 28px 88px; background: var(--bg); }
 .core-shell { max-width: 1280px; margin: 0 auto; }
 .core-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; margin-bottom: 26px; }
+.core-heading { position: relative; isolation: isolate; min-height: 96px; }
+.core-heading > :not(.signal-field) { position: relative; z-index: 2; }
+.signal-field { --signal-cyan: var(--color-accent); --signal-violet: var(--color-accent-secondary); position: absolute; inset: 0; z-index: 1; overflow: hidden; pointer-events: none; opacity: .2; }
+.signal-field svg { display: block; width: 100%; height: 100%; }
+.signal-links line { stroke: var(--color-accent-secondary); stroke-width: 1; opacity: .18; }
+.signal-nodes circle { fill: var(--color-accent); opacity: .42; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-accent) 48%, transparent)); animation: core-signal-breathe 4.2s ease-in-out infinite; }
+.signal-pulse { fill: none; stroke: var(--color-accent-secondary); stroke-width: 2; stroke-linecap: round; stroke-dasharray: 2 1000; stroke-dashoffset: 1000; opacity: .75; filter: drop-shadow(0 0 7px color-mix(in srgb, var(--color-accent) 52%, transparent)); animation: core-signal-travel 8s linear infinite; }
+.signal-pulse-lower { stroke: var(--color-accent); animation-delay: -4s; }
+.signal-vignette { position: absolute; inset: 0; background: radial-gradient(ellipse at center, transparent 20%, var(--bg) 100%); opacity: .58; }
+.signal-core { right: 0; left: auto; width: min(70%, 820px); opacity: .2; mask-image: linear-gradient(90deg, transparent, #000 34%, #000 80%, transparent); }
 .core-heading h1 { margin: 7px 0 0; font: 400 clamp(38px, 5vw, 58px)/.98 var(--font-editorial); letter-spacing: -.035em; }
 .core-lede { max-width: 620px; margin: 13px 0 0; color: var(--ink-soft); font-size: 14px; line-height: 1.65; }
 .core-heading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
@@ -112,6 +122,8 @@
 .core-empty-detail h2 { margin: 0 0 8px; font: 400 26px var(--font-editorial); }
 
 @keyframes core-pulse { 50% { opacity: .25; } }
+@keyframes core-signal-breathe { 0%, 100% { opacity: .28; transform: scale(.8); } 50% { opacity: .75; transform: scale(1.2); } }
+@keyframes core-signal-travel { to { stroke-dashoffset: -1000; } }
 @media (max-width: 980px) {
   .core-page { padding-right: 20px; padding-left: 20px; }
   .core-layout { grid-template-columns: minmax(260px, .85fr) minmax(0, 1.15fr); }
@@ -140,4 +152,5 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .core-api-state.is-loading i { animation: none; }
+  .signal-nodes circle, .signal-pulse { animation: none; }
 }

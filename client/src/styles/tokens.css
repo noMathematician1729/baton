@@ -1,0 +1,95 @@
+/* BATON tokens — parchment / ivory / navy / walnut, drawn from the Sistine fresco */
+:root {
+  --nav-height: 68px;
+  --content-max: 1280px;
+  --reading-max: 720px;
+  --bg: #f4efe5;
+  --bg-soft: #e9e1d3;
+  --surface: #fffdf8;
+  --surface-2: #f8f4ed;
+  --line: rgba(32, 46, 61, 0.1);
+  --line-strong: rgba(32, 46, 61, 0.2);
+  --ink: #202e3d;
+  --ink-soft: #56616a;
+  --muted: #746f66;
+  --navy: #245573;
+  --navy-2: #367fa4;
+  --blue: #5c97b4;
+  --blue-soft: #deebf0;
+  --walnut: #775034;
+  --tan: #bc966c;
+  --tan-soft: #eee0ca;
+  --ochre: #b9823d;
+  --ok: #4f7a5a;
+  --danger: #a4493d;
+  --primary: var(--navy);
+  --primary-ink: #f6efe3;
+  --accent: var(--walnut);
+  --terminal-bg: #141a26;
+  --terminal-ink: #e7dfd1;
+  --radius: 16px;
+  --radius-sm: 10px;
+  --font-display: "Inter Tight", "Inter", system-ui, sans-serif;
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-editorial: "Instrument Serif", Georgia, serif;
+  --font-marketing: "DM Sans", "Inter", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --shadow-soft: 0 1px 2px rgba(27, 34, 51, 0.04), 0 14px 40px rgba(27, 34, 51, 0.08);
+  --shadow-lift: 0 2px 4px rgba(27, 34, 51, 0.05), 0 24px 60px rgba(27, 34, 51, 0.14);
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #111a20;
+  --bg-soft: #19252c;
+  --surface: #1d2a32;
+  --surface-2: #24333b;
+  --line: rgba(231, 237, 235, 0.09);
+  --line-strong: rgba(231, 237, 235, 0.18);
+  --ink: #eaf0ed;
+  --ink-soft: #b3c0c1;
+  --muted: #829092;
+  --navy: #9cc4d5;
+  --navy-2: #a9d2e3;
+  --blue: #82b7cd;
+  --blue-soft: #203842;
+  --walnut: #d0a77e;
+  --tan: #d2b38c;
+  --tan-soft: #352f28;
+  --ochre: #d7a866;
+  --ok: #8fbf98;
+  --danger: #e08a7d;
+  --primary: #83b2c6;
+  --primary-ink: #101b21;
+  --terminal-bg: #0a0e15;
+  --terminal-ink: #e7dfd1;
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.3), 0 14px 40px rgba(0, 0, 0, 0.35);
+  --shadow-lift: 0 2px 4px rgba(0, 0, 0, 0.3), 0 24px 60px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: calc(var(--nav-height) + 12px); }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color .35s ease, color .35s ease;
+}
+a { color: inherit; text-decoration: none; }
+button { font: inherit; color: inherit; }
+::selection { background: var(--tan-soft); color: var(--ink); }
+a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.skip-link { position: fixed; top: 8px; left: 8px; z-index: 100; padding: 10px 14px; border-radius: 9px; background: var(--navy); color: var(--primary-ink); font-size: 13px; transform: translateY(-150%); transition: transform .2s ease; }
+.skip-link:focus { transform: translateY(0); }
+main:focus { outline: none; }
+section[id] { scroll-margin-top: calc(var(--nav-height) + 12px); }
+button { -webkit-tap-highlight-color: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { scroll-behavior: auto !important; }
+}

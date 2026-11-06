@@ -11,8 +11,10 @@
   },
   "dependencies": {
     "@ensdomains/ensjs": "^5.2.12",
+    "framer-motion": "^12.4.10",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
+    "react-router-dom": "^7.1.5",
     "viem": "^2.57.16"
   },
   "devDependencies": {

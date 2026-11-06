@@ -10,6 +10,60 @@ import { OperationLedger } from "../ledger/operationLedger.js";
 
 const worker = ("0x" + "a".repeat(40)) as `0x${string}`;
 
+test("chain mutation is not committed locally until its confirmed post-write snapshot matches", async () => {
+  const root = await mkdtemp(join(tmpdir(), "baton-chain-mutation-postcheck-"));
+  const jobs = new JobStore(join(root, "jobs.json"));
+  const ledger = new OperationLedger(join(root, "ledger.sqlite"));
+  try {
+    const job = await jobs.create({
+      chainJobId: digest("chain-job"),
+      chainTaskId: digest("chain-task"),
+      buyer: ("0x" + "1".repeat(40)) as `0x${string}`,
+      rewardToken: ("0x" + "2".repeat(40)) as `0x${string}`,
+      verifier: ("0x" + "3".repeat(40)) as `0x${string}`,
+      rewards: [1n],
+      serviceBudget: 0n,
+      serviceAsset: "HBAR",
+      approvedServices: [],
+      perRequestCap: 1n,
+    });
+    let confirmedReads = 0;
+    let writes = 0;
+    const authority = {
+      assertSnapshotCurrent: async () => {
+        confirmedReads += 1;
+        if (confirmedReads === 2) throw new Error("CHAIN_POST_WRITE_STATE_MISMATCH");
+      },
+    };
+    const writer = {
+      assign: async () => { writes += 1; },
+      acceptMilestone: async () => undefined,
+      drain: async () => undefined,
+      takeover: async () => undefined,
+      pause: async () => undefined,
+      resume: async () => undefined,
+      claim: async () => undefined,
+    };
+    const gateway = new Gateway(
+      jobs,
+      ledger,
+      { async submit() { throw new Error("unused"); }, async reconcile() { return { status: "unknown" as const }; } },
+      authority,
+      undefined,
+      writer,
+      11155111,
+      "0x4444444444444444444444444444444444444444",
+    );
+
+    await assert.rejects(gateway.assign(job.terms.jobId, worker), /CHAIN_POST_WRITE_STATE_MISMATCH/);
+    assert.equal(writes, 1, "the contract write was confirmed before the failed post-read");
+    assert.equal((await jobs.get(job.terms.jobId))?.task.assignedWorker, null, "local state must not advance on a mismatched chain post-read");
+  } finally {
+    ledger.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("gateway rechecks chain authority at the provider boundary before spending", async () => {
   const root = await mkdtemp(join(tmpdir(), "baton-authority-boundary-"));
   const ledger = new OperationLedger(join(root, "ledger.sqlite"));

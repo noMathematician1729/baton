@@ -1,8 +1,8 @@
 {
   "owner": "D1",
-  "updatedAt": "2026-11-06T09:38:03+05:30",
+  "updatedAt": "2026-11-06T10:30:11+05:30",
   "elapsedHours": 0.75,
-  "currentTask": "G0-G4 D1 audit remediation on build/audit-g0-g4; provider-boundary authority recheck, buyer-signed key grants, confirmed snapshot accounting, signed API route dispatch and buyer-only initial assignment locally tested, while production chain writes and live integrations remain pending",
+  "currentTask": "G0-G4 D1 audit remediation on build/audit-g0-g4; production escrow mutation writer, worker offer/ack verification, signed worker claim relay and confirmed post-write checks implemented and locally tested; live V2 and Arkiv/x402 integration remain pending",
   "completedFeatures": [
     "Versioned protocol types, canonical hashing and EIP-712 offer/takeover hash helpers",
     "Durable atomic operation ledger with reservation, settlement, UNKNOWN and reconciliation states",
@@ -32,7 +32,7 @@
     "G2 extracts the signed gateway-action verifier and fake authority reader; 6 authority tests cover replay, expiry, actor/deployment/task/action/payload, confirmed block, reorg, grant and chain ID",
     "G3 candidate adds bounded accepted-head recovery validation, storage owner/expiry checks, and an authenticated scoped key-grant HTTP client; only local fakes tested",
     "G4 candidate separates settlement from output availability, models settled/not-settled/unknown reconciliation, checks per-operation accounting, and rolls back JobStore memory on disk failure",
-    "Current candidate: client/server typecheck and production build pass; 52 offline tests pass including signed Express route dispatch, production mutation gating, provider-boundary authority recheck, buyer key grants, fake-backed candidate verification and RPC witness checks; twelve Foundry tests pass using pinned solc 0.8.28",
+    "Current candidate: client/server typecheck and production build pass; 58 offline tests pass including simulated escrow writes, production route gating and dispatch, worker offer/ack verification, signed claim relay, post-write mismatch protection, provider-boundary authority recheck, buyer grants, candidate verification and RPC witnesses; twelve Foundry tests pass using pinned solc 0.8.28",
     "G4 stable payment fingerprints bind provider, network, payee, service policy version and approved policy hash while excluding worker/epoch for authorized reuse",
     "G4 SQLite job-provisioning journal repairs crashes before or after the JSON job write and commits job/budget completion idempotently",
     "G4 regression preserves SETTLED receipt and accounting through output-state SQLite write failure and restart; provider reconciliation restores output with one submission",
@@ -45,11 +45,15 @@
     "Earlier API SQLite payment-ledger restart check passed 1/1 on the user's Mac; latest job-provisioning journal path still needs a local rerun",
     "Buyer-host checkpoint key service implemented with encrypted SQLite key storage, worker-bound bearer tokens and X25519 response encryption",
     "Buyer-only local accepted-checkpoint grant command verifies buyer signer, exact accepted head, confirmed Sepolia lifecycle/accounting snapshot, EIP-712 authorization and durable nonce before writing the encrypted grant; no live grant run",
-    "Signed route-dispatch regression covers assign, worker candidate plus buyer acceptance, drain/takeover, pause/resume, earned-credit claim, service execution and reconciliation; production mutation routes remain 503-gated",
+    "Signed route-dispatch regression covers assign, worker candidate plus buyer acceptance, drain/takeover, pause/resume, earned-credit claim relay, service execution and reconciliation; production escrow routes require a configured writer and local payment routes remain blocked",
     "Foundry regression documents buyer-controlled initial assignment with exact job-scoped grant; worker-originated assignment and reassignment are rejected, and current ABI requires no worker consent signature",
     "Gateway performs a second authority check immediately before provider submission; revoked authority marks the operation failed before spend and releases the full reservation",
+    "Production lifecycle writes use a Sepolia escrow writer that simulates every call and waits for confirmation; the gateway checks the expected full snapshot at configured confirmation depth before persisting local changes",
+    "MilestoneOffer and TakeoverAck signatures are checked against the escrow EIP-712 domain; worker claim transactions are relayed only after verifying chain ID, escrow, exact claim calldata, zero value and recovered worker address",
+    "Buyer signer is loaded from ignored local env only; worker private keys are not loaded into the buyer gateway",
+    "Regression proves local state stays unchanged when the confirmed post-write snapshot disagrees; writer, RPC and route tests use fakes and make no network call",
     "Ignored mode-0600 service/A/B env files provisioned locally; B-only fixture decrypt, A denial and worker-identity spoof denial pass",
-    "Current candidate: 52 offline tests, local payment acceptance, signing vector, typecheck/build, contract compile and twelve Foundry tests pass",
+    "Current candidate: 58 offline tests, local payment acceptance, signing vector, typecheck/build, contract compile and twelve Foundry tests pass",
     "Safely merged D2 runtime/recovery with D1 gateway authority, SQLite payment ledger, payment-crash acceptance, and public Sepolia evidence",
     "Merged-tree client/server typecheck and builds, contract compile, signing vector, D1 acceptance, and 15 non-HTTP tests pass",
     "Configured Sepolia RPC in ignored local .env and verified chain ID 11155111",
@@ -61,7 +65,7 @@
   "branch": "build/audit-g0-g4",
   "baseCommit": "1e21837e5ed83c2b96c42a000d8b765cdd2e7460",
   "releaseLabel": "Sepolia lifecycle: LIVE_PASS; full integration: pending.",
-  "nextGate": "Connect production lifecycle routes to escrow writes and confirmed post-write reads; keep production mutation gates closed until the adapter is complete, then coordinate D1-owned gateway work with D2's live Arkiv/x402 recovery proof",
+  "nextGate": "Review and deploy the revised V2 escrow when live verification is authorized and RPC is reachable; then exercise the D1 mutation writer and coordinate D2's live Arkiv/x402 recovery proof",
   "blockers": [
     "npm registry DNS prevented a verified tmp 0.2.7 lockfile fix; package-lock.json remains unchanged",
     "Root .env is ignored and mode 0600; ARKIV_ACCESS_KEY and CHECKPOINT_ENCRYPTION_KEY are configured, while ARKIV_RPC_URL and ARKIV_SIGNER_PRIVATE_KEY are missing",
@@ -69,7 +73,7 @@
     "The service process is not left running by this execution shell; start it on the buyer host. A temporary tunnel is conditional on D2 confirming cross-host workers",
     "Latest API integration rerun for job provisioning is unverified because this sandbox denies loopback listeners with EPERM",
     "No live Arkiv write/read, buyer-owned renewal, real x402 settlement/output lookup, or B-host recovery has been demonstrated",
-    "Signed lifecycle route dispatch and local buyer key-grant administration are implemented and tested, but production mutations remain disabled until escrow writes, worker offer signatures and confirmed post-write reads are wired; no real accepted-checkpoint grant or Arkiv/RPC validation exists; revised V2 escrow is not deployed"
+    "The revised V2 escrow is not deployed; production writer behavior is locally tested only and no live V2 mutation or accepted-checkpoint grant has been verified"
   ],
   "neededInputs": [
     "Start the key service on the buyer host, keep it alive independently of Worker A, add B's exact accepted-checkpoint grant, and set up a temporary tunnel only if D2 confirms B is on another machine",
@@ -105,6 +109,9 @@
     "server/packages/storage/src/keyGrantCrypto.ts",
     "scripts/key-service/provision.mjs",
     "scripts/key-service/grant.mjs",
-    "scripts/key-service/smoke.mjs"
+    "scripts/key-service/smoke.mjs",
+    "server/src/chain/sepoliaEscrowWriter.ts",
+    "server/src/chain/sepoliaEscrowWriter.test.ts",
+    "server/src/services/gateway/gateway.test.ts"
   ]
 }

@@ -3,6 +3,9 @@ import { digest, paymentIntentFingerprint, type CheckpointHead, type GatewayOper
 import type { ChainAdmission, JobAuthorityReader } from "../../chain/sepoliaAuthority.js";
 import { OperationLedger, type LedgerBalance } from "../ledger/operationLedger.js";
 import { JobStore } from "../../domain/jobs/jobStore.js";
+import { getAddress, recoverTypedDataAddress } from "viem";
+import { OFFER_TYPES, TAKEOVER_TYPES, type MilestoneOffer, type TakeoverAck, domain } from "../../chain/signing.js";
+import type { EscrowMutationWriter } from "../../chain/sepoliaEscrowWriter.js";
 
 export type PaymentRequest = {
   operationId: string;
@@ -43,6 +46,18 @@ export interface CheckpointAcceptanceVerifier {
   }): Promise<void>;
 }
 
+export type MilestoneOfferAuthorization = {
+  nonce: bigint;
+  expiry: bigint;
+  signature: Hex;
+};
+
+export type TakeoverAuthorization = {
+  nonce: bigint;
+  expiry: bigint;
+  signature: Hex;
+};
+
 export class LocalPaymentProvider implements PaymentProvider {
   private readonly settled = new Map<string, PaymentResult>();
 
@@ -73,10 +88,18 @@ export class Gateway {
     private readonly provider: PaymentProvider,
     private readonly authority?: JobAuthorityReader,
     private readonly checkpointVerifier?: CheckpointAcceptanceVerifier,
+    private readonly mutationWriter?: EscrowMutationWriter,
+    private readonly chainId = 11155111,
+    private readonly escrowAddress?: Hex,
   ) {}
 
   public get requiresChainAuthority(): boolean {
     return this.authority !== undefined;
+  }
+
+  public get supportsChainMutations(): boolean {
+    return this.authority !== undefined && this.mutationWriter !== undefined
+      && this.authority.assertSnapshotCurrent !== undefined && this.escrowAddress !== undefined;
   }
 
   public async assertImportableJob(job: JobSnapshot): Promise<void> {
@@ -207,8 +230,16 @@ export class Gateway {
   public async assign(jobId: string, worker: Hex): Promise<JobSnapshot> {
     return this.withJobLock(jobId, async () => {
       const job = await this.requireJob(jobId);
+      if (job.task.status !== "FUNDED" || job.task.assignedWorker) throw new Error("TASK_NOT_ASSIGNABLE");
+      if (Math.floor(Date.now() / 1000) >= job.terms.cutoff) throw new Error("JOB_DEADLINE_PASSED");
       if (this.authority) {
-        await this.authority.assertAssignedWorker(this.chainAdmission(job, worker, 1));
+        const writer = this.requireMutationWriter();
+        await this.assertSnapshotCurrent(job);
+        const expected = structuredClone(job);
+        expected.task.assignedWorker = worker;
+        expected.task.epoch = 1;
+        await writer.assign(job, worker);
+        await this.assertSnapshotCurrent(expected);
       }
       return this.jobs.assign(jobId, worker);
     });
@@ -222,11 +253,19 @@ export class Gateway {
     acceptanceSpecHash: Hex;
     expectedHead: Hex;
     newHead: CheckpointHead;
+    offerAuthorization?: MilestoneOfferAuthorization;
   }): Promise<JobSnapshot> {
     return this.withJobLock(input.jobId, async () => {
       const job = await this.requireJob(input.jobId);
       this.assertTaskId(job, input.taskId);
       await this.assertAdmission(job, input.worker, input.epoch);
+      if (Math.floor(Date.now() / 1000) >= Math.min(job.terms.cutoff, job.terms.task.deadline)) {
+        throw new Error("JOB_DEADLINE_PASSED");
+      }
+      if (job.task.acceptedHead.manifestDigest !== input.expectedHead) throw new Error("STALE_HEAD");
+      const currentMilestone = job.terms.task.milestones[job.task.nextMilestone];
+      if (!currentMilestone) throw new Error("NO_MILESTONE_REMAINING");
+      if (currentMilestone.acceptanceSpecHash !== input.acceptanceSpecHash) throw new Error("ACCEPTANCE_SPEC_MISMATCH");
       if (this.authority && !this.checkpointVerifier) throw new Error("CHECKPOINT_VERIFIER_UNAVAILABLE");
       if (this.checkpointVerifier) {
         await this.checkpointVerifier.verifyCandidate({
@@ -236,12 +275,34 @@ export class Gateway {
           newHead: input.newHead,
         });
       }
+      if (this.authority) {
+        const writer = this.requireMutationWriter();
+        const offer = this.makeMilestoneOffer(job, input, input.offerAuthorization);
+        await this.assertOfferSignature(offer, input.offerAuthorization!.signature, input.worker);
+        await this.assertSnapshotCurrent(job);
+        const expected = projectAcceptedMilestone(job, input);
+        await writer.acceptMilestone(job, offer, input.offerAuthorization!.signature);
+        await this.assertSnapshotCurrent(expected);
+      }
       return this.jobs.acceptMilestone(input);
     });
   }
 
   public async drain(jobId: string): Promise<JobSnapshot> {
-    return this.withJobLock(jobId, () => this.jobs.drain(jobId));
+    return this.withJobLock(jobId, async () => {
+      const job = await this.requireJob(jobId);
+      if (job.task.status === "CLOSED" || job.task.status === "COMPLETED") throw new Error("TASK_NOT_OPEN");
+      if (this.authority) {
+        const writer = this.requireMutationWriter();
+        await this.assertSnapshotCurrent(job);
+        const expected = structuredClone(job);
+        expected.task.drained = true;
+        expected.task.status = expected.task.status === "PAUSED" ? "PAUSED" : "DRAINED";
+        await writer.drain(job);
+        await this.assertSnapshotCurrent(expected);
+      }
+      return this.jobs.drain(jobId);
+    });
   }
 
   public async takeover(input: {
@@ -250,14 +311,48 @@ export class Gateway {
     expectedHead: Hex;
     expectedEpoch: number;
     compatibilityReport: Hex;
+    authorization?: TakeoverAuthorization;
   }): Promise<JobSnapshot> {
     return this.withJobLock(input.jobId, async () => {
       const job = await this.requireJob(input.jobId);
       if (!job.task.drained) throw new Error("TASK_MUST_BE_DRAINED");
+      if (job.task.status === "PAUSED" || job.task.status === "COMPLETED" || job.task.status === "CLOSED") {
+        throw new Error("TASK_NOT_OPEN");
+      }
+      if (job.task.acceptedHead.manifestDigest !== input.expectedHead) throw new Error("STALE_HEAD");
+      if (job.task.epoch !== input.expectedEpoch) throw new Error("STALE_EPOCH");
+      if (job.task.assignedWorker?.toLowerCase() === input.successor.toLowerCase()) throw new Error("SUCCESSOR_ALREADY_ACTIVE");
+      if (input.compatibilityReport === "0x" + "00".repeat(32)) throw new Error("COMPATIBILITY_REPORT_REQUIRED");
       if (this.authority) {
-        await this.authority.assertAssignedWorker(this.chainAdmission(job, input.successor, input.expectedEpoch + 1));
+        const writer = this.requireMutationWriter();
+        const ack = this.makeTakeoverAck(job, input, input.authorization);
+        await this.assertTakeoverSignature(ack, input.authorization!.signature, input.successor);
+        await this.assertSnapshotCurrent(job);
+        const expected = structuredClone(job);
+        expected.task.assignedWorker = input.successor;
+        expected.task.epoch += 1;
+        expected.task.drained = false;
+        if (expected.task.status === "DRAINED") expected.task.status = "FUNDED";
+        await writer.takeover(job, ack, input.authorization!.signature);
+        await this.assertSnapshotCurrent(expected);
       }
       return this.jobs.takeover(input);
+    });
+  }
+
+  public async pause(jobId: string): Promise<JobSnapshot> {
+    return this.withJobLock(jobId, async () => {
+      const job = await this.requireJob(jobId);
+      if (job.task.status === "CLOSED") throw new Error("TASK_CLOSED");
+      if (this.authority) {
+        const writer = this.requireMutationWriter();
+        await this.assertSnapshotCurrent(job);
+        const expected = structuredClone(job);
+        expected.task.status = "PAUSED";
+        await writer.pause(job);
+        await this.assertSnapshotCurrent(expected);
+      }
+      return this.jobs.pause(jobId);
     });
   }
 
@@ -265,10 +360,34 @@ export class Gateway {
     return this.withJobLock(jobId, async () => {
       const job = await this.requireJob(jobId);
       if (!job.task.assignedWorker) throw new Error("WORKER_NOT_ASSIGNED");
+      if (job.task.status !== "PAUSED") throw new Error("TASK_NOT_PAUSED");
       if (this.authority) {
-        await this.authority.assertAssignedWorker(this.chainAdmission(job, job.task.assignedWorker, job.task.epoch));
+        const writer = this.requireMutationWriter();
+        await this.assertSnapshotCurrent(job);
+        const expected = structuredClone(job);
+        expected.task.status = "FUNDED";
+        await writer.resume(job);
+        await this.assertSnapshotCurrent(expected);
       }
       return this.jobs.resume(jobId);
+    });
+  }
+
+  public async claim(jobId: string, worker: Hex, signedTransaction?: Hex): Promise<{ amount: bigint; credits: JobSnapshot["credits"] }> {
+    return this.withJobLock(jobId, async () => {
+      const job = await this.requireJob(jobId);
+      if (this.authority) {
+        const writer = this.requireMutationWriter();
+        if (!signedTransaction) throw new Error("WORKER_CLAIM_TRANSACTION_REQUIRED");
+        await this.assertSnapshotCurrent(job);
+        const expected = structuredClone(job);
+        const credits = expected.credits.filter((credit) => credit.worker.toLowerCase() === worker.toLowerCase() && !credit.claimed);
+        if (credits.length === 0) throw new Error("NO_WITHDRAWABLE_CREDITS");
+        for (const credit of credits) credit.claimed = true;
+        await writer.claim(job, worker, signedTransaction);
+        await this.assertSnapshotCurrent(expected);
+      }
+      return this.jobs.claim(jobId, worker);
     });
   }
 
@@ -361,6 +480,100 @@ export class Gateway {
     };
   }
 
+  private requireMutationWriter(): EscrowMutationWriter {
+    if (!this.supportsChainMutations) throw new Error("CHAIN_MUTATION_WRITER_UNAVAILABLE");
+    return this.mutationWriter!;
+  }
+
+  private async assertSnapshotCurrent(job: JobSnapshot): Promise<void> {
+    if (!this.authority?.assertSnapshotCurrent) throw new Error("CHAIN_MUTATION_CONFIRMATION_UNAVAILABLE");
+    await this.authority.assertSnapshotCurrent(job);
+  }
+
+  private async assertOfferSignature(offer: MilestoneOffer, signature: Hex, signer: Hex): Promise<void> {
+    if (!this.escrowAddress) throw new Error("CHAIN_MUTATION_CONFIRMATION_UNAVAILABLE");
+    let recovered: string;
+    try {
+      recovered = await recoverTypedDataAddress({
+        domain: domain(this.chainId, getAddress(this.escrowAddress)),
+        types: OFFER_TYPES,
+        primaryType: "MilestoneOffer",
+        message: offer,
+        signature,
+      });
+    } catch {
+      throw new Error("CHAIN_WORKER_SIGNATURE_INVALID");
+    }
+    if (getAddress(recovered) !== getAddress(signer)) throw new Error("CHAIN_WORKER_SIGNATURE_INVALID");
+  }
+
+  private async assertTakeoverSignature(ack: TakeoverAck, signature: Hex, signer: Hex): Promise<void> {
+    if (!this.escrowAddress) throw new Error("CHAIN_MUTATION_CONFIRMATION_UNAVAILABLE");
+    let recovered: string;
+    try {
+      recovered = await recoverTypedDataAddress({
+        domain: domain(this.chainId, getAddress(this.escrowAddress)),
+        types: TAKEOVER_TYPES,
+        primaryType: "TakeoverAck",
+        message: ack,
+        signature,
+      });
+    } catch {
+      throw new Error("CHAIN_WORKER_SIGNATURE_INVALID");
+    }
+    if (getAddress(recovered) !== getAddress(signer)) throw new Error("CHAIN_WORKER_SIGNATURE_INVALID");
+  }
+
+  private makeMilestoneOffer(
+    job: JobSnapshot,
+    input: { worker: Hex; epoch: number; acceptanceSpecHash: Hex; expectedHead: Hex; newHead: CheckpointHead },
+    authorization?: MilestoneOfferAuthorization,
+  ): MilestoneOffer {
+    if (!authorization || !this.escrowAddress || !job.chainJobId || !job.chainTaskId) {
+      throw new Error("WORKER_MILESTONE_SIGNATURE_REQUIRED");
+    }
+    assertSignatureWindow(authorization.nonce, authorization.expiry);
+    const offer: MilestoneOffer = {
+      jobId: job.chainJobId,
+      taskId: job.chainTaskId,
+      termsHash: job.terms.termsHash,
+      producer: getAddress(input.worker),
+      epoch: BigInt(input.epoch),
+      milestone: job.task.nextMilestone,
+      acceptanceSpecHash: input.acceptanceSpecHash,
+      expectedHead: input.expectedHead,
+      newHead: input.newHead.manifestDigest,
+      manifestRef: input.newHead.manifestRef,
+      sequence: BigInt(input.newHead.sequence),
+      nonce: authorization.nonce,
+      expiry: authorization.expiry,
+    };
+    return offer;
+  }
+
+  private makeTakeoverAck(
+    job: JobSnapshot,
+    input: { successor: Hex; expectedHead: Hex; expectedEpoch: number; compatibilityReport: Hex },
+    authorization?: TakeoverAuthorization,
+  ): TakeoverAck {
+    if (!authorization || !this.escrowAddress || !job.chainJobId || !job.chainTaskId) {
+      throw new Error("SUCCESSOR_TAKEOVER_SIGNATURE_REQUIRED");
+    }
+    assertSignatureWindow(authorization.nonce, authorization.expiry);
+    return {
+      jobId: job.chainJobId,
+      taskId: job.chainTaskId,
+      termsHash: job.terms.termsHash,
+      successor: getAddress(input.successor),
+      epoch: BigInt(input.expectedEpoch),
+      expectedHead: input.expectedHead,
+      compatibilityReport: input.compatibilityReport,
+      servicePolicy: digest(job.servicePolicy),
+      nonce: authorization.nonce,
+      expiry: authorization.expiry,
+    };
+  }
+
   private async withJobLock<T>(jobId: string, action: () => Promise<T>): Promise<T> {
     const previous = this.jobQueues.get(jobId) ?? Promise.resolve();
     let release!: () => void;
@@ -387,4 +600,31 @@ function withPaymentPolicy(request: PaymentRequest, job: JobSnapshot): ProviderP
     policyVersion: policy.policyVersion,
     approvedPolicyHash: digest(policy),
   };
+}
+
+function projectAcceptedMilestone(
+  job: JobSnapshot,
+  input: { worker: Hex; newHead: CheckpointHead },
+): JobSnapshot {
+  const expected = structuredClone(job);
+  const milestone = expected.terms.task.milestones[expected.task.nextMilestone];
+  if (!milestone) throw new Error("NO_MILESTONE_REMAINING");
+  expected.task.acceptedHead = input.newHead;
+  expected.task.nextMilestone += 1;
+  expected.credits.push({
+    id: `chain-preview-${expected.task.nextMilestone}`,
+    worker: input.worker,
+    milestoneId: milestone.id,
+    amount: milestone.reward,
+    claimed: false,
+  });
+  if (expected.task.nextMilestone === expected.terms.task.milestones.length) expected.task.status = "COMPLETED";
+  return expected;
+}
+
+function assertSignatureWindow(nonce: bigint, expiry: bigint): void {
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  if (nonce < 0n) throw new Error("CHAIN_SIGNATURE_NONCE_INVALID");
+  if (expiry <= now) throw new Error("CHAIN_SIGNATURE_EXPIRED");
+  if (expiry > now + 300n) throw new Error("CHAIN_SIGNATURE_LIFETIME_TOO_LONG");
 }

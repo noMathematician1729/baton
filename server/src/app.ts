@@ -3,11 +3,13 @@ import express from "express";
 import helmet from "helmet";
 import { isAbsolute, resolve } from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
+import { keccak256 } from "viem";
 import { env, SERVER_ROOT } from "./config/env.js";
 import { JobStore } from "./domain/jobs/jobStore.js";
 import { OperationLedger } from "./services/ledger/operationLedger.js";
 import { Gateway, LocalPaymentProvider } from "./services/gateway/gateway.js";
 import { SepoliaAuthorityReader } from "./chain/sepoliaAuthority.js";
+import { SepoliaEscrowWriter } from "./chain/sepoliaEscrowWriter.js";
 import { authorizeSignedGatewayAction } from "./chain/gatewayActionAuth.js";
 import { serialise, type CheckpointHead, type Hex, type JobSnapshot } from "./protocol/v1.js";
 import { importInitialChainJob } from "./chain/chainJobImporter.js";
@@ -43,7 +45,24 @@ export function createServices() {
     && env.CHECKPOINT_ENCRYPTION_KEY
     ? createCheckpointCandidateVerifier()
     : undefined;
-  const gateway = new Gateway(jobs, ledger, new LocalPaymentProvider(), authority, checkpointVerifier);
+  const mutationWriter = useChainAuthority && env.BATON_BUYER_EVM_PRIVATE_KEY
+    ? new SepoliaEscrowWriter({
+      rpcUrl: env.SEPOLIA_RPC_URL,
+      escrowAddress: env.BATON_ESCROW_ADDRESS,
+      buyerPrivateKey: env.BATON_BUYER_EVM_PRIVATE_KEY,
+      confirmationBlocks: env.CONFIRMATION_BLOCKS,
+    })
+    : undefined;
+  const gateway = new Gateway(
+    jobs,
+    ledger,
+    new LocalPaymentProvider(),
+    authority,
+    checkpointVerifier,
+    mutationWriter,
+    env.SEPOLIA_CHAIN_ID,
+    env.BATON_ESCROW_ADDRESS as Hex,
+  );
   return { jobs, ledger, gateway };
 }
 
@@ -75,6 +94,7 @@ export function createApp(services = createServices()) {
       configuration: {
         arkiv: Boolean(env.ARKIV_ACCESS_KEY && env.ARKIV_SIGNER_PRIVATE_KEY && env.CHECKPOINT_ENCRYPTION_KEY),
         sepolia: Boolean(env.SEPOLIA_RPC_URL && env.BATON_ESCROW_ADDRESS && env.BATON_AUTHORITY_ADAPTER_ADDRESS),
+        sepoliaMutations: gateway.supportsChainMutations,
         ens: Boolean(env.ENS_JOB_NAME && env.ENS_RESOLVER_ADDRESS),
         hederaX402: Boolean(env.HEDERA_ACCOUNT_ID && env.HEDERA_PRIVATE_KEY && env.X402_FACILITATOR_URL),
       },
@@ -112,6 +132,8 @@ export function createApp(services = createServices()) {
   app.use("/api/jobs", (request, response, next) => {
     if (env.NODE_ENV !== "production") return next();
     if (gateway.requiresChainAuthority && request.method === "POST" && request.path === "/import") return next();
+    if (request.method === "POST" && gateway.supportsChainMutations
+      && /^\/[^/]+\/(assign|checkpoints|drain|takeover|pause|resume|claim)$/.test(request.path)) return next();
     response.status(503).json({ error: "LOCAL_FIXTURE_DISABLED" });
   });
   app.use("/api/services", localFixtureOnly);
@@ -231,6 +253,11 @@ export function createApp(services = createServices()) {
     const candidatePayload = { taskId, worker, epoch, acceptanceSpecHash, expectedHead, newHead };
     await authorizeGatewayAction({ gateway, ledger, body, job, actor: worker, epoch, action: "CHECKPOINT_CANDIDATE", payload: candidatePayload, prefix: "workerAuth" });
     await authorizeGatewayAction({ gateway, ledger, body, job, actor: job.terms.buyer, epoch, action: "MILESTONE_ACCEPT", payload: candidatePayload, prefix: "buyerAuth" });
+    const offerAuthorization = body.offerSignature === undefined ? undefined : {
+      nonce: bigintValue(body.offerNonce, -1n),
+      expiry: bigintValue(body.offerExpiry, -1n),
+      signature: signatureValue(body.offerSignature, "offerSignature"),
+    };
     response.json(serialise(await gateway.acceptMilestone({
       jobId: request.params.jobId,
       taskId,
@@ -239,6 +266,7 @@ export function createApp(services = createServices()) {
       acceptanceSpecHash,
       expectedHead,
       newHead,
+      offerAuthorization,
     })));
   });
 
@@ -273,6 +301,11 @@ export function createApp(services = createServices()) {
       expectedHead,
       expectedEpoch,
       compatibilityReport,
+      authorization: body.ackSignature === undefined ? undefined : {
+        nonce: bigintValue(body.ackNonce, -1n),
+        expiry: bigintValue(body.ackExpiry, -1n),
+        signature: signatureValue(body.ackSignature, "ackSignature"),
+      },
     })));
   });
 
@@ -280,7 +313,7 @@ export function createApp(services = createServices()) {
     const job = await jobs.get(request.params.jobId);
     if (!job) throw new Error("JOB_NOT_FOUND");
     await authorizeGatewayAction({ gateway, ledger, body: request.body ?? {}, job, actor: job.terms.buyer, epoch: job.task.epoch, action: "PAUSE_JOB", payload: {} });
-    response.json(serialise(await jobs.pause(request.params.jobId)));
+    response.json(serialise(await gateway.pause(request.params.jobId)));
   });
 
   app.post("/api/jobs/:jobId/resume", async (request, response) => {
@@ -296,8 +329,12 @@ export function createApp(services = createServices()) {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const worker = address(body.worker, fallbackAddress("a"));
     const epoch = body.epoch === undefined ? job.task.epoch : epochValue(body.epoch);
-    await authorizeGatewayAction({ gateway, ledger, body, job, actor: worker, epoch, action: "CLAIM_REWARD", payload: { worker } });
-    response.json(serialise(await jobs.claim(request.params.jobId, worker)));
+    const signedTransaction = body.signedTransaction === undefined ? undefined : transactionValue(body.signedTransaction);
+    const payload = gateway.requiresChainAuthority
+      ? { worker, transactionHash: keccak256(signedTransaction ?? "0x") }
+      : { worker };
+    await authorizeGatewayAction({ gateway, ledger, body, job, actor: worker, epoch, action: "CLAIM_REWARD", payload });
+    response.json(serialise(await gateway.claim(request.params.jobId, worker, signedTransaction)));
   });
 
   app.get("/api/jobs/:jobId/services/operations", async (request, response) => {
@@ -490,4 +527,14 @@ function fallbackAddress(hexCharacter: string): Hex {
 function digestValue(value: unknown, label: string): Hex {
   if (typeof value !== "string" || !/^0x[0-9a-f]{64}$/i.test(value)) throw new Error(`INVALID_${label.toUpperCase()}`);
   return value.toLowerCase() as Hex;
+}
+
+function signatureValue(value: unknown, label: string): Hex {
+  if (typeof value !== "string" || !/^0x[\da-f]{130}$/i.test(value)) throw new Error(`INVALID_${label.toUpperCase()}`);
+  return value as Hex;
+}
+
+function transactionValue(value: unknown): Hex {
+  if (typeof value !== "string" || !/^0x(?:[\da-f]{2})+$/i.test(value)) throw new Error("INVALID_SIGNED_TRANSACTION");
+  return value as Hex;
 }

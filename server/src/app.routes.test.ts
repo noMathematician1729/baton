@@ -6,8 +6,11 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { test } from "node:test";
 import type { Express } from "express";
+import { keccak256 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { gatewayActionDomain, gatewayActionMessage, GATEWAY_ACTION_TYPES } from "./chain/gatewayAction.js";
+import { domain as escrowDomain, OFFER_TYPES, TAKEOVER_TYPES } from "./chain/signing.js";
+import type { EscrowMutationWriter } from "./chain/sepoliaEscrowWriter.js";
 import { parseInitialChainJobSnapshot } from "./chain/chainJobImport.js";
 import type { JobAuthorityReader } from "./chain/sepoliaAuthority.js";
 import { JobStore } from "./domain/jobs/jobStore.js";
@@ -88,8 +91,36 @@ test("production API permits only buyer-signed initial chain-job import", async 
   }
 });
 
+test("production lifecycle route opens only when the chain writer is configured", async () => {
+  const fixture = await createFixture(true);
+  const previousMode = env.NODE_ENV;
+  env.NODE_ENV = "production";
+  try {
+    const snapshot = makeSnapshot(fixture.jobs);
+    await fixture.jobs.importInitial(snapshot);
+    const assignBody = await signedActionBody({
+      job: snapshot,
+      signer: buyer,
+      action: "ASSIGN_WORKER",
+      epoch: 0,
+      payload: { worker: worker.address.toLowerCase() },
+      body: { worker: worker.address },
+    });
+    const assigned = await dispatch(fixture.app, "POST", `/api/jobs/${snapshot.terms.jobId}/assign`, assignBody);
+    assert.equal(assigned.statusCode, 200, JSON.stringify(assigned.body));
+    assert.equal((await fixture.jobs.get(snapshot.terms.jobId))?.task.assignedWorker, worker.address.toLowerCase());
+
+    const fixturePayment = await dispatch(fixture.app, "POST", "/api/services/operations/fixture/reconcile", {});
+    assert.equal(fixturePayment.statusCode, 503, "production still rejects the local fixture provider route");
+  } finally {
+    fixture.ledger.close();
+    env.NODE_ENV = previousMode;
+    await rm(fixture.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 });
+  }
+});
+
 test("signed chain-mode route dispatch covers assignment through payment reconciliation", async () => {
-  const fixture = await createFixture();
+  const fixture = await createFixture(true);
   const previousMode = env.NODE_ENV;
   env.NODE_ENV = "test";
   try {
@@ -135,6 +166,28 @@ test("signed chain-mode route dispatch covers assignment through payment reconci
       acceptanceSpecHash: candidatePayload.acceptanceSpecHash,
       expectedHead: candidatePayload.expectedHead,
     };
+    const offer = {
+      jobId: assignedJob.chainJobId!,
+      taskId: assignedJob.chainTaskId!,
+      termsHash: assignedJob.terms.termsHash,
+      producer: worker.address,
+      epoch: BigInt(candidatePayload.epoch),
+      milestone: assignedJob.task.nextMilestone,
+      acceptanceSpecHash: candidatePayload.acceptanceSpecHash,
+      expectedHead: candidatePayload.expectedHead,
+      newHead: candidate.manifestDigest,
+      manifestRef: candidate.manifestRef,
+      sequence: BigInt(candidate.sequence),
+      nonce: 22n,
+      expiry: BigInt(Math.floor(Date.now() / 1000) + 120),
+    };
+    const offerSignature = await worker.signTypedData({
+      domain: escrowDomain(11155111, escrow),
+      types: OFFER_TYPES,
+      primaryType: "MilestoneOffer",
+      message: offer,
+    });
+    Object.assign(candidateBody, { offerNonce: offer.nonce.toString(), offerExpiry: offer.expiry.toString(), offerSignature });
     const workerAuthorizedCandidate = await signedActionBody({
       job: assignedJob,
       signer: worker,
@@ -175,13 +228,31 @@ test("signed chain-mode route dispatch covers assignment through payment reconci
       expectedEpoch: drainedJob.task.epoch,
       compatibilityReport: digest("c"),
     };
+    const ack = {
+      jobId: drainedJob.chainJobId!,
+      taskId: drainedJob.chainTaskId!,
+      termsHash: drainedJob.terms.termsHash,
+      successor: workerB.address,
+      epoch: BigInt(takeoverFields.expectedEpoch),
+      expectedHead: takeoverFields.expectedHead,
+      compatibilityReport: takeoverFields.compatibilityReport,
+      servicePolicy: digest(drainedJob.servicePolicy),
+      nonce: 33n,
+      expiry: BigInt(Math.floor(Date.now() / 1000) + 120),
+    };
+    const ackSignature = await workerB.signTypedData({
+      domain: escrowDomain(11155111, escrow),
+      types: TAKEOVER_TYPES,
+      primaryType: "TakeoverAck",
+      message: ack,
+    });
     const takeoverBody = await signedActionBody({
       job: drainedJob,
       signer: buyer,
       action: "TAKEOVER_TASK",
       epoch: takeoverFields.expectedEpoch,
       payload: takeoverFields,
-      body: takeoverFields,
+      body: { ...takeoverFields, ackNonce: ack.nonce.toString(), ackExpiry: ack.expiry.toString(), ackSignature },
     });
     assert.equal((await dispatch(fixture.app, "POST", `/api/jobs/${snapshot.terms.jobId}/takeover`, takeoverBody)).statusCode, 200);
     const successorJob = (await fixture.jobs.get(snapshot.terms.jobId))!;
@@ -208,13 +279,14 @@ test("signed chain-mode route dispatch covers assignment through payment reconci
     });
     assert.equal((await dispatch(fixture.app, "POST", `/api/jobs/${snapshot.terms.jobId}/resume`, resumeBody)).statusCode, 200);
 
+    const claimTransaction = "0x1234" as Hex;
     const claimBody = await signedActionBody({
       job: (await fixture.jobs.get(snapshot.terms.jobId))!,
       signer: worker,
       action: "CLAIM_REWARD",
       epoch: 1,
-      payload: { worker: worker.address.toLowerCase() },
-      body: { worker: worker.address, epoch: 1 },
+      payload: { worker: worker.address.toLowerCase(), transactionHash: keccak256(claimTransaction) },
+      body: { worker: worker.address, epoch: 1, signedTransaction: claimTransaction },
     });
     const claimed = await dispatch(fixture.app, "POST", `/api/jobs/${snapshot.terms.jobId}/claim`, claimBody);
     assert.equal(claimed.statusCode, 200);
@@ -279,8 +351,7 @@ test("chain-mode worker action route rejects unsigned claims before crediting", 
     await fixture.ledger.completeJobProvision(snapshot);
     await fixture.jobs.assign(snapshot.terms.jobId, worker.address as Hex);
 
-    // The production API deliberately leaves lifecycle routes disabled until their full live wiring is ready.
-    // Exercise signed-action dispatch in the configured chain-mode application context.
+    // Exercise signed-action dispatch in chain mode without opening a TCP listener.
     env.NODE_ENV = "test";
     const response = await dispatch(fixture.app, "POST", `/api/jobs/${snapshot.terms.jobId}/claim`, {
       worker: worker.address,
@@ -296,7 +367,7 @@ test("chain-mode worker action route rejects unsigned claims before crediting", 
   }
 });
 
-async function createFixture() {
+async function createFixture(withMutationWriter = false) {
   const root = await mkdtemp(join(tmpdir(), "baton-api-routes-"));
   const jobs = new JobStore(join(root, "jobs.json"));
   const ledger = new OperationLedger(join(root, "payment-ledger.sqlite"));
@@ -307,10 +378,20 @@ async function createFixture() {
     assertCurrentWorker: async () => undefined,
     assertAssignedWorker: async () => undefined,
     assertImportableJob: async () => { importReads += 1; },
+    assertSnapshotCurrent: async () => undefined,
   } as unknown as JobAuthorityReader;
+  const mutationWriter: EscrowMutationWriter | undefined = withMutationWriter ? {
+    assign: async () => undefined,
+    acceptMilestone: async () => undefined,
+    drain: async () => undefined,
+    takeover: async () => undefined,
+    pause: async () => undefined,
+    resume: async () => undefined,
+    claim: async () => undefined,
+  } : undefined;
   const gateway = new Gateway(jobs, ledger, new LocalPaymentProvider(), authority, {
     verifyCandidate: async () => undefined,
-  });
+  }, mutationWriter, 11155111, escrow);
   const app = createApp({ jobs, ledger, gateway });
   return { root, jobs, ledger, gateway, app, importReads: () => importReads };
 }

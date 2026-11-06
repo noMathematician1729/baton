@@ -49,6 +49,117 @@ The command passed 16/16 tests, covering signed production route gating, uncerta
 
 The earlier 12/12 and 16/16 Solidity results are historical. The current suite passes 17/17 with pinned solc 0.8.28 using `forge test --root server/contracts --offline`.
 
+## Two Codex workers: connect, run, take over, recover
+
+This is the live A→B handoff through the normal application path: real Codex app-server runtimes, ENSv2 on Sepolia, encrypted Arkiv checkpoints and the V2 escrow. Every command below is a real testnet action unless marked otherwise. Hedera x402, automatic failure detection and a browser UI for these controls are not part of this path; it is driven through the API and the `baton` CLI.
+
+### Identity mapping
+
+Each mapping is explicit and independent. Query it with `npm run baton -- status <jobId>`.
+
+| Concept | Where it lives | Example |
+|---|---|---|
+| Stable worker ID | Registry, `.env.worker-<id>` | `a`, `b` |
+| Codex account | `.baton-data/workers/<id>/codex-home` (mode 0700, never in git) | one ChatGPT account per worker |
+| Worker wallet | `WORKER_EVM_PRIVATE_KEY` in `.env.worker-<id>`; ownership proven by signature at registration | `0x432E…A5D2` |
+| ENS name | Per-job child name, buyer-owned | `a.job-<id>.baton.eth` |
+| Authority | Escrow `assignedWorker` and `epoch` on Sepolia | ENS is discovery, not authority |
+
+### Configuration
+
+Variable names only; values stay in ignored files.
+
+- Root `.env` (buyer host): `SEPOLIA_RPC_URL`, `SEPOLIA_DEPLOYER_PRIVATE_KEY` (buyer), `BATON_ESCROW_ADDRESS`, `BATON_REWARD_TOKEN_ADDRESS`, `ENS_JOB_NAME` (parent), `CHECKPOINT_ENCRYPTION_KEY` (key-encryption key for per-epoch content keys), `ARKIV_ACCESS_KEY` (optionally `ARKIV_ACCESS_KEY_A` for worker A), `ARKIV_RPC_URL_A`, `ARKIV_RPC_URL_B`, `ARKIV_SIGNER_PRIVATE_KEY_A`, `ARKIV_SIGNER_PRIVATE_KEY_B`, `WORKER_A_EVM_PRIVATE_KEY`, `WORKER_B_EVM_PRIVATE_KEY`, `BATON_CORE_ENABLED`, `BATON_BUYER_API_TOKEN`.
+- `.env.key-service`: created by `npm run key-service:provision`.
+- `.env.worker-<id>`: created by `key-service:provision`, completed by `core:setup`. Holds only that worker's own wallet, Arkiv signer and key-service credentials. The API launches workers with a clean environment, so buyer secrets are not inherited.
+- Optional: `BATON_CODEX_MODEL` (worker env; defaults to the account's Codex default), `BATON_CORE_CONFIRMATIONS` (default 2).
+
+### Setup (once)
+
+```sh
+npm ci --ignore-scripts
+npm run key-service:provision   # only if the .env.worker-* files do not exist
+npm run deploy:sepolia:escrow:replace   # only when replacing a non-V2 escrow; sends a transaction
+npm run core:setup              # verifies the V2 marker, deploys the test token if unset, fills worker env files
+```
+
+### Start services
+
+Run each in its own terminal. They are independent, so stopping a worker never stops them.
+
+```sh
+npm run key-service:start
+npm run core:api
+```
+
+### Connect each worker (once per account)
+
+```sh
+npm run baton -- connect a
+npm run baton -- connect b --no-open
+```
+
+`connect` starts the worker's runtime and prints the official OpenAI sign-in link when the worker has no login. Sign in to a different account for each worker. For the second worker, use `--no-open` and open the link in a private window, otherwise the browser reuses the first account's session. Never paste credentials anywhere; the sign-in completes in the browser and returns to the worker's own localhost callback. Your own `~/.codex` login is not touched. Later reconnects reuse the stored login.
+
+A worker becomes `available` only after its new process passes the connect smoke test: a real model turn must call a BATON tool and write a file, and the isolation probe must pass (see below). Check with `npm run baton -- workers`.
+
+### Run a job
+
+```sh
+npm run baton -- submit                          # BATON picks an available verified worker
+npm run baton -- wait <jobId> ready              # ENS, keys, funding, assignment and mapping verified
+npm run baton -- wait <jobId> verified:1         # worker checkpointed; buyer read it back from Arkiv and checked it
+npm run baton -- accept <jobId> 1                # buyer approval sends acceptMilestone; the worker then withdraws
+npm run baton -- activity a                      # the worker's recent activity
+```
+
+The buyer always approves milestones explicitly; a worker cannot approve its own reward.
+
+### Replace a failed worker
+
+```sh
+npm run baton -- stop a                  # kills A's process group; the job, its namespace and B are unaffected
+npm run baton -- takeover <jobId> b      # omit the worker ID to let BATON choose
+npm run baton -- wait <jobId> takeover-done
+```
+
+Takeover drains the job, registers `b.job-<id>.baton.eth`, grants B's job-scoped ENS role, and collects B's signed acknowledgement of the exact on-chain head. It then submits the takeover, revokes A's ENS grant and key-service grants, issues B a new epoch key and a recovery grant for the exact accepted checkpoint, updates ENS records, and verifies every link before B may work.
+
+B then reads the head from the escrow, fetches that exact Arkiv entity, decrypts and validates it, restores the outputs into its own empty workspace, and continues. It uses no state from A's thread, process or workspace. The accepted checkpoint from A's earlier epoch stays valid after takeover.
+
+Finish with `wait <jobId> verified:2`, `accept <jobId> 2`, `wait <jobId> verified:3`, `accept <jobId> 3`, `wait <jobId> completed`, then `reconcile <jobId>`.
+
+### Run and verify end to end
+
+```sh
+npm run core:e2e               # one fresh job, recorded under evidence/core-runs/
+npm run core:e2e -- --drill    # also SIGKILLs and restarts the API while a takeover transaction is in flight
+node --env-file=.env.worker-a --import tsx scripts/core/stale-check.ts <jobId>   # simulations and refused requests only
+node --env-file=.env.worker-b --import tsx scripts/core/arkiv-retention-check.ts <entityKey>   # sends one Arkiv extension
+npm run test:core --workspace=server   # offline
+```
+
+`core:e2e` needs both workers connected. It reconnects nothing, so run `connect a` again before the next job: it deliberately terminates A. A run reports PASS only if payouts reconcile and its assertions hold: A wrote milestone 1 at epoch 1, B wrote 2 and 3 at epoch 2, B recovered A's checkpoint and did not regenerate A's outputs, both runtimes did real tool work, the accounts differ, and both sandboxes are isolated.
+
+### Partial failures and recovery
+
+- **Blocked job:** `lastError` shows the cause in `status`. The supervisor retries every 30 seconds; `npm run baton -- retry <jobId>` retries now.
+- **Crash or restart:** restart the API. The state in `.baton-data/core/core-state.json` is reloaded and non-terminal jobs resume. Sepolia writes are signed and journaled before broadcast, so a retry reconciles the recorded transaction by receipt, or rebroadcasts identical bytes, rather than sending a new one. Do not edit this file by hand. Transactions on different networks are not atomic; each step is journaled separately.
+- **Rejected milestone:** the worker receives the failed checks and must fix and resubmit. Nothing is credited.
+- **Worker failure:** a failed run retries after 60 seconds. A worker's earned credit survives and is claimed by a periodic sweep after restart.
+- **Slow Sepolia RPC:** load-balanced nodes can lag behind a confirmed block, so simulations and claims retry before failing.
+
+### Worker isolation
+
+`sandbox_mode = workspace-write` blocks writes outside the workspace but **allows reading the whole disk**, including the buyer `.env` and other workers' credentials. Workers therefore use the `baton_worker` allow-list profile: read access to system paths, write access to the workspace and a private temp directory, no network, and a private `HOME` so the host user's skills are not discovered. It is verified each time a worker connects, by `codex sandbox -P baton_worker` probes with positive controls and by checking the output of a command the model runs in its own turn.
+
+Limits:
+- This is process sandboxing on one shared host, not separate machines or OS users.
+- The MCP tool bridge and worker daemon run outside the sandbox by design; the bridge holds no secrets.
+- `/opt/homebrew` and `/Library/Developer` are readable for tooling.
+- Arkiv entity owners are worker wallets. Entities use permissionless extension, so anyone can renew them after a worker disappears.
+- The read routes `GET /api/core/*` are unauthenticated and rely on the loopback bind. Do not expose the API publicly as is.
+
 ## Gateway authority and payment recovery
 
 `GATEWAY_AUTHORITY_MODE=auto` enables Sepolia checks when the RPC URL, escrow, and BATON adapter addresses are configured. Set it to `sepolia` to require that configuration and fail closed, or `local` for local-only work. The authority reader checks the Sepolia chain, escrow buyer and adapter bindings, current worker and epoch, job open/drain/cutoff state, and the worker's job-scoped grant before accepting a milestone or service request. Local acceptance uses a mock authority reader and does not contact Sepolia.

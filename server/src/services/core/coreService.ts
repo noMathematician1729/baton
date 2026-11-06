@@ -112,7 +112,15 @@ export class CoreService {
   public async init(): Promise<void> {
     const jobs = await this.store.read((s) => Object.values(s.jobs));
     for (const job of jobs) if (!["completed", "failed"].includes(job.phase)) this.kick(job.jobId);
+    // Supervisor: resume blocked, non-terminal jobs from their journal (no duplicate writes).
+    this.supervisor = setInterval(() => {
+      void this.store.read((s) => Object.values(s.jobs).filter((j) => j.lastError && !["completed", "failed"].includes(j.phase)).map((j) => j.jobId))
+        .then((ids) => ids.forEach((id) => this.kick(id)));
+    }, 30_000);
+    this.supervisor.unref();
   }
+
+  private supervisor: NodeJS.Timeout | undefined;
 
   public checkBuyerToken(token: string | undefined): void {
     if (!this.config.buyerApiToken || !token || token.length !== this.config.buyerApiToken.length

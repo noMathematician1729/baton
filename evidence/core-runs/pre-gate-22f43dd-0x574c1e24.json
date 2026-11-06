@@ -1062,8 +1062,8 @@
       "wallet": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
       "codexAccount": {
         "type": "chatgpt",
-        "email": "a***@computationelewetenschapsgroep.com",
-        "planType": "plus"
+        "planType": "plus",
+        "accountRef": "7a942ea53592e43c"
       },
       "smoke": {
         "passed": true,
@@ -1086,8 +1086,8 @@
       "wallet": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5",
       "codexAccount": {
         "type": "chatgpt",
-        "email": "k***@gmail.com",
-        "planType": "plus"
+        "planType": "plus",
+        "accountRef": "a24093c254d1c361"
       },
       "smoke": {
         "passed": true,

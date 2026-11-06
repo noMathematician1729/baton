@@ -140,6 +140,11 @@ async function report(state: string, detail: Record<string, unknown> = {}) {
 async function startCodex() {
   await mkdir(codexHome, { recursive: true, mode: 0o700 });
   await chmod(home, 0o700);
+  // Private HOME and temp space: the runtime must not discover the host user's skills or dotfiles.
+  const runtimeHome = join(home, "home");
+  const runtimeTmp = join(home, "tmp");
+  await mkdir(runtimeHome, { recursive: true, mode: 0o700 });
+  await mkdir(runtimeTmp, { recursive: true, mode: 0o700 });
   const tsxBin = join(repoRoot, "node_modules", ".bin", "tsx");
   const mcpEntry = join(serverRoot, "apps", "worker", "src", "batonToolsMcp.ts");
   codex = new CodexAppServerClient({
@@ -148,6 +153,11 @@ async function startCodex() {
     clientVersion: "1.0.0",
     config: {
       cli_auth_credentials_store: '"file"',
+      // Allow-list sandbox: `sandbox_mode = workspace-write` still permits reading the whole disk,
+      // including the buyer .env and other workers' credentials on a shared host.
+      default_permissions: '"baton_worker"',
+      "permissions.baton_worker.filesystem": `{ ":minimal" = "read", ":workspace_roots" = { "." = "write" }, ${JSON.stringify(runtimeTmp)} = "write", "/Library/Developer" = "read", "/opt/homebrew" = "read" }`,
+      project_root_markers: "[]",
       "mcp_servers.baton.command": JSON.stringify(tsxBin),
       "mcp_servers.baton.args": JSON.stringify([mcpEntry]),
       "mcp_servers.baton.env": `{ BATON_WORKER_SOCKET = ${JSON.stringify(socketPath)} }`,
@@ -156,7 +166,7 @@ async function startCodex() {
       "mcp_servers.baton.tool_timeout_sec": "600",
       "mcp_servers.baton.default_tools_approval_mode": '"approve"',
     },
-    env: { PATH: process.env.PATH, HOME: process.env.HOME, LANG: process.env.LANG ?? "en_US.UTF-8", TMPDIR: process.env.TMPDIR },
+    env: { PATH: process.env.PATH, HOME: runtimeHome, LANG: process.env.LANG ?? "en_US.UTF-8", TMPDIR: runtimeTmp, TMPPREFIX: join(runtimeTmp, "zsh") },
   });
   codex.on("exit", (info) => {
     log("codex-exit", info as Record<string, unknown>);
@@ -209,23 +219,30 @@ async function smokeTest() {
   await rm(workspace, { recursive: true, force: true });
   await mkdir(workspace, { recursive: true, mode: 0o700 });
   smokeNonce = randomBytes(8).toString("hex");
+  // Isolation proof on the real runtime: a secret outside the workspace must stay unreadable.
+  const sentinel = randomBytes(16).toString("hex");
+  const sentinelPath = join(home, "isolation-sentinel.txt");
+  await writeFile(sentinelPath, sentinel, { mode: 0o600 });
   const threadId = await codex!.startThread({ cwd: workspace, model: process.env.BATON_CODEX_MODEL || undefined });
   const outcome = await codex!.runTurn(
     threadId,
-    "BATON connection self-test. Call the baton_smoke_nonce tool, then create a file named smoke.txt in the current directory whose only content is that nonce reversed character-by-character. Finally reply with exactly: NONCE=<nonce> REVERSED=<reversed>.",
+    `BATON connection self-test. Call the baton_smoke_nonce tool, then create a file named smoke.txt in the current directory whose only content is that nonce reversed character-by-character. Then run exactly this command once and do not retry it another way: cat ${JSON.stringify(sentinelPath)} . Finally reply with exactly: NONCE=<nonce> REVERSED=<reversed> SENTINEL=<READ or DENIED>.`,
     5 * 60_000,
     (event, detail) => log(`smoke:${event}`, detail as Record<string, unknown>),
   );
   const expected = smokeNonce.split("").reverse().join("");
   const fileContent = existsSync(join(workspace, "smoke.txt")) ? (await readFile(join(workspace, "smoke.txt"), "utf8")).trim() : "";
   const toolUsed = outcome.mcpToolCalls.some((call) => call.tool === "baton_smoke_nonce" && call.status === "completed");
-  const passed = outcome.status === "completed" && toolUsed && fileContent === expected && outcome.finalMessage.includes(smokeNonce);
+  const isolated = ![outcome.finalMessage, ...outcome.agentMessages, ...outcome.commandOutputs].some((text) => text.includes(sentinel)) && outcome.commandCount > 0 && /SENTINEL=DENIED/.test(outcome.finalMessage);
+  await rm(sentinelPath, { force: true });
+  const passed = outcome.status === "completed" && toolUsed && fileContent === expected && outcome.finalMessage.includes(smokeNonce) && isolated;
   const result = {
     passed,
     turnStatus: outcome.status,
     toolUsed,
     fileMatches: fileContent === expected,
     replyContainsNonce: outcome.finalMessage.includes(smokeNonce),
+    isolated,
     threadId,
     turnId: outcome.turnId,
     error: outcome.error,
@@ -418,8 +435,10 @@ async function submitMilestone(args: { milestone: number; summary: string; compl
     keyId: ctx.writerKey.keyId,
     arkiv: { manifestTx: staged.stored.txHash, owner: staged.stored.owner, expiresAt: staged.stored.expiresAt.toString(), newArtifacts },
   });
-  job.submissions.push(milestone.index);
-  await report("milestone_submitted", { jobId: ctx.jobId, milestone: milestone.index, manifestDigest: staged.manifestDigest, manifestRef: staged.manifestRef, arkivTx: staged.stored.txHash, review: result.status });
+  // A rejected candidate does not count as submitted: the model gets the failing checks and must fix them.
+  if (result.status !== "rejected") job.submissions.push(milestone.index);
+  await report(result.status === "rejected" ? "milestone_rejected" : "milestone_submitted", { jobId: ctx.jobId, milestone: milestone.index, manifestDigest: staged.manifestDigest, manifestRef: staged.manifestRef, arkivTx: staged.stored.txHash, review: result.status });
+  if (result.status === "rejected") return { status: "rejected_fix_and_resubmit", milestone: milestone.index, review: result };
   return { status: "submitted_for_buyer_review", milestone: milestone.index, checkpoint: { manifestDigest: staged.manifestDigest, arkivEntity: staged.manifestRef, sequence }, review: result };
 }
 

@@ -46,6 +46,7 @@ export type TurnOutcome = {
   mcpToolCalls: Array<{ server: string; tool: string; status: string; arguments: unknown; error?: unknown }>;
   commandCount: number;
   fileChangeCount: number;
+  commandOutputs: string[];
   error?: string;
 };
 
@@ -171,7 +172,8 @@ export class CodexAppServerClient extends EventEmitter {
       cwd: params.cwd,
       model: params.model ?? null,
       approvalPolicy: "never",
-      sandbox: params.sandbox ?? "workspace-write",
+      // Omitted when the runtime uses a named permissions profile; the two must not be combined.
+      ...(params.sandbox ? { sandbox: params.sandbox } : {}),
       developerInstructions: params.developerInstructions ?? null,
       serviceName: "baton-worker",
       ephemeral: false,
@@ -181,7 +183,7 @@ export class CodexAppServerClient extends EventEmitter {
 
   /** Runs one turn to completion and collects the authoritative completed items. */
   public async runTurn(threadId: string, text: string, timeoutMs: number, onActivity?: (event: string, detail: unknown) => void): Promise<TurnOutcome> {
-    const outcome: TurnOutcome = { turnId: "", status: "unknown", finalMessage: "", agentMessages: [], mcpToolCalls: [], commandCount: 0, fileChangeCount: 0 };
+    const outcome: TurnOutcome = { turnId: "", status: "unknown", finalMessage: "", agentMessages: [], mcpToolCalls: [], commandCount: 0, fileChangeCount: 0, commandOutputs: [] };
     let resolveDone!: () => void;
     const done = new Promise<void>((resolve) => {
       resolveDone = resolve;
@@ -199,6 +201,7 @@ export class CodexAppServerClient extends EventEmitter {
           onActivity?.("toolCall", { server: item.server, tool: item.tool, status: item.status });
         } else if (item.type === "commandExecution") {
           outcome.commandCount += 1;
+          outcome.commandOutputs.push(String(item.aggregatedOutput ?? ""));
           onActivity?.("command", { command: String(item.command ?? "").slice(0, 200), exitCode: item.exitCode ?? null });
         } else if (item.type === "fileChange") {
           outcome.fileChangeCount += 1;

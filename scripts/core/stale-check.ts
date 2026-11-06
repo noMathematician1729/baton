@@ -1,9 +1,11 @@
 // Stale-worker boundary check. Run with the *replaced* worker's own env file, after takeover:
 //   node --env-file=.env.worker-a --import tsx scripts/core/stale-check.ts <jobId>
 // It attempts protected actions as that worker and expects every one to be refused.
-// Uses eth_call simulation only; it never submits a transaction.
+// Uses eth_call simulation and refused API requests only; it never submits a transaction.
 import { randomBytes } from "node:crypto";
-import { createPublicClient, encodeFunctionData, getAddress, http, type Address, type Hex } from "viem";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { BaseError, ContractFunctionRevertedError, createPublicClient, getAddress, http, type Abi, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
 import { HttpCheckpointKeyGrantResolver } from "../../server/packages/storage/src/httpKeyGrantResolver.js";
@@ -56,7 +58,37 @@ const offer = {
 };
 const signature = await account.signTypedData({ domain: { ...BATON_DOMAIN, chainId: 11155111, verifyingContract: job.escrow }, types: OFFER_TYPES, primaryType: "MilestoneOffer", message: offer });
 await expectRefusal("API: submit stale milestone offer", () => signed("POST", `/api/core/jobs/${jobId}/offers`, { offer: Object.fromEntries(Object.entries(offer).map(([k, v]) => [k, typeof v === "bigint" ? v.toString() : v])), signature, keyId: "stale" }));
-await expectRefusal("escrow: acceptMilestone(stale offer) simulated as buyer", () => client.call({ account: getAddress(String(chainJob[0])), to: job.escrow, data: encodeFunctionData({ abi: escrowAbi, functionName: "acceptMilestone", args: [jobId, offer, signature] }) }));
+// On-chain refusals must decode to the specific expected custom error, so an unrelated revert cannot pass.
+const fullAbi = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../server/contracts/abi/JobEscrow.json"), "utf8")) as Abi;
+const expectRevert = async (action: string, from: Address, functionName: string, args: unknown[], expected: string[]) => {
+  try {
+    await client.simulateContract({ account: from, address: job.escrow, abi: fullAbi, functionName, args } as never);
+    results.push({ action, refused: false, detail: "ACCEPTED (unexpected)" });
+  } catch (error) {
+    const reverted = (error as BaseError).walk?.((e) => e instanceof ContractFunctionRevertedError) as ContractFunctionRevertedError | undefined;
+    const name = reverted?.data?.errorName ?? "UNDECODED";
+    results.push({ action, refused: expected.includes(name), detail: `${name} (expected ${expected.join("|")})` });
+  }
+};
+const closed = Boolean(chainJob[15]);
+await expectRevert("escrow: buyer submitting A's stale offer", getAddress(String(chainJob[0])), "acceptMilestone", [jobId, offer, signature], closed ? ["NotOpen"] : ["StaleEpoch"]);
+await expectRevert("escrow: A submitting its own offer", account.address, "acceptMilestone", [jobId, offer, signature], ["NotOpen"]);
+await expectRevert("escrow: A draining the job", account.address, "drainTask", [jobId], ["Unauthorized"]);
+await expectRevert("escrow: A pausing the job", account.address, "pause", [jobId], ["Unauthorized"]);
+// Unauthenticated or forged API requests.
+const unauth = async (action: string, path: string, body: unknown, headers: Record<string, string> = {}) => {
+  const response = await fetch(api + path, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+  results.push({ action, refused: response.status === 401, detail: `HTTP ${response.status}` });
+};
+await unauth("API: accept milestone without buyer token", `/api/core/jobs/${jobId}/milestones/${milestone + 1}/accept`, {});
+await unauth("API: takeover without buyer token", `/api/core/jobs/${jobId}/takeover`, { workerId: workerId });
+await unauth("API: takeover with wrong buyer token", `/api/core/jobs/${jobId}/takeover`, { workerId: workerId }, { "x-baton-buyer-token": "x".repeat(43) });
+await unauth("API: stop worker without buyer token", "/api/core/workers/b/stop", {});
+await unauth("API: submit job without buyer token", "/api/core/jobs", {});
+const forgedBody = JSON.stringify({});
+const forgedAt = Math.floor(Date.now() / 1000);
+const forgedSig = await account.signMessage({ message: workerRequestMessage({ workerId: "b", method: "POST", path: "/api/workers/b/heartbeat", timestamp: forgedAt, body: forgedBody }) });
+await unauth("API: A impersonating worker b", "/api/workers/b/heartbeat", {}, { "x-baton-worker-id": "b", "x-baton-timestamp": String(forgedAt), "x-baton-signature": forgedSig });
 const report = { jobId, staleWorker: account.address, chainAssigned: chainJob[10], chainEpoch: currentEpoch, results, allRefused: results.every((r) => r.refused) };
 console.log(JSON.stringify(report, null, 2));
 process.exit(report.allRefused ? 0 : 1);

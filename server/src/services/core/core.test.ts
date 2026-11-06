@@ -63,6 +63,7 @@ test("journal: a crash after signing reconciles the recorded transaction instead
   const store = new CoreStore(join(dir, "state.json"));
   const fake = fakeChain({ failFirstBroadcast: true });
   const chain = new JournaledChain(store, "http://unused", buyerKey, 1, fake);
+  chain.simulationRetryMs = 1;
   const build = async () => ({ to: "0x0000000000000000000000000000000000000001" as Hex, data: "0x" as Hex });
   await assert.rejects(chain.run({}, "escrow:fund", "fund", build), /socket hang up/);
   const pending = await chain.getOp({}, "escrow:fund");
@@ -183,4 +184,21 @@ test("store: job mappings survive a service restart", async () => {
   });
   const second = new CoreStore(join(dir, "state.json"));
   assert.equal((await second.read((s) => s.workers.a))?.address, "0x0000000000000000000000000000000000000001");
+});
+
+test("journal: a lagging simulation is retried before the operation fails", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "baton-core-"));
+  const fake = fakeChain();
+  let calls = 0;
+  (fake.publicClient as unknown as { call: () => Promise<unknown> }).call = async () => {
+    calls += 1;
+    if (calls < 3) throw new Error("execution reverted");
+    return { data: "0x" };
+  };
+  const chain = new JournaledChain(new CoreStore(join(dir, "state.json")), "http://unused", buyerKey, 1, fake);
+  chain.simulationRetryMs = 1;
+  const op = await chain.run({}, "escrow:assign:1", "assign", async () => ({ data: "0x" as Hex }));
+  assert.equal(op.status, "confirmed");
+  assert.equal(calls, 3);
+  assert.equal(fake.calls.signed, 1);
 });

@@ -3,9 +3,11 @@
 // (the same calls the `baton` CLI makes). Workers A and B must already be connected.
 // The buyer approvals, the termination of A's real process and the takeover request are
 // the operator steps; all task work is done by the Codex workers themselves.
-//   node scripts/core/run-e2e.mjs
-import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+//   node scripts/core/run-e2e.mjs            clean run
+//   node scripts/core/run-e2e.mjs --drill    also SIGKILL and restart the API while a takeover tx is in flight
+import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse } from "dotenv";
 
@@ -21,8 +23,22 @@ const step = (name, detail = {}) => {
   console.log(JSON.stringify(entry));
 };
 
+const drill = process.argv.includes("--drill");
+const drillReport = {};
+
+async function fetchThroughOutage(url, init) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fetch(url, init);
+    } catch (error) {
+      if (attempt >= 45) throw error;
+      await sleep(2000);
+    }
+  }
+}
+
 async function call(method, path, body) {
-  const response = await fetch(api + path, { method, headers: { "content-type": "application/json", ...(method === "POST" ? { "x-baton-buyer-token": env.BATON_BUYER_API_TOKEN } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const response = await fetchThroughOutage(api + path, { method, headers: { "content-type": "application/json", ...(method === "POST" ? { "x-baton-buyer-token": env.BATON_BUYER_API_TOKEN } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
   const json = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(`${method} ${path} → ${response.status} ${json.error ?? ""}`);
   return json;
@@ -80,6 +96,29 @@ await until("A working on milestone 2", async () => fullEvents("a").some((e) => 
 await sleep(15_000); // let A make real progress on unfinished work before it fails
 step("a-terminated", await call("POST", "/api/core/workers/a/stop", { mode: "kill" }));
 step("takeover-requested", { toWorkerId: (await call("POST", `/api/core/jobs/${jobId}/takeover`, { workerId: "b" })).toWorkerId });
+if (drill) {
+  // Crash the API at the worst moment: a journaled takeover transaction is signed and in flight.
+  const inFlight = await until("takeover tx in flight", async () => {
+    const op = Object.values((await job(jobId)).ops).find((o) => o.status === "submitted");
+    return op ? { key: op.key, txHash: op.txHash } : undefined;
+  }, 5 * 60_000);
+  const apiPid = execFileSync("lsof", ["-tiTCP:" + (env.SERVER_PORT ?? 4000), "-sTCP:LISTEN"], { encoding: "utf8" }).trim().split("\n")[0];
+  process.kill(Number(apiPid), "SIGKILL");
+  const killedAt = new Date().toISOString();
+  step("drill-api-killed", { pid: Number(apiPid), inFlight });
+  await sleep(10_000); // workers keep running and must ride out the outage
+  const out = openSync(resolve(root, ".baton-data/logs/api.log"), "a", 0o600);
+  const restarted = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], { cwd: resolve(root, "server"), detached: true, stdio: ["ignore", out, out] });
+  restarted.unref();
+  await until("API back", async () => (await fetch(`${api}/api/core/jobs/${jobId}`).catch(() => undefined))?.ok);
+  const rejected = await fetch(`${api}/api/core/jobs/${jobId}/takeover`, { method: "POST", headers: { "content-type": "application/json", "x-baton-buyer-token": env.BATON_BUYER_API_TOKEN }, body: JSON.stringify({ workerId: "b" }) });
+  const after = await job(jobId);
+  drillReport.apiKilledAt = killedAt;
+  drillReport.inFlight = inFlight;
+  drillReport.mappingSurvivedRestart = after.jobId === jobId && after.ens.name === submitted.ensName && after.takeover?.toWorkerId === "b";
+  drillReport.duplicateTakeoverRequestRefused = rejected.status === 409;
+  step("drill-api-restarted", { pid: restarted.pid, mappingSurvivedRestart: drillReport.mappingSurvivedRestart, duplicateTakeoverRequestRefused: drillReport.duplicateTakeoverRequestRefused });
+}
 await until("takeover verified", async () => {
   const j = await job(jobId);
   if (j.lastError) console.error(`  blocked: ${j.lastError}`);
@@ -112,6 +151,39 @@ const amounts = Object.fromEntries(reconcile.workers.map((w) => [w.workerId, { c
 const ok = reconcile.conserved && reconcile.unallocated === "0" && reconcile.outstandingCredits === "0"
   && amounts.a?.withdrawn === "3000000000000000000" && amounts.b?.withdrawn === "7000000000000000000";
 step("reconciled", { ok, ...reconcile });
+const duplicateAccept = await fetch(`${api}/api/core/jobs/${jobId}/milestones/3/accept`, { method: "POST", headers: { "content-type": "application/json", "x-baton-buyer-token": env.BATON_BUYER_API_TOKEN }, body: "{}" });
+const proof = await job(jobId);
+const accepted = proof.checkpoints.filter((c) => c.status === "accepted");
+const activity = (id) => fullEvents(id).filter((e) => e.state === "turn_completed" && e.detail?.jobId === jobId);
+const realWork = (id) => activity(id).some((e) => e.detail.status === "completed" && e.detail.toolCalls?.some((t) => t === "baton_submit_milestone:completed") && (e.detail.commands > 0 || e.detail.fileChanges > 0));
+const hand = accepted.find((c) => c.milestone === 2);
+const finalWorkers = await workers();
+const checks = {
+  duplicateAcceptRefused: duplicateAccept.status === 409,
+  aWroteMilestone1AtEpoch1: accepted.find((c) => c.milestone === 1)?.workerId === "a" && accepted.find((c) => c.milestone === 1)?.epoch === 1,
+  bWroteMilestones2And3AtEpoch2: [2, 3].every((m) => accepted.find((c) => c.milestone === m)?.workerId === "b" && accepted.find((c) => c.milestone === m)?.epoch === 2),
+  bRecoveredAsCheckpointFromEpoch1: hand?.recoveredFrom?.epoch === 1 && hand?.recoveredFrom?.writer === accepted.find((c) => c.milestone === 1)?.writer,
+  bDidNotRegenerateAsOutputs: hand ? !hand.newArtifacts.some((file) => ["normalized.json", "clusters.json"].includes(file)) && hand.newArtifacts.includes("analysis.json") : false,
+  bothRuntimesDidRealWork: realWork("a") && realWork("b"),
+  distinctCodexAccounts: new Set(finalWorkers.filter((w) => ["a", "b"].includes(w.workerId)).map((w) => w.runtime.account?.email)).size === 2,
+  bothSandboxesIsolated: finalWorkers.filter((w) => ["a", "b"].includes(w.workerId)).every((w) => w.smoke?.detail?.isolated === true),
+  noDuplicateTakeover: Object.keys(proof.ops).filter((k) => k.startsWith("escrow:takeover")).length === 1,
+};
+step("run-assertions", checks);
+if (drill) {
+  const restartedOp = proof.ops[drillReport.inFlight.key];
+  drillReport.sameTransactionReconciled = restartedOp?.txHash === drillReport.inFlight.txHash && ["confirmed", "skipped"].includes(restartedOp?.status);
+  const killedAtMs = Date.parse(drillReport.apiKilledAt);
+  const failedBeats = readFileSync(resolve(root, ".baton-data/workers/b/worker.log"), "utf8").split("\n").filter((line) => line.includes('"heartbeat-failed"') && Date.parse(JSON.parse(line).t) >= killedAtMs).length;
+  drillReport.bHeartbeatFailuresDuringOutage = failedBeats;
+  drillReport.bStayedConnected = failedBeats > 0 && realWork("b");
+  checks.drillSameTransactionReconciled = drillReport.sameTransactionReconciled;
+  checks.drillMappingSurvivedRestart = drillReport.mappingSurvivedRestart;
+  checks.drillDuplicateTakeoverRefused = drillReport.duplicateTakeoverRequestRefused;
+  checks.drillWorkerRodeOutOutage = drillReport.bStayedConnected;
+  step("drill-assertions", drillReport);
+}
+const passed = ok && Object.values(checks).every(Boolean);
 
 const finalJob = await job(jobId);
 const { spec, ...jobView } = finalJob;
@@ -126,11 +198,14 @@ const evidence = {
   build,
   started,
   finished: new Date().toISOString(),
-  result: ok ? "PASS" : "FAIL",
+  result: passed ? "PASS" : "FAIL",
+  mode: drill ? "crash-drill" : "clean",
+  assertions: checks,
+  drill: drill ? drillReport : undefined,
   network: "sepolia",
   explorer: "https://sepolia.etherscan.io/tx/",
   job: { ...jobView, spec: { templateId: spec.templateId, title: spec.title, milestones: spec.milestones.map((m) => ({ index: m.index, title: m.title, requiredFiles: m.requiredFiles, rewardTokens: m.rewardTokens })) } },
-  workers: (await workers()).filter((w) => ["a", "b"].includes(w.workerId)).map((w) => ({ workerId: w.workerId, wallet: w.address, codexAccount: w.runtime.account, smoke: w.smoke })),
+  workers: (await workers()).filter((w) => ["a", "b"].includes(w.workerId)).map((w) => ({ workerId: w.workerId, wallet: w.address, codexAccount: { type: w.runtime.account?.type, planType: w.runtime.account?.planType, accountRef: createHash("sha256").update(String(w.runtime.account?.email)).digest("hex").slice(0, 16) }, smoke: w.smoke })),
   workerActivity: { a: strip(fullEvents("a")), b: strip(fullEvents("b")) },
   staleCheck: stale,
   reconcile,
@@ -140,4 +215,4 @@ mkdirSync(resolve(root, "evidence/core-runs"), { recursive: true });
 const path = resolve(root, `evidence/core-runs/${jobId}.json`);
 writeFileSync(path, JSON.stringify(evidence, null, 2));
 step("evidence-written", { path: `evidence/core-runs/${jobId}.json`, result: evidence.result });
-if (!ok) process.exit(1);
+if (!passed) process.exit(1);

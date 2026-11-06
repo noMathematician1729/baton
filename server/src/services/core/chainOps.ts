@@ -35,6 +35,8 @@ export class JournaledChain {
   public readonly account: PrivateKeyAccount;
   private readonly walletClient: JournalWallet;
   private sendQueue: Promise<unknown> = Promise.resolve();
+  public simulationAttempts = 6;
+  public simulationRetryMs = 5000;
 
   public constructor(
     private readonly store: CoreStore,
@@ -83,10 +85,19 @@ export class JournaledChain {
     await this.setOp(scope, key, { intent, network: "sepolia", status: "pending", error: undefined });
     // Serialize signing so concurrent operations never race on the buyer nonce.
     const signed = await (this.sendQueue = this.sendQueue.catch(() => undefined).then(async () => {
-      const request = await build();
-      await this.publicClient.call({ account: this.account.address, to: request.to, data: request.data, value: request.value }).catch((error: Error & { shortMessage?: string }) => {
-        throw new Error(`simulation reverted for ${key}: ${error.shortMessage ?? error.message}`);
-      });
+      // Load-balanced RPC nodes can lag the block that confirmed a prerequisite
+      // (for example funding before assignment), so a revert is re-simulated before failing.
+      let request = await build();
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await this.publicClient.call({ account: this.account.address, to: request.to, data: request.data, value: request.value });
+          break;
+        } catch (error) {
+          if (attempt >= this.simulationAttempts) throw new Error(`simulation reverted for ${key}: ${(error as Error & { shortMessage?: string }).shortMessage ?? (error as Error).message}`);
+          await new Promise((ok) => setTimeout(ok, this.simulationRetryMs));
+          request = await build();
+        }
+      }
       const prepared = await this.walletClient.prepareTransactionRequest({ account: this.account, chain: sepolia, to: request.to ?? null, data: request.data, value: request.value, gas: request.gas } as never);
       const rawTx = await this.walletClient.signTransaction(prepared as never);
       const txHash = keccak256(rawTx);

@@ -121,6 +121,21 @@ export class Gateway {
         throw error;
       }
 
+      try {
+        // The initial check can be separated from provider I/O by ledger writes. Recheck the
+        // confirmed worker/epoch/drain state at the spend boundary before releasing payment.
+        await this.assertAdmission(job, request.worker, request.epoch);
+      } catch (error) {
+        try {
+          await this.ledger.transition(operation.operationId, "FAILED", {
+            failureCode: "AUTHORITY_RECHECK_FAILED_BEFORE_PROVIDER_SUBMISSION",
+          });
+        } catch {
+          // The provider has not been called. Keep the last durable state for safe reconciliation.
+        }
+        throw error;
+      }
+
       let result: PaymentResult;
       try {
         result = await this.provider.submit(providerRequest);

@@ -1,8 +1,8 @@
 {
   "owner": "D1",
-  "updatedAt": "2026-11-06T09:30:22+05:30",
+  "updatedAt": "2026-11-06T09:38:03+05:30",
   "elapsedHours": 0.75,
-  "currentTask": "G0-G4 D1 audit remediation on build/audit-g0-g4; buyer-signed key grants, confirmed snapshot accounting, signed API route dispatch and buyer-only initial assignment locally tested, while production chain writes and live integrations remain pending",
+  "currentTask": "G0-G4 D1 audit remediation on build/audit-g0-g4; provider-boundary authority recheck, buyer-signed key grants, confirmed snapshot accounting, signed API route dispatch and buyer-only initial assignment locally tested, while production chain writes and live integrations remain pending",
   "completedFeatures": [
     "Versioned protocol types, canonical hashing and EIP-712 offer/takeover hash helpers",
     "Durable atomic operation ledger with reservation, settlement, UNKNOWN and reconciliation states",
@@ -32,7 +32,7 @@
     "G2 extracts the signed gateway-action verifier and fake authority reader; 6 authority tests cover replay, expiry, actor/deployment/task/action/payload, confirmed block, reorg, grant and chain ID",
     "G3 candidate adds bounded accepted-head recovery validation, storage owner/expiry checks, and an authenticated scoped key-grant HTTP client; only local fakes tested",
     "G4 candidate separates settlement from output availability, models settled/not-settled/unknown reconciliation, checks per-operation accounting, and rolls back JobStore memory on disk failure",
-    "Current candidate: client/server typecheck and production build pass; 51 offline tests pass including signed Express route dispatch, production mutation gating, buyer key grants, fake-backed candidate verification and RPC witness checks; ten Foundry tests pass using solc 0.8.38 wrapper",
+    "Current candidate: client/server typecheck and production build pass; 52 offline tests pass including signed Express route dispatch, production mutation gating, provider-boundary authority recheck, buyer key grants, fake-backed candidate verification and RPC witness checks; twelve Foundry tests pass using pinned solc 0.8.28",
     "G4 stable payment fingerprints bind provider, network, payee, service policy version and approved policy hash while excluding worker/epoch for authorized reuse",
     "G4 SQLite job-provisioning journal repairs crashes before or after the JSON job write and commits job/budget completion idempotently",
     "G4 regression preserves SETTLED receipt and accounting through output-state SQLite write failure and restart; provider reconciliation restores output with one submission",
@@ -47,8 +47,9 @@
     "Buyer-only local accepted-checkpoint grant command verifies buyer signer, exact accepted head, confirmed Sepolia lifecycle/accounting snapshot, EIP-712 authorization and durable nonce before writing the encrypted grant; no live grant run",
     "Signed route-dispatch regression covers assign, worker candidate plus buyer acceptance, drain/takeover, pause/resume, earned-credit claim, service execution and reconciliation; production mutation routes remain 503-gated",
     "Foundry regression documents buyer-controlled initial assignment with exact job-scoped grant; worker-originated assignment and reassignment are rejected, and current ABI requires no worker consent signature",
+    "Gateway performs a second authority check immediately before provider submission; revoked authority marks the operation failed before spend and releases the full reservation",
     "Ignored mode-0600 service/A/B env files provisioned locally; B-only fixture decrypt, A denial and worker-identity spoof denial pass",
-    "Current candidate: 51 offline tests, local payment acceptance, signing vector, typecheck/build, contract compile and ten Foundry tests pass",
+    "Current candidate: 52 offline tests, local payment acceptance, signing vector, typecheck/build, contract compile and twelve Foundry tests pass",
     "Safely merged D2 runtime/recovery with D1 gateway authority, SQLite payment ledger, payment-crash acceptance, and public Sepolia evidence",
     "Merged-tree client/server typecheck and builds, contract compile, signing vector, D1 acceptance, and 15 non-HTTP tests pass",
     "Configured Sepolia RPC in ignored local .env and verified chain ID 11155111",
@@ -62,7 +63,6 @@
   "releaseLabel": "Sepolia lifecycle: LIVE_PASS; full integration: pending.",
   "nextGate": "Connect production lifecycle routes to escrow writes and confirmed post-write reads; keep production mutation gates closed until the adapter is complete, then coordinate D1-owned gateway work with D2's live Arkiv/x402 recovery proof",
   "blockers": [
-    "Foundry tests used solc 0.8.38; foundry.toml/package-lock pin 0.8.28, and node_modules currently differs from the lockfile",
     "npm registry DNS prevented a verified tmp 0.2.7 lockfile fix; package-lock.json remains unchanged",
     "Root .env is ignored and mode 0600; ARKIV_ACCESS_KEY and CHECKPOINT_ENCRYPTION_KEY are configured, while ARKIV_RPC_URL and ARKIV_SIGNER_PRIVATE_KEY are missing",
     "Key-service URLs are loopback for same-laptop use; D2 has not confirmed whether B is cross-host, and no grant exists for a real accepted checkpoint",

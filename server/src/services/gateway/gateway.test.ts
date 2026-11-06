@@ -10,6 +10,76 @@ import { OperationLedger } from "../ledger/operationLedger.js";
 
 const worker = ("0x" + "a".repeat(40)) as `0x${string}`;
 
+test("gateway rechecks chain authority at the provider boundary before spending", async () => {
+  const root = await mkdtemp(join(tmpdir(), "baton-authority-boundary-"));
+  const ledger = new OperationLedger(join(root, "ledger.sqlite"));
+  try {
+    const jobs = new JobStore(join(root, "jobs.json"));
+    const job = await jobs.create({
+      chainJobId: digest("1"),
+      chainTaskId: digest("2"),
+      buyer: ("0x" + "1".repeat(40)) as `0x${string}`,
+      rewardToken: ("0x" + "2".repeat(40)) as `0x${string}`,
+      verifier: ("0x" + "3".repeat(40)) as `0x${string}`,
+      rewards: [1n],
+      serviceBudget: 5n,
+      serviceAsset: "HBAR",
+      approvedServices: ["batch-data-v1"],
+      perRequestCap: 3n,
+    });
+    await ledger.configureBudget(job.terms.jobId, job.servicePolicy);
+    await jobs.assign(job.terms.jobId, worker);
+
+    let authorityReads = 0;
+    let providerSubmissions = 0;
+    const authority = {
+      assertCurrentWorker: async () => {
+        authorityReads += 1;
+        if (authorityReads === 2) throw new Error("WORKER_AUTHORITY_REVOKED");
+      },
+      assertAssignedWorker: async () => undefined,
+    };
+    const provider = {
+      async submit() {
+        providerSubmissions += 1;
+        return {
+          providerReceipt: "must-not-submit",
+          outputDigest: digest("3"),
+          outputRef: "local://must-not-submit",
+        };
+      },
+      async reconcile() { return { status: "not-settled" as const }; },
+    };
+    const gateway = new Gateway(jobs, ledger, provider, authority);
+    const request = {
+      operationId: "authority-revoked-before-submit",
+      jobId: job.terms.jobId,
+      taskId: job.task.taskId,
+      worker,
+      epoch: 1,
+      service: "batch-data-v1",
+      inputDigest: digest("4"),
+      amount: 2n,
+      asset: "HBAR",
+    };
+
+    await assert.rejects(gateway.execute(request), /WORKER_AUTHORITY_REVOKED/);
+    assert.equal(authorityReads, 2, "authority is checked again after reservation and submission journaling");
+    assert.equal(providerSubmissions, 0, "revoked work must not reach the provider");
+    assert.equal((await ledger.getOperation(request.operationId))?.state, "FAILED");
+    assert.deepEqual(await ledger.getBalance(job.terms.jobId), {
+      deposits: 5n,
+      available: 5n,
+      reserved: 0n,
+      settledSpend: 0n,
+      returnedFunds: 0n,
+    });
+  } finally {
+    ledger.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("settlement survives output-state persistence failure and restart without resubmitting", async () => {
   const root = await mkdtemp(join(tmpdir(), "baton-output-recovery-"));
   const jobsPath = join(root, "jobs.json");

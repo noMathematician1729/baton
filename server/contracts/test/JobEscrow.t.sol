@@ -223,6 +223,37 @@ contract JobEscrowTest {
         escrow.acceptMilestone(JOB_ID, offer, signature);
     }
 
+    function testAcceptanceAtJobCutoffIsRejected() public {
+        vm.warp(block.timestamp + 1 days);
+        (JobEscrow.MilestoneOffer memory offer, bytes memory signature) = _offer(
+            WORKER_A_KEY, workerA, 0, SPEC_A, bytes32(0), sha256("at the cutoff"), "arkiv://checkpoint/cutoff", 1
+        );
+        vm.expectRevert(JobEscrow.DeadlinePassed.selector);
+        escrow.acceptMilestone(JOB_ID, offer, signature);
+    }
+
+    function testPauseBlocksNewAcceptanceButKeepsEarnedCreditClaimable() public {
+        bytes32 headOne = sha256("checkpoint accepted before pause");
+        _accept(WORKER_A_KEY, workerA, 0, SPEC_A, bytes32(0), headOne, "arkiv://checkpoint/before-pause", 1);
+        escrow.pause(JOB_ID);
+
+        vm.prank(workerA);
+        escrow.claim(JOB_ID);
+        require(token.balanceOf(workerA) == 3, "pause must not block earned claims");
+
+        (JobEscrow.MilestoneOffer memory blockedOffer, bytes memory blockedSignature) = _offer(
+            WORKER_A_KEY, workerA, 1, SPEC_B, headOne, sha256("blocked while paused"), "arkiv://checkpoint/paused", 2
+        );
+        vm.expectRevert(JobEscrow.NotOpen.selector);
+        escrow.acceptMilestone(JOB_ID, blockedOffer, blockedSignature);
+
+        vm.expectRevert(JobEscrow.Unauthorized.selector);
+        vm.prank(workerA);
+        escrow.resume(JOB_ID);
+        escrow.resume(JOB_ID);
+        _accept(WORKER_A_KEY, workerA, 1, SPEC_B, headOne, sha256("resumed checkpoint"), "arkiv://checkpoint/resumed", 2);
+    }
+
     function testTakeoverCannotReassignTheCurrentWorker() public {
         escrow.drainTask(JOB_ID);
         (JobEscrow.TakeoverAck memory sameWorkerAck, bytes memory sameWorkerSignature) = _takeoverAckFor(

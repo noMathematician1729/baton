@@ -83,7 +83,6 @@
     "server/packages/storage/src/arkiv.ts",
     "server/apps/worker/src/",
     "BATON_Architecture.md",
-    "context.md",
     ".env.example",
     "server/services/tools/",
     "server/services/admission/",

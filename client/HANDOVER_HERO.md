@@ -1,11 +1,11 @@
 # Handover: landing hero imagery + scroll animation
 
 For: Codex (or any agent picking this up)
-Scope: **frontend only**: `client/` in this monorepo. Another session owns `server/`, contracts, protocol, scripts and the root docs (`handover.md`, `context.md`, `plan.md`, `README.md`). Do not edit anything outside `client/`.
+Scope: **frontend only**: `client/` in this monorepo. Another session owns `server/`, contracts, protocol, scripts and the root docs (`plan.md`, `README.md`, `BATON_Architecture.md`). Do not edit anything outside `client/`.
 
 ## 1. What BATON is (one paragraph)
 
-BATON lets a buyer fund a resumable job for AI agents. If the working agent dies, a standby agent recovers the last *accepted* checkpoint from Arkiv (encrypted, expiring storage) and takes over. Worker authority is a revocable ENS subname (`agent-a.baton.eth`), and rewards sit in a Sepolia escrow. Each agent posts an Arkiv "claim" with a deadline. If the claim lapses, the job fails over. Full product context: `../context.md` (read-only for you).
+BATON lets a buyer fund a resumable job for AI agents. If the working agent dies, a standby agent recovers the last *accepted* checkpoint from Arkiv (encrypted, expiring storage) and takes over. Worker authority is a revocable ENS subname (`agent-a.baton.eth`), and rewards sit in a Sepolia escrow. Each agent posts an Arkiv "claim" with a deadline. If the claim lapses, the job fails over. Full product context: `../BATON_Architecture.md` (read-only for you).
 
 ## 2. The hero concept
 

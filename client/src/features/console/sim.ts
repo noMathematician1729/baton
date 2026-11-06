@@ -1,4 +1,4 @@
-// Client-side simulation of a BATON job. No network calls; mirrors the protocol in context.md.
+// Client-side simulation of a BATON job. No network calls; mirrors server/src/protocol/v1.ts.
 
 export type NodeStatus = "booting" | "live" | "working" | "recovering" | "dead" | "done";
 export type Role = "job" | "primary" | "sub";

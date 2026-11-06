@@ -1,6 +1,6 @@
 # BATON architecture
 
-Revision: 6 November 2026. Status: target architecture with implementation evidence and limits recorded below; the complete live workflow is not deployed or verified. Arkiv, ENS and Hedera x402 remain required. This revision follows the current user decisions and the accessible `context.md`; the older linked architecture could not be retrieved.
+Revision: 6 November 2026. Status: target architecture with implementation evidence and limits recorded below; the complete live workflow is not deployed or verified. Arkiv, ENS and Hedera x402 remain required. Current implementation and verification status are tracked in `README.md` and `docs/gates.md`.
 
 Current storage decision: Arkiv holds encrypted checkpoint manifests and all task artifacts, including large inputs and paid outputs. No separate artifact store or independent mirror is planned. SQLite is the selected persistence backend for the buyer-controlled service-payment operation ledger. Keep encrypted content payloads in Arkiv and payment-operation metadata in SQLite. Arkiv entity ownership and renewal authority must be finalized before live storage writes.
 
@@ -208,13 +208,26 @@ The repository contains the client/server app, contract sources, checkpoint/runt
 | Task dependencies | Downstream input binds exact accepted upstream commitment |
 | Pause, cutoff and withdrawal | New work stops according to rules; credits survive; only unallocated funds refund |
 
+### Initial demonstration workflow
+
+The reference run is one three-batch data task, with each batch using a job-required paid data or compute endpoint. Use one buyer wallet, distinct A and B worker wallets, and an exact-transfer, non-rebasing test ERC-20; never move a worker's private key during handoff. Fund 10 test ERC-20 reward tokens under fixed milestones and a separate capped Hedera x402 service budget. The example allocates 3 reward tokens to A's first accepted batch and 7 to B's remaining two batches; those amounts are a demo schedule, not a rule tying payment to batch count or progress.
+
+1. A completes batch 1 and obtains its paid service result through the buyer-controlled gateway. The ledger records the stable operation and receipt; the encrypted reusable output is stored in Arkiv. A stages the checkpoint, the buyer verifies Arkiv readback and accepts it, and A earns the agreed 3-token credit.
+2. A goes offline. B, on a separate host, verifies the accepted escrow head, recovers the manifest and artifacts from Arkiv, obtains its own scoped decryption and tool access, and checks the buyer ledger for A's paid operation. B reuses that output. It reconciles any UNKNOWN operation before retrying; if the result cannot be established, B stops rather than paying again.
+3. The buyer drains A's gateway access and authorizes B's takeover against the exact head and epoch. After the confirmed assignment changes, B buys only the remaining required services, completes batches 2 and 3, and submits the remaining accepted work for the agreed 7-token credit.
+4. Verify that A's stale offer and old-epoch service request are rejected, then show A and B claiming their preserved credits.
+
+If ENS is unavailable, a reduced walkthrough may demonstrate escrow assignment and Arkiv recovery. Label it as reduced; it does not establish live ENS authorization or the full integration. The full demo requires buyer-approved takeover, not unattended reassignment. Independent dispute resolution, intermediate unpaid checkpoints, and metered-compute compensation are outside the initial demo. Hedera x402 remains required for the full demo; skill-based matchmaking and probabilistic-agent adapters are product extensions, not completed demo capabilities.
+
+The detailed implementation gates and current evidence are tracked in `plan.md` and `docs/gates.md`.
+
 Required live demonstration: separate A/B hosts; actual Arkiv recovery; live ENS grant checks; real Hedera testnet x402 settlement for a required service; crash after settlement before checkpoint; rejected stale A requests; both reward withdrawals. A self-hosted paid service must be disclosed as such.
 
-The initial 22-test/100,000-transition architecture review is historical. Current local proof is recorded in `context.md` and `docs/gates.md`; the buyer-side policy runner and buyer-only cancel-drain path pass local regressions but remain unverified against a V2 deployment. The required live A/B scenario remains blocked by buyer-owned Arkiv configuration, V2 deployment, real provider compatibility and B-host/tool-access prerequisites.
+The initial 22-test/100,000-transition architecture review is historical. Current local proof is recorded in `README.md` and `docs/gates.md`; the buyer-side policy runner and buyer-only cancel-drain path pass local regressions but remain unverified against a V2 deployment. The required live A/B scenario remains blocked by buyer-owned Arkiv configuration, V2 deployment, real provider compatibility and B-host/tool-access prerequisites.
 
 ## References
 
-Current context: context.md. Arkiv limits and expiration documentation checked 5 November 2026 during setup; deployment compatibility and live integrations remain unverified.
+Implementation status and gate evidence are maintained in `README.md` and `docs/gates.md`. Arkiv limits and expiration documentation were checked 5 November 2026; deployment compatibility and live storage integrations remain unverified.
 
 - Arkiv: https://docs.arkiv.network/reference/limits/ and https://docs.arkiv.network/writing/expiration/
 - MCP authorization: https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization

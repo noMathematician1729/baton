@@ -251,7 +251,7 @@ Mocked unit and fault tests are appropriate for deterministic regressions. Tests
 
 ## 11. G7 — Evidence, documentation and finding closure
 
-- [x] Update `context.md`: current revision, exact tested modes, checkpoint commitment/locator, cumulative claims, stable purchase identity, drain barrier, keys and Arkiv retention. Current working tree and lack of live checkpoint are explicit.
+- [x] Consolidate the durable design context in `BATON_Architecture.md`; keep current implementation evidence in `README.md` and `docs/gates.md`.
 - [x] Update `BATON_Architecture.md`: actual ABI and verifier policy; current single-task scope; implemented SQLite/authority status and correct module paths; trust in buyer gateway/key service/provider.
 - [x] Update `README.md`, `test.md`, `docs/gates.md`, `status/` and `requests.md`: remove stale missing-module assertions, list actual commands, keep Node minimum consistent at the verified supported version, and distinguish local, live, historical and blocked proofs.
 - [x] Reconcile the repository plan and owner commitments: `plan.md` is the only plan file; outstanding inputs are tracked in `requests.md`. Preserve the existing checkout and branch history.

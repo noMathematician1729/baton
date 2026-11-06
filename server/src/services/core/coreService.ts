@@ -161,6 +161,9 @@ export class CoreService {
         pid: body.pid ?? existing?.pid,
         connection: "starting",
         lastHeartbeatAt: nowIso(),
+        // Each runtime process must prove inference, tools and isolation for itself.
+        smoke: undefined,
+        lastError: undefined,
       } as WorkerRecord;
       record.events = [...(existing?.events ?? []), { at: nowIso(), state: "registered", detail: { address, pid: body.pid } }].slice(-400);
       s.workers[workerId] = record;

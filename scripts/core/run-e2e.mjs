@@ -174,7 +174,7 @@ if (drill) {
   const restartedOp = proof.ops[drillReport.inFlight.key];
   drillReport.sameTransactionReconciled = restartedOp?.txHash === drillReport.inFlight.txHash && ["confirmed", "skipped"].includes(restartedOp?.status);
   const killedAtMs = Date.parse(drillReport.apiKilledAt);
-  const failedBeats = readFileSync(resolve(root, ".baton-data/workers/b/worker.log"), "utf8").split("\n").filter((line) => line.includes('"heartbeat-failed"') && Date.parse(JSON.parse(line).t) >= killedAtMs).length;
+  const failedBeats = readFileSync(resolve(root, ".baton-data/core/workers/b/worker.log"), "utf8").split("\n").filter((line) => line.includes('"heartbeat-failed"') && Date.parse(JSON.parse(line).t) >= killedAtMs).length;
   drillReport.bHeartbeatFailuresDuringOutage = failedBeats;
   drillReport.bStayedConnected = failedBeats > 0 && realWork("b");
   checks.drillSameTransactionReconciled = drillReport.sameTransactionReconciled;

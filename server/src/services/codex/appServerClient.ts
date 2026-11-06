@@ -46,7 +46,7 @@ export type TurnOutcome = {
   mcpToolCalls: Array<{ server: string; tool: string; status: string; arguments: unknown; error?: unknown }>;
   commandCount: number;
   fileChangeCount: number;
-  commandOutputs: string[];
+  commands: Array<{ command: string; exitCode: number | null; output: string }>;
   error?: string;
 };
 
@@ -183,7 +183,7 @@ export class CodexAppServerClient extends EventEmitter {
 
   /** Runs one turn to completion and collects the authoritative completed items. */
   public async runTurn(threadId: string, text: string, timeoutMs: number, onActivity?: (event: string, detail: unknown) => void): Promise<TurnOutcome> {
-    const outcome: TurnOutcome = { turnId: "", status: "unknown", finalMessage: "", agentMessages: [], mcpToolCalls: [], commandCount: 0, fileChangeCount: 0, commandOutputs: [] };
+    const outcome: TurnOutcome = { turnId: "", status: "unknown", finalMessage: "", agentMessages: [], mcpToolCalls: [], commandCount: 0, fileChangeCount: 0, commands: [] };
     let resolveDone!: () => void;
     const done = new Promise<void>((resolve) => {
       resolveDone = resolve;
@@ -201,7 +201,7 @@ export class CodexAppServerClient extends EventEmitter {
           onActivity?.("toolCall", { server: item.server, tool: item.tool, status: item.status });
         } else if (item.type === "commandExecution") {
           outcome.commandCount += 1;
-          outcome.commandOutputs.push(String(item.aggregatedOutput ?? ""));
+          outcome.commands.push({ command: String(item.command ?? ""), exitCode: item.exitCode ?? null, output: String(item.aggregatedOutput ?? "") });
           onActivity?.("command", { command: String(item.command ?? "").slice(0, 200), exitCode: item.exitCode ?? null });
         } else if (item.type === "fileChange") {
           outcome.fileChangeCount += 1;

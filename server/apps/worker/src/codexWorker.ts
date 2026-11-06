@@ -1,5 +1,6 @@
+import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { dirname, join, normalize, resolve, sep } from "node:path";
@@ -99,6 +100,7 @@ const arkiv = new ArkivContentStore({
 });
 
 let codex: CodexAppServerClient | undefined;
+let codexRuntime: { bin: string; config: Record<string, string>; env: NodeJS.ProcessEnv } | undefined;
 let codexAccount: CodexAccount | null = null;
 let smokeNonce: string | undefined;
 let activeJob: { ctx: WorkerContext; workspace: string; recoveredFiles: Record<string, ArtifactReference>; recoveredText: Record<string, string>; submissions: number[]; recoveredFrom?: { head: Hex; sequence: number; epoch: number; writer: string; completed: string[]; unfinished: string[] } } | undefined;
@@ -137,6 +139,17 @@ async function report(state: string, detail: Record<string, unknown> = {}) {
 // Codex runtime
 // ---------------------------------------------------------------------------
 
+/**
+ * Codex re-executes its own binary as a sandbox helper. Launching the resolved release
+ * binary means only that release directory must be readable, not a symlink chain that
+ * passes through the host user's ~/.codex.
+ */
+function resolveCodexBinary(): string {
+  const onPath = (process.env.PATH ?? "").split(":").map((dir) => join(dir, "codex")).find((candidate) => existsSync(candidate));
+  if (!onPath) throw new Error("codex is not on PATH");
+  return realpathSync(onPath);
+}
+
 async function startCodex() {
   await mkdir(codexHome, { recursive: true, mode: 0o700 });
   await chmod(home, 0o700);
@@ -147,27 +160,25 @@ async function startCodex() {
   await mkdir(runtimeTmp, { recursive: true, mode: 0o700 });
   const tsxBin = join(repoRoot, "node_modules", ".bin", "tsx");
   const mcpEntry = join(serverRoot, "apps", "worker", "src", "batonToolsMcp.ts");
-  codex = new CodexAppServerClient({
-    codexHome,
-    clientName: "baton_worker",
-    clientVersion: "1.0.0",
-    config: {
-      cli_auth_credentials_store: '"file"',
-      // Allow-list sandbox: `sandbox_mode = workspace-write` still permits reading the whole disk,
-      // including the buyer .env and other workers' credentials on a shared host.
-      default_permissions: '"baton_worker"',
-      "permissions.baton_worker.filesystem": `{ ":minimal" = "read", ":workspace_roots" = { "." = "write" }, ${JSON.stringify(runtimeTmp)} = "write", "/Library/Developer" = "read", "/opt/homebrew" = "read" }`,
-      project_root_markers: "[]",
-      "mcp_servers.baton.command": JSON.stringify(tsxBin),
-      "mcp_servers.baton.args": JSON.stringify([mcpEntry]),
-      "mcp_servers.baton.env": `{ BATON_WORKER_SOCKET = ${JSON.stringify(socketPath)} }`,
-      "mcp_servers.baton.required": "true",
-      "mcp_servers.baton.startup_timeout_sec": "60",
-      "mcp_servers.baton.tool_timeout_sec": "600",
-      "mcp_servers.baton.default_tools_approval_mode": '"approve"',
-    },
-    env: { PATH: process.env.PATH, HOME: runtimeHome, LANG: process.env.LANG ?? "en_US.UTF-8", TMPDIR: runtimeTmp, TMPPREFIX: join(runtimeTmp, "zsh") },
-  });
+  const codexBin = resolveCodexBinary();
+  const config: Record<string, string> = {
+    cli_auth_credentials_store: '"file"',
+    // Allow-list sandbox: `sandbox_mode = workspace-write` still permits reading the whole disk,
+    // including the buyer .env and other workers' credentials on a shared host.
+    default_permissions: '"baton_worker"',
+    "permissions.baton_worker.filesystem": `{ ":minimal" = "read", ":workspace_roots" = { "." = "write" }, ${JSON.stringify(runtimeTmp)} = "write", ${JSON.stringify(dirname(codexBin))} = "read", "/Library/Developer" = "read", "/opt/homebrew" = "read" }`,
+    project_root_markers: "[]",
+    "mcp_servers.baton.command": JSON.stringify(tsxBin),
+    "mcp_servers.baton.args": JSON.stringify([mcpEntry]),
+    "mcp_servers.baton.env": `{ BATON_WORKER_SOCKET = ${JSON.stringify(socketPath)} }`,
+    "mcp_servers.baton.required": "true",
+    "mcp_servers.baton.startup_timeout_sec": "60",
+    "mcp_servers.baton.tool_timeout_sec": "600",
+    "mcp_servers.baton.default_tools_approval_mode": '"approve"',
+  };
+  const runtimeEnv: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: runtimeHome, LANG: process.env.LANG ?? "en_US.UTF-8", TMPDIR: runtimeTmp, TMPPREFIX: join(runtimeTmp, "zsh") };
+  codexRuntime = { bin: codexBin, config, env: { ...runtimeEnv, CODEX_HOME: codexHome } };
+  codex = new CodexAppServerClient({ codexBin, codexHome, clientName: "baton_worker", clientVersion: "1.0.0", config, env: runtimeEnv });
   codex.on("exit", (info) => {
     log("codex-exit", info as Record<string, unknown>);
     void report("error", { message: "codex app-server exited", stderr: codex?.recentStderr().slice(-5) });
@@ -213,28 +224,78 @@ async function register() {
   log("registered", { address: account.address });
 }
 
+/**
+ * Deterministic isolation probe through the runtime's own sandbox: secrets and other
+ * workers' files must be unreadable while the workspace stays usable. The positive
+ * controls stop a broken probe from reporting every path as "denied".
+ */
+async function probeIsolation(workspace: string, markerPath: string, sentinel: string) {
+  const exec = (script: string) => new Promise<{ exitCode: number; stdout: string }>((done) => {
+    const args = ["sandbox", ...Object.entries(codexRuntime!.config).flatMap(([key, value]) => ["-c", `${key}=${value}`]), "-P", "baton_worker", "-C", workspace, "--", "/bin/sh", "-c", script];
+    execFile(codexRuntime!.bin, args, { env: codexRuntime!.env, timeout: 30_000 }, (error, stdout) => {
+      done({ exitCode: error ? (typeof error.code === "number" ? error.code : 1) : 0, stdout: String(stdout) });
+    });
+  });
+  const control = await exec("echo control > isolation-control.txt && test -r isolation-control.txt");
+  const toolControl = await exec("python3 -c 'print(1)' && ls >/dev/null");
+  const targets: Record<string, string> = {
+    marker: markerPath,
+    buyerEnv: join(repoRoot, ".env"),
+    ownEnv: join(repoRoot, `.env.worker-${workerId}`),
+    ownCodexAuth: join(codexHome, "auth.json"),
+    otherWorkers: join(repoRoot, ".baton-data", "workers"),
+    coreState: join(repoRoot, ".baton-data", "core", "core-state.json"),
+    keyServiceDb: join(repoRoot, ".baton-data", "checkpoint-key-service.sqlite"),
+    hostCodexAuth: join(process.env.HOME ?? "", ".codex", "auth.json"),
+    hostAgents: join(process.env.HOME ?? "", ".agents"),
+    repoSource: join(serverRoot, "src", "app.ts"),
+  };
+  const readable: string[] = [];
+  for (const [name, path] of Object.entries(targets)) {
+    if (!existsSync(path)) continue; // only an existing target proves anything
+    const result = await exec(`test -r ${JSON.stringify(path)}`);
+    if (result.exitCode === 0) readable.push(name);
+  }
+  const read = await exec(`cat ${JSON.stringify(markerPath)}`);
+  const writeOutside = await exec(`echo x > ${JSON.stringify(join(home, "smoke-write-probe"))}`);
+  const network = await exec("curl -s -m 5 -o /dev/null https://example.com");
+  await rm(join(home, "smoke-write-probe"), { force: true });
+  const checks = {
+    controlsPassed: control.exitCode === 0 && toolControl.exitCode === 0,
+    readable,
+    markerReadBlocked: read.exitCode !== 0 && !read.stdout.includes(sentinel),
+    writeOutsideBlocked: writeOutside.exitCode !== 0,
+    networkBlocked: network.exitCode !== 0,
+  };
+  return { ok: checks.controlsPassed && readable.length === 0 && checks.markerReadBlocked && checks.writeOutsideBlocked && checks.networkBlocked, ...checks };
+}
+
 /** Real inference + tool-use smoke test: the model must call a BATON tool and write a file. */
 async function smokeTest() {
   const workspace = join(home, "smoke");
   await rm(workspace, { recursive: true, force: true });
   await mkdir(workspace, { recursive: true, mode: 0o700 });
   smokeNonce = randomBytes(8).toString("hex");
-  // Isolation proof on the real runtime: a secret outside the workspace must stay unreadable.
   const sentinel = randomBytes(16).toString("hex");
-  const sentinelPath = join(home, "isolation-sentinel.txt");
-  await writeFile(sentinelPath, sentinel, { mode: 0o600 });
+  const markerPath = join(home, "smoke-marker.txt");
+  await writeFile(markerPath, sentinel, { mode: 0o600 });
+  const isolation = await probeIsolation(workspace, markerPath, sentinel);
   const threadId = await codex!.startThread({ cwd: workspace, model: process.env.BATON_CODEX_MODEL || undefined });
   const outcome = await codex!.runTurn(
     threadId,
-    `BATON connection self-test. Call the baton_smoke_nonce tool, then create a file named smoke.txt in the current directory whose only content is that nonce reversed character-by-character. Then run exactly this command once and do not retry it another way: cat ${JSON.stringify(sentinelPath)} . Finally reply with exactly: NONCE=<nonce> REVERSED=<reversed> SENTINEL=<READ or DENIED>.`,
+    `BATON connection self-test. Call the baton_smoke_nonce tool, then create a file named smoke.txt in the current directory whose only content is that nonce reversed character-by-character. Then run this diagnostic shell command exactly as written: test -r ${JSON.stringify(markerPath)}; echo READABLE_EXIT=$?; test -r ${JSON.stringify(join(repoRoot, ".env"))}; echo HOST_FILE_EXIT=$? . Finally reply with exactly: NONCE=<nonce> REVERSED=<reversed>.`,
     5 * 60_000,
     (event, detail) => log(`smoke:${event}`, detail as Record<string, unknown>),
   );
   const expected = smokeNonce.split("").reverse().join("");
   const fileContent = existsSync(join(workspace, "smoke.txt")) ? (await readFile(join(workspace, "smoke.txt"), "utf8")).trim() : "";
   const toolUsed = outcome.mcpToolCalls.some((call) => call.tool === "baton_smoke_nonce" && call.status === "completed");
-  const isolated = ![outcome.finalMessage, ...outcome.agentMessages, ...outcome.commandOutputs].some((text) => text.includes(sentinel)) && outcome.commandCount > 0 && /SENTINEL=DENIED/.test(outcome.finalMessage);
-  await rm(sentinelPath, { force: true });
+  // Judged from the runtime's own command items, never from what the model says it did.
+  const turnProbe = outcome.commands.find((c) => c.command.includes(markerPath));
+  const turnSandboxed = Boolean(turnProbe) && /READABLE_EXIT=[1-9]/.test(turnProbe!.output) && /HOST_FILE_EXIT=[1-9]/.test(turnProbe!.output);
+  const leaked = [...outcome.agentMessages, ...outcome.commands.map((c) => c.output)].some((text) => text.includes(sentinel));
+  const isolated = isolation.ok && turnSandboxed && !leaked;
+  await rm(markerPath, { force: true });
   const passed = outcome.status === "completed" && toolUsed && fileContent === expected && outcome.finalMessage.includes(smokeNonce) && isolated;
   const result = {
     passed,
@@ -243,6 +304,7 @@ async function smokeTest() {
     fileMatches: fileContent === expected,
     replyContainsNonce: outcome.finalMessage.includes(smokeNonce),
     isolated,
+    isolation: { ...isolation, turnSandboxed, turnProbeRan: Boolean(turnProbe), leaked },
     threadId,
     turnId: outcome.turnId,
     error: outcome.error,

@@ -152,6 +152,9 @@ try {
   guardedLedger = new OperationLedger(join(root, "guarded-operations.sqlite"));
   const guardedJob = await guardedJobs.create({ chainJobId: "0x" + "c".repeat(64), chainTaskId: "0x" + "d".repeat(64), buyer: "0x" + "1".repeat(40), rewardToken: "0x" + "2".repeat(40), verifier: "0x" + "3".repeat(40), rewards: [1n], serviceBudget: 10n, serviceAsset: "HBAR", approvedServices: ["batch-data-v1"], perRequestCap: 3n });
   await guardedLedger.configureBudget(guardedJob.terms.jobId, guardedJob.servicePolicy);
+  // Fixture the already-confirmed initial assignment locally; chain mutation routes
+  // require a writer and are covered by the dedicated writer tests.
+  await guardedJobs.assign(guardedJob.terms.jobId, A);
   const chainState = { worker: A, epoch: 1, grants: new Set([A, B]) };
   const checkedAuthority = {
     async assertCurrentWorker(input) {
@@ -177,7 +180,6 @@ try {
   };
   const guardedGateway = new Gateway(guardedJobs, guardedLedger, countedProvider, checkedAuthority);
   assert(guardedGateway.requiresChainAuthority, "chain authority mode was not enabled");
-  await guardedGateway.assign(guardedJob.terms.jobId, A);
   chainState.worker = B;
   chainState.epoch = 2;
   await expectError(() => guardedGateway.acceptMilestone({ jobId: guardedJob.terms.jobId, taskId: guardedJob.task.taskId, worker: A, epoch: 1, acceptanceSpecHash: guardedJob.terms.task.acceptanceSpecHash, expectedHead: EMPTY, newHead: { manifestDigest: HEAD_1, manifestRef: "arkiv://stale", artifactManifestDigest: INPUT_1, schemaVersion: "checkpoint.v1", sequence: 1, previousAcceptedHead: null } }), "WORKER_NOT_ASSIGNED");
@@ -191,8 +193,9 @@ try {
   chainState.epoch = 2;
   await expectError(() => guardedGateway.execute({ ...reusableIntent, operationId: "op-stale-chain", inputDigest: INPUT_3 }), "WORKER_NOT_ASSIGNED");
   assert(!(await guardedLedger.getOperation("op-stale-chain")) && guardedPurchases === 1, "stale chain worker or over-cap request reached the provider");
-  await guardedGateway.drain(guardedJob.terms.jobId);
-  await guardedGateway.takeover({ jobId: guardedJob.terms.jobId, successor: B, expectedHead: EMPTY, expectedEpoch: 1, compatibilityReport: "0x" + "6".repeat(64) });
+  // Fixture the confirmed drain and takeover without invoking the chain writer.
+  await guardedJobs.drain(guardedJob.terms.jobId);
+  await guardedJobs.takeover({ jobId: guardedJob.terms.jobId, successor: B, expectedHead: EMPTY, expectedEpoch: 1, compatibilityReport: "0x" + "6".repeat(64) });
   const reusedByB = await guardedGateway.execute({ ...reusableIntent, worker: B, epoch: 2 });
   assert(reusedByB.reusedBy?.some((reuse) => reuse.worker === B && reuse.epoch === 2) && guardedPurchases === 1, "B did not reuse A's approved, capped purchase");
   chainState.grants.delete(B);

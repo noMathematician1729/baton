@@ -3,6 +3,11 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import solc from "solc";
 
+const solcVersion = solc.version();
+if (!solcVersion.startsWith("0.8.28+commit.7893614a.")) {
+  throw new Error(`PINNED_SOLC_VERSION_REQUIRED: expected 0.8.28+commit.7893614a, loaded ${solcVersion}`);
+}
+
 const root = resolve(new URL("..", import.meta.url).pathname);
 const contractsRoot = resolve(root, "server/contracts");
 const sources = {};

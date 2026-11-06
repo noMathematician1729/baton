@@ -116,8 +116,14 @@ step("reconciled", { ok, ...reconcile });
 const finalJob = await job(jobId);
 const { spec, ...jobView } = finalJob;
 const strip = (events) => events.filter((e) => e.detail?.jobId === jobId).map((e) => ({ at: e.at, state: e.state, detail: e.detail }));
+const build = {
+  commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
+  trackedChanges: execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: root, encoding: "utf8" }).trim().split("\n").filter(Boolean),
+  codex: execFileSync("codex", ["--version"], { encoding: "utf8" }).trim(),
+};
 const evidence = {
   kind: "baton-core-two-codex-worker-run",
+  build,
   started,
   finished: new Date().toISOString(),
   result: ok ? "PASS" : "FAIL",

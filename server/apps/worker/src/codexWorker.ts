@@ -499,6 +499,7 @@ async function runJob(assignment: Assignment) {
   try {
     const ctx = await api<WorkerContext>("GET", `/api/core/jobs/${assignment.jobId}/worker-context`);
     await rememberJob(ctx.jobId, ctx.escrow);
+    if (ctx.nextMilestone >= ctx.spec.milestones.length) return; // every milestone already accepted on-chain
     await report("job_starting", { jobId: ctx.jobId, epoch: ctx.epoch, ensName: ctx.ensName });
     const workspace = join(home, "workspace", `${ctx.jobId.slice(2, 14)}-e${ctx.epoch}`);
     await rm(workspace, { recursive: true, force: true });

@@ -190,7 +190,11 @@ export class CoreService {
         w.loginUrl = undefined;
         w.runtime = { ...w.runtime, account: (detail.account as Record<string, unknown>) ?? null };
       }
-      if (state === "error") w.lastError = String(detail.message ?? "error");
+      if (state === "error") {
+        w.lastError = String(detail.message ?? "error");
+        // A failed job run leaves the runtime usable; only runtime-level errors disable the worker.
+        if (detail.jobId) w.connection = "available";
+      }
       if (state === "job_starting") w.connection = "busy";
       if (state === "job_completed" || state === "authority_lost") {
         w.connection = "available";
@@ -218,7 +222,8 @@ export class CoreService {
         return { assignment: { jobId: job.jobId, phase: "takeover_ack_requested", epoch: job.epoch, takeoverAck: job.takeover.ackRequest }, history };
       }
       const assignment = job.assignments.at(-1);
-      if (job.phase === "running" && job.activeWorkerId === worker.workerId && assignment?.workerId === worker.workerId && ["ready", "active"].includes(assignment.status)) {
+      const workRemains = job.checkpoints.filter((c) => c.status === "accepted").length < job.spec.milestones.length;
+      if (workRemains && job.phase === "running" && job.activeWorkerId === worker.workerId && assignment?.workerId === worker.workerId && ["ready", "active"].includes(assignment.status)) {
         return { assignment: { jobId: job.jobId, phase: "ready", epoch: job.epoch }, history };
       }
     }

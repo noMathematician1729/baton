@@ -11,6 +11,8 @@ import { CoreService, type CoreConfig } from "./coreService.js";
 export function createCoreServiceFromEnv(repoRoot: string, serverRoot: string): CoreService | undefined {
   const e = process.env;
   if (e.BATON_CORE_ENABLED !== "true") return undefined;
+  // Never resume live jobs from inside a test process that happens to load the buyer .env.
+  if (e.NODE_TEST_CONTEXT || e.NODE_ENV === "test" || process.execArgv.includes("--test")) return undefined;
   const need = (name: string, value = e[name]) => {
     if (!value?.trim()) throw new Error(`BATON core: ${name} is required`);
     return value.trim();

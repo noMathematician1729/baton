@@ -2,13 +2,12 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import { isAbsolute, resolve } from "node:path";
-import { getAddress } from "viem";
 import { env, SERVER_ROOT } from "./config/env.js";
 import { JobStore } from "./domain/jobs/jobStore.js";
 import { OperationLedger } from "./services/ledger/operationLedger.js";
 import { Gateway, LocalPaymentProvider } from "./services/gateway/gateway.js";
 import { SepoliaAuthorityReader } from "./chain/sepoliaAuthority.js";
-import { gatewayActionMessage, recoverGatewayActionActor } from "./chain/gatewayAction.js";
+import { authorizeSignedGatewayAction } from "./chain/gatewayActionAuth.js";
 import { serialise, type CheckpointHead, type Hex, type JobSnapshot } from "./protocol/v1.js";
 
 export function createServices() {
@@ -409,49 +408,18 @@ async function authorizeGatewayAction(input: {
   prefix?: string;
 }): Promise<void> {
   if (!input.gateway.requiresChainAuthority) return;
-  const body = input.body && typeof input.body === "object" ? input.body as Record<string, unknown> : {};
-  const prefix = input.prefix ?? "auth";
-  const nonce = digestValue(body[`${prefix}Nonce`], `${prefix}Nonce`);
-  const expiry = timestampValue(body[`${prefix}Expiry`], `${prefix}Expiry`);
-  const now = Math.floor(Date.now() / 1000);
-  if (expiry <= now) throw new Error("ACTION_SIGNATURE_EXPIRED");
-  if (expiry > now + 300) throw new Error("ACTION_SIGNATURE_LIFETIME_TOO_LONG");
-  const signature = signatureValue(body[`${prefix}Signature`], `${prefix}Signature`);
-  const message = gatewayActionMessage({
-    action: input.action,
+  await authorizeSignedGatewayAction({
+    chainId: env.SEPOLIA_CHAIN_ID,
+    verifyingContract: env.BATON_ESCROW_ADDRESS,
+    nonceStore: input.ledger,
+    body: input.body,
     job: input.job,
-    actor: getAddress(input.actor),
+    actor: input.actor,
     epoch: input.epoch,
+    action: input.action,
     payload: input.payload,
-    nonce,
-    expiry,
+    prefix: input.prefix,
   });
-  let recovered: Hex;
-  try {
-    recovered = await recoverGatewayActionActor({
-      chainId: env.SEPOLIA_CHAIN_ID,
-      verifyingContract: getAddress(env.BATON_ESCROW_ADDRESS),
-      message,
-      signature,
-    });
-  } catch {
-    throw new Error("ACTION_SIGNATURE_INVALID");
-  }
-  if (recovered.toLowerCase() !== input.actor.toLowerCase()) throw new Error("ACTION_ACTOR_MISMATCH");
-  const jobScope = input.job.chainJobId ?? input.job.terms.jobId;
-  const scope = `${env.SEPOLIA_CHAIN_ID}:${env.BATON_ESCROW_ADDRESS.toLowerCase()}:${jobScope}:${input.actor.toLowerCase()}`;
-  await input.ledger.consumeAuthNonce(scope, nonce, expiry);
-}
-
-function signatureValue(value: unknown, label: string): Hex {
-  if (typeof value !== "string" || !/^0x[\da-f]{130}$/i.test(value)) throw new Error(`INVALID_${label.toUpperCase()}`);
-  return value as Hex;
-}
-
-function timestampValue(value: unknown, label: string): number {
-  const timestamp = Number(value);
-  if (!Number.isSafeInteger(timestamp) || timestamp <= 0) throw new Error(`INVALID_${label.toUpperCase()}`);
-  return timestamp;
 }
 
 function fallbackAddress(hexCharacter: string): Hex {

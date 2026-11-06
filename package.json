@@ -20,7 +20,7 @@
     "demo:local": "npm run demo:local --workspace=server",
     "tools:mcp": "npm run tools:stdio --workspace=server",
     "status:refresh": "npm run status:refresh --workspace=server",
-    "test": "npm run test:checkpoint --workspace=server && npm run test:storage --workspace=server && npm run test:runtime --workspace=server && npm run test:worker --workspace=server && npm run test:tools --workspace=server && npm run test:admission --workspace=server && npm run test:ledger --workspace=server && npm run test:api --workspace=server",
+    "test": "npm run test:checkpoint --workspace=server && npm run test:storage --workspace=server && npm run test:runtime --workspace=server && npm run test:worker --workspace=server && npm run test:tools --workspace=server && npm run test:admission --workspace=server && npm run test:authority --workspace=server && npm run test:ledger --workspace=server && npm run test:api --workspace=server",
     "test:local": "npm run build --workspace=server && node scripts/acceptance-local.mjs",
     "test:signing": "npm run build --workspace=server && node scripts/check-signing-vector.mjs",
     "contracts:compile": "node scripts/compile-contracts.mjs",

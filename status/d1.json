@@ -1,6 +1,6 @@
 {
   "owner": "D1",
-  "updatedAt": "2026-11-06T08:07:59+05:30",
+  "updatedAt": "2026-11-06T08:13:33+05:30",
   "elapsedHours": 0.75,
   "currentTask": "G0-G4 audit remediation and buyer-controlled checkpoint key service implemented on build/audit-g0-g4; local verification recorded and live integrations remain pending",
   "completedFeatures": [
@@ -29,6 +29,7 @@
     "Local payment-crash simulation reopens stores after settlement and lets B reuse A's output with one provider submission; UNKNOWN retries do not resubmit",
     "G1 candidate replaces one-time escrow claims with cumulative withdrawal/accounting and binds milestone offers to exact checkpoint identity",
     "G2 candidate adds action-scoped EIP-712 signatures, durable nonce replay checks, task binding, and coherent confirmed-block authority reads",
+    "G2 extracts the signed gateway-action verifier and adds 3 local regression cases for replay, expiry, actor/deployment/task/action/payload binding; 29 non-HTTP tests pass",
     "G3 candidate adds bounded accepted-head recovery validation, storage owner/expiry checks, and an authenticated scoped key-grant HTTP client; only local fakes tested",
     "G4 candidate separates settlement from output availability, models settled/not-settled/unknown reconciliation, checks per-operation accounting, and rolls back JobStore memory on disk failure",
     "Current candidate: typecheck/build pass, 29 non-HTTP tests pass, local acceptance and signing vector pass, nine Foundry tests pass using solc 0.8.38 wrapper",

@@ -1,0 +1,9 @@
+# Live Arkiv recovery evidence
+
+On 6 November 2026, BATON recorded a two-worker core run with `result: PASS` in [`evidence/core-runs/0xfb5e0dcc120ff6fa9300fd1535ad43fcc14b86bfcc9a9a06038cef2e22025f21.json`](../evidence/core-runs/0xfb5e0dcc120ff6fa9300fd1535ad43fcc14b86bfcc9a9a06038cef2e22025f21.json). Its assertions record that A wrote milestone 1, B recovered the epoch-1 checkpoint, and B continued with milestones 2 and 3 rather than regenerating A's outputs.
+
+The milestone-1 manifest entity is `0x08701dfe4f2da7be5ef233d64ea921c6d818c71e19af88103c0d4f53bc4705f8`. Its Arkiv transaction is `0x67350aa54efe1d8162e8042a8f443729944d41450628bba48990a704bf6b1d0c`. A separate earlier drill records the same recovery assertions and manifest entity `0x459865afc94a717ff7f0c7093cce88939260841de58c05596830c6536dcc9dcf`; a fresh `arkiv_getEntity` call on 7 November returned that entity with encrypted payload and owner `0x432eeff3e312f1910f3d04a6449753306ffaa5d2`.
+
+The evidence proves a recorded live Arkiv write and readback and a worker B recovery in the core run. The latest standalone Sepolia lifecycle script used synthetic checkpoint references and did not repeat this Arkiv path. The public demo still needs a visible Arkiv-backed recovery view and a judge-runnable indexed query. The manifest owner in the checked live read is worker A, so buyer-controlled ownership should not be claimed for that entity. A separate retention record, [`arkiv-retention-check.json`](../evidence/core-runs/arkiv-retention-check.json), records B extending an A-owned entity with permissionless extension.
+
+Read the manifest by exact key with Rabdi's `arkiv_getEntity` JSON-RPC method. The public RPC is rate limited; an access key can be appended to the URL for reliable repeat runs. Never put an access key in committed files.

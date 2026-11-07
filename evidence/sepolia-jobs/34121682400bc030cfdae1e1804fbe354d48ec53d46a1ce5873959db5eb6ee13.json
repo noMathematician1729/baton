@@ -1,0 +1,202 @@
+{
+  "schema": "baton.sepolia-job-evidence.v1",
+  "network": "Sepolia",
+  "chainId": 11155111,
+  "createdAt": "2026-11-07T02:18:29.259Z",
+  "status": "LIVE_PASS",
+  "addresses": {
+    "escrow": "0x33dFd9b59a5CA4c246a85dDDda033c9c400C7f8e",
+    "authorityAdapter": "0xD659F372D2439075F29e39f5E005d86352Da1A6c",
+    "ensResolver": "0x583fDD4b8d345624B1B8438Bd8ca5004bD0352bA",
+    "buyer": "0x0f35bDe4F4b1270813c5116DA20915FCD49e47FA",
+    "workerA": "0x432Eeff3E312f1910F3D04A6449753306fFaA5D2",
+    "workerB": "0x70F6F8b58c127d6e83E7198053F4403e6d2aBFE5"
+  },
+  "job": {
+    "jobId": "0x34121682400bc030cfdae1e1804fbe354d48ec53d46a1ce5873959db5eb6ee13",
+    "taskId": "0x78f57bdd5f0f5ab345a9a912e7a7efb89672ea63d86e3615483441f3b2c72b7e",
+    "termsHash": "0x84b9ad2c0c2cb9b700eed3631e0aa8c5da253ce7423b08d1ebe6f72816d4d364",
+    "jobKey": "baton.job.v1:34121682400bc030cfdae1e1804fbe354d48ec53d46a1ce5873959db5eb6ee13",
+    "rewardToken": "0xCe2b38bB12A8e0F5817c1386DE1EE49879617e98",
+    "rewards": [
+      "3000000000000000000",
+      "3000000000000000000",
+      "4000000000000000000"
+    ],
+    "total": "10000000000000000000",
+    "decimals": 18,
+    "acceptanceSpecHashes": [
+      "0x0cffb09fdeb80b0f965e9ed363befa543d8de1d87cb81fc9e5b71ffc1bd6c287",
+      "0xeadb7c0089a0872cfda2f0e3a3adeaf1c04f7c502711240c1bdd95168290e9c6",
+      "0x1467af75f8c0dceace5f1be49de457c4d39049655fc0c946c1cb7125f9c822f1"
+    ],
+    "heads": [
+      "0x669bf773a9b9c93199ed739206e5256f7554027b99e846b8b11f2bae630db481",
+      "0xd9064e33a8a059d6cbc617081eef99250de7325aeab19233115ca269ceb9e61b",
+      "0x8e851c8811b5225107c8f8b4ffce68e32c2742c34cde1871a2fc32ae01118cc1"
+    ],
+    "manifestRefs": [
+      "urn:baton:synthetic-checkpoint:0x34121682400bc030cfdae1e1804fbe354d48ec53d46a1ce5873959db5eb6ee13:1",
+      "urn:baton:synthetic-checkpoint:0x34121682400bc030cfdae1e1804fbe354d48ec53d46a1ce5873959db5eb6ee13:2",
+      "urn:baton:synthetic-checkpoint:0x34121682400bc030cfdae1e1804fbe354d48ec53d46a1ce5873959db5eb6ee13:3"
+    ],
+    "cutoff": "1794039509"
+  },
+  "transactions": {
+    "deploy-test-token": "0x45c4c335809c47a1432ab9ac6f45ff838d9824b5bb9828373c13d1ee55ccddec",
+    "mint-demo-rewards": "0x5ce2c7af88f4bb542a86b56523ee784b20dca025656f064dd6f527ef6d3629b7",
+    "grant-worker-a": "0x9308c2ad7bc84b2b7bccc43a3fa7cb07293591077094f3e286d886b6e2edfbbe",
+    "grant-worker-b": "0x2dc52e8aa38cb14d978afee1eacea1d0d3b2d72cca8407de903dcab1c8a1380c",
+    "approve-escrow": "0x781f27354b4767399479dea807473d0b189912d806dbe27d6888e174ba44756b",
+    "fund-job": "0x03c15b61a9e4b08a819112a3bf036ded6734f92a36bd3e543ca0392f9e0ae783",
+    "assign-worker-a": "0x391ee6415424f638681bc152c8f661d7badc5ad3cf225efe1181b71c980925f9",
+    "accept-a-milestone-1": "0xb2a3fe10ecfa6e32391f052e87f5b70743bb19b2085717735b4aca40dec6a097",
+    "drain-for-takeover": "0x8f21fd40143ac232571a966702745350752b0b743d34762e3397166a51a41ce8",
+    "takeover-by-worker-b": "0xe960ebf26da4af0704295d159a1c488350a529cf6665b9f16cdd81d8fa0f5f74",
+    "revoke-worker-a": "0xc48cc2de1e66714c7666c67853338fa62e754efd86b4563294989e484917b6f6",
+    "accept-b-milestone-2": "0x58fcc7ccb393dd0e9e94a1587a90e95521baf4b7de3b2519d84101782913f82a",
+    "accept-b-milestone-3": "0x5e83a308cd7061bb52ce9a5ba2f92730ec905e8afc708e38e00d7c52fa208189",
+    "revoke-worker-b-after-completion": "0xd141d28439e80860566dab488b60d8db990063e3752a0cb6e4db5586da48c602",
+    "close-completed-job": "0x7cbe037ffe33737007247f1e11b9ab123ae149a6a4898efb564ef6fdf72b45d9",
+    "claim-worker-a-3-tokens": "0xb3b4feeec4d569c8d1ec43d27139fcd8f06a20482ef9cc2444998e910c5b0c43",
+    "claim-worker-b-7-tokens": "0x7c0cfd55d6536c9922f4019acfb04972e8d7665d14074e5c7bdb2cad4b198c09"
+  },
+  "assertions": [
+    "Worker A job grant => authorized",
+    "Worker A wrong job => unauthorized",
+    "Worker B job grant => authorized",
+    "Worker B wrong job => unauthorized",
+    "funded three milestones: A=3, B=3+4",
+    "A milestone 1 accepted and credited 3 tokens",
+    "authority transferred to B at epoch 2",
+    "A scoped grant revoked after takeover",
+    "stale A milestone offer rejected with StaleEpoch after B takeover",
+    "final immutable credits: A=3 tokens, B=7 tokens",
+    "Worker A claimed exactly 3 tokens; Worker B claimed exactly 7 tokens"
+  ],
+  "result": {
+    "workerAWithdrawal": {
+      "amount": "3000000000000000000",
+      "balanceBefore": "0",
+      "balanceAfter": "3000000000000000000",
+      "withdrawnTotal": "3000000000000000000"
+    },
+    "workerBWithdrawal": {
+      "amount": "7000000000000000000",
+      "balanceBefore": "0",
+      "balanceAfter": "7000000000000000000",
+      "withdrawnTotal": "7000000000000000000"
+    },
+    "escrowRewardBalanceAfterClaims": "0"
+  },
+  "receipts": {
+    "deploy-test-token": {
+      "status": "success",
+      "blockNumber": "12080654",
+      "gasUsed": "3065469",
+      "confirmations": 2
+    },
+    "mint-demo-rewards": {
+      "status": "success",
+      "blockNumber": "12080656",
+      "gasUsed": "238137",
+      "confirmations": 2
+    },
+    "grant-worker-a": {
+      "status": "success",
+      "blockNumber": "12080658",
+      "gasUsed": "259786",
+      "confirmations": 2
+    },
+    "grant-worker-b": {
+      "status": "success",
+      "blockNumber": "12080660",
+      "gasUsed": "159210",
+      "confirmations": 2
+    },
+    "approve-escrow": {
+      "status": "success",
+      "blockNumber": "12080662",
+      "gasUsed": "127877",
+      "confirmations": 2
+    },
+    "fund-job": {
+      "status": "success",
+      "blockNumber": "12080664",
+      "gasUsed": "1919593",
+      "confirmations": 2
+    },
+    "assign-worker-a": {
+      "status": "success",
+      "blockNumber": "12080666",
+      "gasUsed": "202020",
+      "confirmations": 2
+    },
+    "accept-a-milestone-1": {
+      "status": "success",
+      "blockNumber": "12080668",
+      "gasUsed": "1238395",
+      "confirmations": 2
+    },
+    "drain-for-takeover": {
+      "status": "success",
+      "blockNumber": "12080670",
+      "gasUsed": "128469",
+      "confirmations": 2
+    },
+    "takeover-by-worker-b": {
+      "status": "success",
+      "blockNumber": "12080672",
+      "gasUsed": "234265",
+      "confirmations": 2
+    },
+    "revoke-worker-a": {
+      "status": "success",
+      "blockNumber": "12080674",
+      "gasUsed": "45860",
+      "confirmations": 2
+    },
+    "accept-b-milestone-2": {
+      "status": "success",
+      "blockNumber": "12080676",
+      "gasUsed": "415581",
+      "confirmations": 2
+    },
+    "accept-b-milestone-3": {
+      "status": "success",
+      "blockNumber": "12080678",
+      "gasUsed": "306057",
+      "confirmations": 2
+    },
+    "revoke-worker-b-after-completion": {
+      "status": "success",
+      "blockNumber": "12080680",
+      "gasUsed": "45860",
+      "confirmations": 2
+    },
+    "close-completed-job": {
+      "status": "success",
+      "blockNumber": "12080682",
+      "gasUsed": "140981",
+      "confirmations": 2
+    },
+    "claim-worker-a-3-tokens": {
+      "status": "success",
+      "blockNumber": "12080684",
+      "gasUsed": "375950",
+      "confirmations": 2
+    },
+    "claim-worker-b-7-tokens": {
+      "status": "success",
+      "blockNumber": "12080686",
+      "gasUsed": "266414",
+      "confirmations": 2
+    }
+  },
+  "fundedTokenBalance": "10000000000000000000",
+  "staleAttempt": {
+    "method": "eth_call",
+    "outcome": "reverted",
+    "error": "StaleEpoch"
+  }
+}

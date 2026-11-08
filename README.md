@@ -1,5 +1,7 @@
 # BATON
 
+🏆 **ENS Track — 3rd Place for Best Use of ENSv2**
+
 BATON is a client/server monorepo for resumable work. The React + TypeScript client is the buyer console; the Node.js + TypeScript server contains the API, worker runtime, protocol, authority contracts, payment gateway and Arkiv adapters.
 
 ## Quick start
@@ -94,6 +96,65 @@ npm run verify          # full local verification sequence
 `npm run demo:local` demonstrates an encrypted A-to-B checkpoint handoff with synthetic batches and quantitative state. It makes no network calls. The D1 acceptance uses a local payment-provider fixture; it does not claim Hedera settlement.
 
 ## Architecture and data boundaries
+
+```mermaid
+flowchart LR
+  buyer([Buyer])
+  console["Buyer console<br/>React + TypeScript"]
+  workerA["Worker A<br/>execution"]
+  workerB["Worker B<br/>recovery and takeover"]
+  mcp["MCP tool server"]
+
+  subgraph baton["BATON services · Node.js + TypeScript"]
+    api["API and gateway<br/>jobs · protocol · payment policy"]
+    state[("Job store + SQLite ledger<br/>job state · payment metadata")]
+    keysvc["Checkpoint key service<br/>worker-scoped grants"]
+  end
+
+  subgraph authority["On-chain authority · Sepolia"]
+    contracts["ENS resolver + BATON authority adapter<br/>Job escrow · assignment · accepted head · rewards"]
+  end
+
+  subgraph external["Storage and paid services"]
+    arkiv["Arkiv<br/>encrypted checkpoints, artifacts<br/>and paid outputs"]
+    paid["Hedera x402 paid service<br/>optional provider"]
+  end
+
+  buyer --> console
+  console -->|job and buyer actions| api
+  workerA -->|work · heartbeat · signed offers| api
+  workerB -->|job snapshot · recovery acknowledgement| api
+  workerA -->|discover and invoke tools| mcp
+  workerB -->|discover and invoke tools| mcp
+  api -->|persist job state and payment metadata| state
+  api <-->|confirmed authority reads and writes| contracts
+  workerB -->|independently verify accepted head| contracts
+  api <-->|verify and store encrypted data| arkiv
+  workerB -->|read accepted checkpoint and artifacts| arkiv
+  api -->|issue and revoke grants| keysvc
+  workerB -->|resolve granted checkpoint key| keysvc
+  api <-->|submit · reconcile · retrieve output| paid
+
+  classDef buyerStyle fill:#fff1cc,stroke:#d28a00,color:#422b00,stroke-width:2px
+  classDef workerStyle fill:#dcfce7,stroke:#16a34a,color:#12351f,stroke-width:2px
+  classDef batonStyle fill:#dbeafe,stroke:#2563eb,color:#102a56,stroke-width:2px
+  classDef stateStyle fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-width:2px
+  classDef authorityStyle fill:#ede9fe,stroke:#7c3aed,color:#2e1065,stroke-width:2px
+  classDef storageStyle fill:#ccfbf1,stroke:#0f766e,color:#042f2e,stroke-width:2px
+  classDef toolStyle fill:#cffafe,stroke:#0891b2,color:#083344,stroke-width:2px
+  classDef externalStyle fill:#ffe4e6,stroke:#e11d48,color:#4c0519,stroke-width:2px
+
+  class buyer,console buyerStyle
+  class workerA,workerB workerStyle
+  class api,keysvc batonStyle
+  class state stateStyle
+  class contracts authorityStyle
+  class arkiv storageStyle
+  class mcp toolStyle
+  class paid externalStyle
+```
+
+External integrations depend on environment configuration; local development can use the fixture payment provider.
 
 - Sepolia escrow contracts hold reward terms, accepted heads, epochs, credits and refunds. Live ENS scoped grant, wrong-job denial, and revoke checks passed; the ENS resolver address is kept separate from BATON's adapter address.
 - The buyer-host gateway uses SQLite for operation intents, reservations, settlement state and receipt/output references. `PAYMENT_LEDGER_PATH` defaults to `./data/payment-ledger.sqlite` relative to the server directory. The gateway is the only writer.
